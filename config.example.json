@@ -1,0 +1,32 @@
+{
+  "wica": {
+    "agent": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "api_key_env": "WICA_ANTHROPIC_API_KEY",
+      "system_prompt_file": "prompts/assistant.md"
+    }
+  },
+  "tts": {
+    "engine": {
+      "module": {
+        "type": "elevenlabs",
+        "api_key_env": "ELEVENLABS_API_KEY",
+        "voice_id": "JBFqnCBsd6RMkjVDRZzb",
+        "model": "eleven_flash_v2_5"
+      },
+      "player": { "device": null }
+    }
+  },
+  "asr": {
+    "engine": {
+      "module": {
+        "type": "deepgram_v2",
+        "api_key_env": "DEEPGRAM_API_KEY",
+        "model": "flux-general-en"
+      },
+      "audio": { "device": null },
+      "dictation_default_segmentation_mode": "trigger_word"
+    }
+  }
+}

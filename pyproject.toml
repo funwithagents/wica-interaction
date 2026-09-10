@@ -1,0 +1,74 @@
+[project]
+name = "reachy-mini-interaction-wica"
+version = "0.1.0"
+description = "An interaction application for the Reachy Mini robot, built on the WICA agentic framework and driving the robot through reachy-mini-bridge."
+readme = "README.md"
+authors = [
+    { name = "Thibault Hervier", email = "thibault@fr2g.io" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    # Speech in: the app runs its own ASR over the robot's echo-cancelled mic stream (the bridge
+    # embeds no ASR — see reachy-mini-bridge specs/audio.md).
+    "asr-engine",
+    # The robot: high-level interaction verbs (say, mic stream, play_emotion, head tracking, motors)
+    # over a real/sim/fake Reachy Mini. The `tts` extra pulls the default tts-engine-backed
+    # SpeechSynthesizer the bridge's `say` uses to route speech to the robot speaker.
+    "reachy-mini-bridge[tts]",
+    # TTS engine + tools, still used directly by the current speech-out code (VoiceOutput). Slated to
+    # move behind reachy-mini-bridge's `say` — see specs/tts-output.md (Status: Updated).
+    "tts-engine",
+    # The anthropic extra pulls langchain-anthropic so the committed config.example.json (provider
+    # "anthropic") runs with just an API key set. Switch provider by editing the config and swapping
+    # this extra (see wica's optional-dependencies: openai, huggingface-hub).
+    "wica[anthropic]",
+    "gradio>=6",
+]
+
+[project.scripts]
+reachy-mini-interaction-wica = "reachy_mini_interaction_wica.app:main"
+
+[build-system]
+requires = ["uv_build>=0.11.29,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+    "pytest>=9.1.1",
+    "ruff>=0.16.6",
+]
+
+[tool.uv.sources]
+# First-party sibling repos, consumed as local path dependencies during development (a pinned git
+# URL later, per specs/project.md). They live in the parent folder.
+wica = { path = "../wica-framework", editable = true }
+tts-engine = { path = "../tts-engine", editable = true }
+asr-engine = { path = "../asr-engine", editable = true }
+reachy-mini-bridge = { path = "../reachy-mini-bridge", editable = true }
+
+[tool.uv]
+# reachy-mini (a reachy-mini-bridge dependency) gates PyGObject to Linux (macOS/Windows use the
+# self-contained gstreamer-bundle). PyGObject/pycairo are sdist-only in the pinned range, so uv's
+# universal lock would try to *build* them on a non-Linux host just to read their metadata (needs
+# system cairo) and fail. Declaring their metadata lets uv resolve the Linux side of the lock
+# without building them; markers still keep them off non-Linux installs. (Mirrors the bridge's own
+# pyproject, since path deps don't inherit `[tool.uv]` settings.)
+dependency-metadata = [
+    { name = "pygobject", version = "3.46.0", requires-dist = ["pycairo>=1.16.0"] },
+    { name = "pycairo", version = "1.29.1" },
+]
+
+[tool.ruff]
+target-version = "py312"  # keep in sync with requires-python
+
+[tool.pytest.ini_options]
+# Only the fast, deterministic tier is collected by default; tests-e2e/ is opt-in.
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["src", "tests", "tests-e2e"]  # type-check test code too, not just src
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
