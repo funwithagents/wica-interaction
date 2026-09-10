@@ -2,11 +2,7 @@
 
 **Status:** Done
 
-Implements the retargeting captured in the `Updated` specs — [configuration.md](../specs/configuration.md),
-[tts-output.md](../specs/tts-output.md), [asr-bridge.md](../specs/asr-bridge.md), and the wiring in
-[app.md](../specs/app.md). It routes speech-out through the robot speaker and speech-in over the
-robot's echo-cancelled mic, backed by a single `ReachyMiniApi`, and drops the local `TTSEngine`. It
-deliberately leaves the robot *action* commands to the [robot-control plan](202609101715_robot-control.md).
+Implements the retargeting captured in the `Updated` specs — [configuration.md](../specs/configuration.md), [tts-output.md](../specs/tts-output.md), [asr-bridge.md](../specs/asr-bridge.md), and the wiring in [app.md](../specs/app.md). It routes speech-out through the robot speaker and speech-in over the robot's echo-cancelled mic, backed by a single `ReachyMiniApi`, and drops the local `TTSEngine`. It deliberately leaves the robot *action* commands to the [robot-control plan](202609101715_robot-control.md).
 
 ## Scope
 
