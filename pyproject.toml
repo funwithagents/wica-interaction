@@ -37,6 +37,10 @@ dev = [
     "pyright>=1.1.411",
     "pytest>=9.1.1",
     "ruff>=0.16.6",
+    # The reachy-mini-bridge `sim` extra pulls the upstream MuJoCo mockup so the `sim` robot backend
+    # runs locally (dev/manual testing against a simulated robot). Kept dev-only — a real-robot
+    # deployment needs none of it — mirroring the bridge's own dev setup.
+    "reachy-mini-bridge[sim]",
 ]
 
 [tool.uv.sources]
