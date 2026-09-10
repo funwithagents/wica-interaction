@@ -73,6 +73,9 @@ def test_happy_path_builds_all_three_engine_configs(tmp_path: Path) -> None:
     assert cfg.asr_engine.module.type == "deepgram_v2"
     assert cfg.asr_engine.dictation_default_segmentation_mode == "timeout"
 
+    # No `reachy` section in the composed fixture ⇒ the default backend.
+    assert cfg.reachy.backend == "real"
+
 
 def test_system_prompt_file_is_located_against_config_dir(tmp_path: Path) -> None:
     # A relative system_prompt_file must resolve against the config file's own directory,
@@ -129,6 +132,44 @@ def test_loads_with_credentials_unset(tmp_path: Path, monkeypatch: pytest.Monkey
 
     cfg = load_config(_write(tmp_path, _composed()))
     assert cfg.wica.agent.api_key_env == "WICA_ANTHROPIC_API_KEY"
+
+
+@pytest.mark.parametrize("backend", ["real", "sim", "fake"])
+def test_reachy_backend_parses(tmp_path: Path, backend: str) -> None:
+    config = _composed()
+    config["reachy"] = {"backend": backend}
+    cfg = load_config(_write(tmp_path, config))
+    assert cfg.reachy.backend == backend
+
+
+def test_reachy_absent_defaults_to_real(tmp_path: Path) -> None:
+    config = _composed()
+    config.pop("reachy", None)  # the fixture has none, but be explicit
+    cfg = load_config(_write(tmp_path, config))
+    assert cfg.reachy.backend == "real"
+
+
+def test_reachy_empty_object_defaults_to_real(tmp_path: Path) -> None:
+    config = _composed()
+    config["reachy"] = {}  # present but no backend key ⇒ default
+    cfg = load_config(_write(tmp_path, config))
+    assert cfg.reachy.backend == "real"
+
+
+def test_invalid_reachy_backend_raises(tmp_path: Path) -> None:
+    config = _composed()
+    config["reachy"] = {"backend": "hologram"}
+    with pytest.raises(ValueError, match="reachy.backend must be one of"):
+        load_config(_write(tmp_path, config))
+
+
+def test_reachy_section_is_optional_but_required_sections_stay(tmp_path: Path) -> None:
+    # `reachy` missing is fine; a missing *required* engine section still raises even with reachy set.
+    config = _composed()
+    config["reachy"] = {"backend": "fake"}
+    del config["wica"]
+    with pytest.raises(ValueError, match="missing required section.*'wica'"):
+        load_config(_write(tmp_path, config))
 
 
 def test_engine_validation_error_propagates(tmp_path: Path) -> None:

@@ -7,13 +7,7 @@ tests:
 
 # TTS output
 
-**Status:** Updated
-
-> **Implementation lag (why `Updated`).** The design below routes `say` through the robot via
-> `reachy-mini-bridge`'s `ReachyMiniApi.say`. The current
-> [tts_output.py](../src/reachy_mini_interaction_wica/tts_output.py) still owns a local `TTSEngine`
-> and delegates to `TTSTools(engine).say` (local speakers). Closing that gap is part of the
-> [bridge-integration plan](../plans/_index.md); this spec returns to `Implemented` when it lands.
+**Status:** Implemented
 
 ## Purpose
 

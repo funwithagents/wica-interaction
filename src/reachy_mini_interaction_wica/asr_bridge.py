@@ -1,19 +1,65 @@
-"""ASR→World bridge and the agent's dictation command.
+"""ASR→World bridge, the robot mic source, and the agent's dictation command.
 
-The speech-in half of the app: it owns the live ``ASREngine``, turns its stream of speech *segments*
-into World updates, and exposes the dictation control the agent can invoke. Interim segments only
-feed a live display view (the agent is never triggered mid-utterance); a closed segment reaches the
-agent, exactly once, via the injected ``on_final_segment`` callback. See specs/asr-bridge.md.
+The speech-in half of the app: it owns the live ``ASREngine`` — fed the robot's echo-cancelled mic
+stream via ``RobotMicSource`` — turns its stream of speech *segments* into World updates, and exposes
+the dictation control the agent can invoke. Interim segments only feed a live display view (the agent
+is never triggered mid-utterance); a closed segment reaches the agent, exactly once, via the injected
+``on_final_segment`` callback. See specs/asr-bridge.md.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
 
+if TYPE_CHECKING:
+    from reachy_mini_bridge.api import ReachyMiniApi
+
 OnFinalSegment = Callable[[str], None]
+
+
+class RobotMicSource:
+    """Feeds the ``ASREngine`` the robot's echo-cancelled mic instead of a local device.
+
+    Implements the ASR engine's synchronous ``AudioSource`` protocol (``start() -> Queue``, ``stop()``
+    — see asr-engine specs/audio-source.md): the engine calls ``start()`` (not awaited) from inside its
+    start coroutine to obtain the queue it drains, and ``stop()`` on teardown. ``api.audio_input()``
+    already yields int16 LE mono PCM at ``api.mic_sample_rate`` (16 kHz) — the streaming-ASR contract —
+    so the pump just iterates and ``put_nowait``s each chunk; no resampling or reformatting. The source
+    shares the one ``ReachyMiniApi`` the app builds (same connection/media session as ``say``).
+    """
+
+    def __init__(self, api: ReachyMiniApi) -> None:
+        self._api = api
+        self._queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> asyncio.Queue[bytes]:
+        """Spawn the pump task on the running loop and return the queue the engine drains.
+
+        Called synchronously by the engine from within its start coroutine, so a running loop exists.
+        Resets the queue and task each call so the source is restartable (the engine may ``start()``
+        again after a ``stop()``).
+        """
+        loop = asyncio.get_running_loop()
+        self._queue = asyncio.Queue()
+        self._task = loop.create_task(self._pump(self._queue))
+        return self._queue
+
+    def stop(self) -> None:
+        """Cancel the pump task; leaves the source restartable."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+    async def _pump(self, queue: asyncio.Queue[bytes]) -> None:
+        """Drain the robot mic stream into *queue* until cancelled."""
+        async for chunk in self._api.audio_input():
+            queue.put_nowait(chunk)
 
 
 class AsrBridge:

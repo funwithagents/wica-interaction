@@ -14,8 +14,7 @@
         "api_key_env": "ELEVENLABS_API_KEY",
         "voice_id": "JBFqnCBsd6RMkjVDRZzb",
         "model": "eleven_flash_v2_5"
-      },
-      "player": { "device": null }
+      }
     }
   },
   "asr": {
@@ -28,5 +27,6 @@
       "audio": { "device": null },
       "dictation_default_segmentation_mode": "trigger_word"
     }
-  }
+  },
+  "reachy": { "backend": "real" }
 }

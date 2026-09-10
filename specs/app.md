@@ -9,14 +9,13 @@ tests:
 
 **Status:** Updated
 
-> **Implementation lag (why `Updated`).** The panels, the one-event-loop arrangement, the typed-text
-> hatch, and the no-credentials degrade are already built and largely unchanged. What changed is the
-> **wiring**: the app now builds one `ReachyMiniApi` and routes speech-out and the robot commands
-> through it, feeds ASR the robot's mic stream, and drops the local `TTSEngine` + audio-processing.
-> The current [app.py](../src/reachy_mini_interaction_wica/app.py) still builds a local `TTSEngine`,
-> lets the `ASREngine` open a local mic, and registers no robot commands. Closing that gap is the
-> [bridge-integration plan](../plans/_index.md) plus the [robot-control plan](../plans/_index.md);
-> this spec returns to `Implemented` when they land.
+> **Implementation lag (why `Updated`).** The [bridge-integration plan](../plans/_index.md) has landed
+> the core of this wiring: the app builds one `ReachyMiniApi`, routes `say` through the robot speaker,
+> feeds ASR the robot's echo-cancelled mic (`RobotMicSource`), enters/exits the api on the app-owned
+> loop, and drops the local `TTSEngine`. What remains is the robot *action* commands
+> (`play_emotion` / `list_emotions` / head-tracking / motors) named in the data flow and command set
+> below: `RobotControl` is not yet built or registered. Closing that last gap is the
+> [robot-control plan](../plans/_index.md); this spec returns to `Implemented` when it lands.
 
 ## Purpose
 

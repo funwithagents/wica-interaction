@@ -12,9 +12,9 @@ An interaction application for the **Reachy Mini** robot, built on the **WICA** 
 |---|---|---|
 | [project.md](project.md) | Project structure and tooling: Python version, packaging with uv, layout conventions, the sibling path dependencies | Implemented |
 | [testing.md](testing.md) | Testing strategy: two-tier `tests/`/`tests-e2e/` split, functional-test philosophy, skip-without-credentials live tier | Implemented |
-| [configuration.md](configuration.md) | The one composed app config JSON (`wica`/`asr`/`tts` + `reachy` robot-backend sections), each engine section delegated to its own loader | Updated |
-| [asr-bridge.md](asr-bridge.md) | Speech-in: the app's ASR over the robot's echo-cancelled mic stream → World `speech_input` (final only), live partial view, and the agent's dictation command | Updated |
-| [tts-output.md](tts-output.md) | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | Updated |
+| [configuration.md](configuration.md) | The one composed app config JSON (`wica`/`asr`/`tts` + `reachy` robot-backend sections), each engine section delegated to its own loader | Implemented |
+| [asr-bridge.md](asr-bridge.md) | Speech-in: the app's ASR over the robot's echo-cancelled mic stream → World `speech_input` (final only), live partial view, and the agent's dictation command | Implemented |
+| [tts-output.md](tts-output.md) | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | Implemented |
 | [robot-control.md](robot-control.md) | Robot commands: WICA commands wrapping `reachy-mini-bridge` verbs — play/list emotions, start/stop head tracking, get/set motor state | Draft |
 | [app.md](app.md) | The Gradio app: data flow, the observability + ASR panels, wiring the ASR/robot behind WICA on one event loop | Updated |
 | _(add concept specs here — see [_spec-template.md](_spec-template.md))_ | | |

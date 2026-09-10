@@ -16,8 +16,9 @@ from typing import Any, cast
 
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
+from reachy_mini_bridge.api import ReachyMiniApi
 
-from reachy_mini_interaction_wica.asr_bridge import AsrBridge
+from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -199,3 +200,81 @@ def test_start_and_stop_delegate_to_engine() -> None:
 
     run(bridge.stop())
     assert bridge.status()["running"] is False
+
+
+# --- RobotMicSource (driven against a fake ReachyMiniApi mic stream) ----------------------------
+
+
+class FakeMicApi:
+    """Minimal stand-in for ``ReachyMiniApi.audio_input`` — an async iterator of PCM ``bytes``.
+
+    Yields the supplied ``chunks``; when ``hold_open`` is set it then blocks forever, so the pump task
+    stays alive and its cancellation on ``stop()`` can be observed. ``started`` counts iterations, to
+    prove the source re-reads the stream on a restart.
+    """
+
+    def __init__(self, chunks: list[bytes], *, hold_open: bool = False) -> None:
+        self._chunks = chunks
+        self._hold_open = hold_open
+        self.started = 0
+
+    async def audio_input(self, *, mono: bool = True) -> Any:
+        self.started += 1
+        for chunk in self._chunks:
+            yield chunk
+        while self._hold_open:
+            await asyncio.sleep(0.01)
+
+
+async def _take(queue: asyncio.Queue[bytes], n: int) -> list[bytes]:
+    return [await asyncio.wait_for(queue.get(), timeout=1.0) for _ in range(n)]
+
+
+def test_robot_mic_source_streams_chunks_in_order() -> None:
+    async def scenario() -> list[bytes]:
+        api = FakeMicApi([b"aa", b"bbbb", b"c"])
+        source = RobotMicSource(cast(ReachyMiniApi, api))
+        queue = source.start()
+        try:
+            return await _take(queue, 3)
+        finally:
+            source.stop()
+
+    assert run(scenario()) == [b"aa", b"bbbb", b"c"]
+
+
+def test_robot_mic_source_stop_cancels_pump() -> None:
+    async def scenario() -> asyncio.Task[None]:
+        api = FakeMicApi([b"x"], hold_open=True)
+        source = RobotMicSource(cast(ReachyMiniApi, api))
+        queue = source.start()
+        await _take(queue, 1)  # the stream is live
+        task = source._task
+        assert task is not None
+        source.stop()
+        await asyncio.sleep(0.05)  # let the cancellation propagate
+        return task
+
+    task = run(scenario())
+    assert task.cancelled()
+
+
+def test_robot_mic_source_is_restartable_with_a_fresh_queue() -> None:
+    async def scenario() -> tuple[bool, int, list[bytes]]:
+        api = FakeMicApi([b"1", b"2"])
+        source = RobotMicSource(cast(ReachyMiniApi, api))
+        first = source.start()
+        got_first = await _take(first, 2)
+        source.stop()
+        await asyncio.sleep(0.01)
+        second = source.start()  # restart after stop
+        try:
+            got_second = await _take(second, 2)
+            return (second is not first, api.started, got_first + got_second)
+        finally:
+            source.stop()
+
+    fresh_queue, starts, chunks = run(scenario())
+    assert fresh_queue  # each start() hands back a new queue
+    assert starts == 2  # the upstream stream was re-read
+    assert chunks == [b"1", b"2", b"1", b"2"]

@@ -7,13 +7,7 @@ tests:
 
 # Configuration
 
-**Status:** Updated
-
-> **Implementation lag (why `Updated`).** The design below adds a `reachy` robot-backend section and
-> reframes the `tts` section as configuration for the *bridge's* synthesizer rather than a local TTS
-> engine. The current [config.py](../src/reachy_mini_interaction_wica/config.py) still parses only
-> `wica`/`tts`/`asr` (no `reachy`) and hands `tts` to a local `TTSEngine`. Closing that gap is part of
-> the [bridge-integration plan](../plans/_index.md); this spec returns to `Implemented` when it lands.
+**Status:** Implemented
 
 ## Purpose
 

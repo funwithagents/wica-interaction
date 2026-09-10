@@ -7,15 +7,7 @@ tests:
 
 # ASR bridge
 
-**Status:** Updated
-
-> **Implementation lag (why `Updated`).** The core segment→World rule and the dictation command below
-> are already built and unchanged. What changed is the **mic source**: the design now feeds the
-> `ASREngine` the robot's echo-cancelled stream (a `RobotMicSource` over `ReachyMiniApi.audio_input()`)
-> instead of a local device. The current
-> [asr_bridge.py](../src/reachy_mini_interaction_wica/asr_bridge.py) still relies on the engine opening
-> a local mic. Closing that gap is part of the [bridge-integration plan](../plans/_index.md); this spec
-> returns to `Implemented` when it lands.
+**Status:** Implemented
 
 ## Purpose
 
@@ -66,9 +58,20 @@ class RobotMicSource:
     """Pumps ReachyMiniApi.audio_input() into the asyncio.Queue[bytes] the ASREngine drains."""
 
     def __init__(self, api: ReachyMiniApi) -> None: ...
-    async def start(self) -> asyncio.Queue[bytes]: ...  # spawn the pump task, return the queue
-    async def stop(self) -> None: ...                   # stop iterating, cancel the pump
+    def start(self) -> asyncio.Queue[bytes]: ...  # spawn the pump task, return the queue
+    def stop(self) -> None: ...                   # cancel the pump task
 ```
+
+`start()`/`stop()` are **synchronous** — that is the [`AudioSource`](../../asr-engine/specs/audio-source.md)
+protocol the `ASREngine` drives its injected source through: the engine calls `audio_source.start()`
+(not awaited) to obtain the queue and `audio_source.stop()` on teardown, exactly as the bundled
+`AudioCapture` is called. `start()` runs on the engine's loop (the engine calls it from within its
+start coroutine), so it grabs `asyncio.get_running_loop()` and `loop.create_task(pump)` to spawn the
+pump task, then returns the queue immediately; the `async for chunk in api.audio_input()` loop lives
+in that pump task, not in `start`. `stop()` cancels the task. The source must be **restartable** (the
+engine may `start()` again after a `stop()`), so `start()` resets its queue and task each call. No
+`await`-able work happens in `start`/`stop` themselves, so an async signature would buy nothing and
+would break the sync protocol the engine expects.
 
 - `api.audio_input()` is an **async iterator** yielding **int16 LE mono PCM `bytes`** at
   `api.mic_sample_rate` (**16 kHz**) — already the streaming-ASR contract (linear16 mono 16 kHz), so

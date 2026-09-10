@@ -15,8 +15,9 @@ dependencies = [
     # over a real/sim/fake Reachy Mini. The `tts` extra pulls the default tts-engine-backed
     # SpeechSynthesizer the bridge's `say` uses to route speech to the robot speaker.
     "reachy-mini-bridge[tts]",
-    # TTS engine + tools, still used directly by the current speech-out code (VoiceOutput). Slated to
-    # move behind reachy-mini-bridge's `say` — see specs/tts-output.md (Status: Updated).
+    # TTS engine config. Speech-out now plays through the robot (reachy-mini-bridge's `say`), so
+    # VoiceOutput no longer imports this; config.py still builds a TTSEngineConfig, which the app hands
+    # to the bridge's TTSEngineSynthesizer (the `tts` extra above) — see specs/configuration.md.
     "tts-engine",
     # The anthropic extra pulls langchain-anthropic so the committed config.example.json (provider
     # "anthropic") runs with just an API key set. Switch provider by editing the config and swapping
