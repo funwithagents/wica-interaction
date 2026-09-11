@@ -77,8 +77,8 @@ class ReachyConfig:
 @dataclass
 class AppConfig:
     wica: WicaConfig
-    asr_engine: ASREngineConfig
     tts_engine: TTSEngineConfig
+    asr_engine: ASREngineConfig
     reachy: ReachyConfig
 
 
@@ -93,7 +93,7 @@ def load_config(path: str) -> AppConfig: ...
    - `asr` → `ASREngineConfig.from_dict(cfg["asr"]["engine"])`
    - `tts` → `TTSEngineConfig.from_dict(cfg["tts"]["engine"])`
 3. Parses the optional `reachy` section into `ReachyConfig` (absent ⇒ `backend="real"`).
-4. Returns `AppConfig(wica=…, asr_engine=…, tts_engine=…, reachy=…)`.
+4. Returns `AppConfig(wica=…, tts_engine=…, asr_engine=…, reachy=…)`.
 
 **Why `base_dir`, not a temp file:** the one thing a path-based loader gave us for free was WICA resolving `agent.system_prompt_file` *relative to the config file's directory*. `WicaConfig.from_dict` takes an optional `base_dir`, so we pass the original config's directory and that relative-path resolution is preserved without round-tripping any section through disk. This keeps `load_config` a pure, side-effect-free composition — read one file, hand blocks to validated constructors.
 

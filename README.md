@@ -18,6 +18,7 @@ Consumed as local path dependencies (in the parent folder), per [specs/project.m
 - `wica` (`../wica-framework`) — the agentic framework.
 - `asr-engine` (`../asr-engine`) — speech-to-text over the robot's mic stream.
 - `reachy-mini-bridge` (`../reachy-mini-bridge`) — the robot's interaction API (which itself wraps `tts-engine` for the voice).
+- `tts-engine` (`../tts-engine`) — pulled directly only for its config type: the app builds the `TTSEngineConfig` it hands to the bridge's synthesizer.
 
 ## Development
 

@@ -1,6 +1,6 @@
 # Reachy Mini Interaction WICA
 
-An interaction application for the **Reachy Mini** robot, built on the **WICA** agentic framework. WICA handles multimodal interaction by serializing the multimodal context into text for an LLM to reason over, then connecting that reasoning to commands/tools for output. This project wires WICA to the robot so a person can talk to Reachy Mini and it talks (and acts) back: speech in via an **ASR** engine running on the robot's echo-cancelled microphone, agent reasoning via WICA, and speech out plus robot actions (emotions, head tracking, motors) through the **[`reachy-mini-bridge`](../../reachy-mini-bridge)** interaction API. The bridge (`ReachyMiniApi`) owns the robot; the app runs its own ASR over the bridge's mic stream. The underlying packages (`wica`, `reachy-mini-bridge`, `asr-engine`) are local sibling packages consumed here as path dependencies.
+An interaction application for the **Reachy Mini** robot, built on the **WICA** agentic framework. WICA handles multimodal interaction by serializing the multimodal context into text for an LLM to reason over, then connecting that reasoning to commands/tools for output. This project wires WICA to the robot so a person can talk to Reachy Mini and it talks (and acts) back: speech in via an **ASR** engine running on the robot's echo-cancelled microphone, agent reasoning via WICA, and speech out plus robot actions (emotions, head tracking, motors) through the **[`reachy-mini-bridge`](../../reachy-mini-bridge)** interaction API. The bridge (`ReachyMiniApi`) owns the robot; the app runs its own ASR over the bridge's mic stream. The underlying packages (`wica`, `reachy-mini-bridge`, `asr-engine`, and `tts-engine` for its config type) are local sibling packages consumed here as path dependencies.
 
 > **New here?** Read [_overview.md](_overview.md) first for the global vision — what the app is, the end-to-end data flow, the two modes, and how the specs below fit together.
 
@@ -16,7 +16,7 @@ An interaction application for the **Reachy Mini** robot, built on the **WICA** 
 | [asr-bridge.md](asr-bridge.md) | Speech-in: the app's ASR over the robot's echo-cancelled mic stream → World `speech_input` (final only), live partial view, and the agent's dictation command | Implemented |
 | [tts-output.md](tts-output.md) | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | Implemented |
 | [robot-control.md](robot-control.md) | Robot commands: WICA commands wrapping `reachy-mini-bridge` verbs — play/list emotions, start/stop head tracking, get/set motor state | Implemented |
-| [app.md](app.md) | The Gradio app: data flow, the observability + ASR panels, wiring the ASR/robot behind WICA on one event loop | Implemented |
+| [app.md](app.md) | The Gradio app: data flow, the observability + ASR panels, wiring the ASR/robot behind WICA on one event loop | Updated |
 | _(add concept specs here — see [_spec-template.md](_spec-template.md))_ | | |
 
 Each spec also opens with a YAML **frontmatter** block declaring the `code:` and `tests:` files it governs — the spec → code/tests mapping the spec-drift checks use to scope what they compare. Keep it current when files move, and see [AGENTS.md](../AGENTS.md) ("Spec frontmatter") for the full convention.

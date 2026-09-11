@@ -1,6 +1,6 @@
 """The runnable reachy-mini interaction application: wiring + lifecycle.
 
-Stands up the robot and both engines behind WICA on one app-owned event loop — [AsrBridge](asr_bridge.py)
+Stands up the robot and the ASR engine behind WICA on one app-owned event loop — [AsrBridge](asr_bridge.py)
 in (fed the robot's echo-cancelled mic via ``RobotMicSource``), the WICA Agent in the middle,
 [VoiceOutput](tts_output.py) out (spoken through the robot speaker). Speech-out and the mic stream both
 ride a single ``reachy-mini-bridge`` ``ReachyMiniApi``, so there is one robot connection and one media
@@ -30,8 +30,8 @@ the voice, and the bridge's ``on_final_segment`` needs WICA, so building WICA *b
 every reference resolve forward with no placeholder/back-patching.
 
 WICA exposes no accessor for the loop it runs on, so the app *owns* the loop and injects it into
-``Wica.init(loop=…)`` — the only way to schedule the ASR/TTS coroutines onto the same loop the Agent
-runs on. Each engine build that can raise on an unset key is caught so the app opens even with
+``Wica.init(loop=…)`` — the only way to schedule the ASR engine and the robot api onto the same loop
+the Agent runs on. Each build that can raise on an unset key is caught so the app opens even with
 credentials missing and says what to set.
 """
 
@@ -116,7 +116,7 @@ def build_system(
     """Stand up the whole system from *config* — the wiring `main` does, minus starting/launching.
 
     Owns a fresh event loop (run in a daemon thread) and injects it into ``Wica.init`` so the ASR
-    engine and the robot share the loop the Agent runs on. Builds in dependency order — robot api →
+    engine and the robot api share the loop the Agent runs on. Builds in dependency order — robot api →
     voice → wica → bridge — so every component is fully formed when the frozen ``AppSystem`` is
     assembled at the end. The one ``ReachyMiniApi`` is built and **entered on the loop** here (its
     media session opens), because both ``say`` and the mic stream ride it; a ``real``/``sim`` backend

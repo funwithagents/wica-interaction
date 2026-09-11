@@ -8,7 +8,7 @@ tests:
 
 # App
 
-**Status:** Implemented
+**Status:** Updated
 
 > **Code layout.** The app is split in two modules: [app.py](../src/reachy_mini_interaction_wica/app.py) holds the **wiring + lifecycle** (`build_system`, the `AppSystem` snapshot, `main`), and [app_ui.py](../src/reachy_mini_interaction_wica/app_ui.py) holds the **Gradio presentation layer** (the instrumentation `PanelState`, the `build_ui` layout, and the live views — `tick_world` / `tick_asr` — the timers poll). `app` imports `PanelState` / `build_ui` from `app_ui`; `app_ui` depends on `app` only for the `AppSystem` type, so there is no import cycle.
 
@@ -69,7 +69,7 @@ A text box in the ASR panel, **always visible**, is the app's keyboard hatch int
 
 `main()` builds the system from a `--config` path:
 
-1. `load_config(path)` → `AppConfig(wica, asr_engine, tts_engine, reachy)` (see [configuration.md](configuration.md)).
+1. `load_config(path)` → `AppConfig(wica, tts_engine, asr_engine, reachy)` (see [configuration.md](configuration.md)).
 2. Create the app-owned loop and start its daemon thread (see "One event loop").
 3. Build the **one `ReachyMiniApi`**: `ReachyMiniApi(cfg.reachy.backend, synthesizer=TTSEngineSynthesizer(cfg.tts_engine))`, and **enter it on the loop** (`run_coroutine_threadsafe(api.__aenter__(), loop)`) so its media session opens and its async verbs bind to that loop. This single instance backs `say`, the mic stream, and the robot commands.
 4. Build `VoiceOutput(api)` (the `say` output Command) and `RobotControl(api)` (the action commands).
