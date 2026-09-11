@@ -17,6 +17,11 @@ Implementation plans for Reachy Mini Interaction WICA — each plan turns a sett
 | [202609101700_bridge-integration.md](202609101700_bridge-integration.md) | Route speech and control through `reachy-mini-bridge`: one `ReachyMiniApi`, `say` via the robot speaker, ASR over the robot mic stream (`RobotMicSource`), a `reachy` config section, drop the local `TTSEngine` + audio-processing | Done |
 | [202609101715_robot-control.md](202609101715_robot-control.md) | The `RobotControl` commands: non-raising WICA wrappers over the bridge's `play_emotion` / `list_emotions` / head-tracking / motor-state verbs, registered with the agent | Done |
 | [202609111030_app-degrade-and-teardown.md](202609111030_app-degrade-and-teardown.md) | App degrade paths + teardown: an unset TTS key degrades only the voice, honest robot-less wording (spec + banner), `asr_bridge.stop()` before `api.__aexit__` | Done |
+| [202609111629_lifecycle-teardown-hardening.md](202609111629_lifecycle-teardown-hardening.md) | Teardown/degrade bug fixes: `_start` inside the teardown `try`, catch `ConfigError`, isolated time-bounded `_shutdown`, running-guarded bridge stop, drop the dead `can_*` properties | Done |
+| [202609111630_asr-mic-source-robustness.md](202609111630_asr-mic-source-robustness.md) | `RobotMicSource` robustness: bounded drop-oldest queue, pump-failure logged + surfaced in ASR status, double-`start()` guard | Done |
+| [202609111631_empty-final-asr-path.md](202609111631_empty-final-asr-path.md) | Honor empty finals: split the ASR delivery path from the typed-text empty guard; drive the real bridge path in tests | Done |
+| [202609111632_ui-rendering-efficiency.md](202609111632_ui-rendering-efficiency.md) | UI efficiency: World change detection, O(1) conversation change check, pause debug timers when hidden, guard `PanelState` bookkeeping | Done |
+| [202609111633_test-hygiene-and-config-nits.md](202609111633_test-hygiene-and-config-nits.md) | Test hygiene + nits: tests tear down via `_shutdown`, positive-control empty-input test, `Literal` backend, require `--config`, honest e2e note, + sibling parity (declare `langchain-core`, drop `hello()` scaffold) | Done |
 | _(add plans here — see [_plan-template.md](_plan-template.md))_ | | |
 
 ## Status legend

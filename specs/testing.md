@@ -28,6 +28,8 @@ Tests split into two directories, and the split is structural — a directory bo
 
 The `tests/` tier mirrors the `src/reachy_mini_interaction_wica/` module layout (`test_<module>.py`, plus the `test_project_map.py` drift-guard); `tests-e2e/` is organized around live scenarios rather than modules.
 
+**Today the live tier is scaffolding only.** `tests-e2e/` holds the shared `conftest.py` and `support.py` (`require_env`) but no live scenarios yet: the tier is wired and ready (collected only when run explicitly, skipping cleanly without keys), while the live tests the [tts-output](tts-output.md) and [robot-control](robot-control.md) specs defer are still unwritten.
+
 ## What a good test asserts
 
 - **Functional, not tautological.** Exercise what a feature actually does — inputs → outputs, state changes, side effects — not that it runs or matches its own signature. A test that would pass against a broken implementation (asserting a constant, that an object isn't `None`, that a mock was called) isn't worth writing.
@@ -37,6 +39,8 @@ The `tests/` tier mirrors the `src/reachy_mini_interaction_wica/` module layout 
 ## Test isolation
 
 If the package holds process-global or singleton state, both tiers carry an identical autouse fixture (in each tier's `conftest.py`) that resets it before and after every test, so no state — or background timers/threads — leaks across tests. The fixture is duplicated rather than shared because `tests-e2e/` isn't a package that imports from `tests/`, and it's only a few lines.
+
+Resources a test *creates* are its own to release. In particular, every app-wiring test that calls `build_system` ends — in a `finally` — with `_shutdown(system)`, the same teardown `main` runs, so no loop thread or robot media session outlives the test that opened it.
 
 ## Live tier: skip without credentials
 

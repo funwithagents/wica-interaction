@@ -159,7 +159,10 @@ def test_reachy_empty_object_defaults_to_real(tmp_path: Path) -> None:
 def test_invalid_reachy_backend_raises(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"] = {"backend": "hologram"}
-    with pytest.raises(ValueError, match="reachy.backend must be one of"):
+    # The message lists exactly the allowed set (derived from the `Backend` Literal), then the culprit.
+    with pytest.raises(
+        ValueError, match="reachy.backend must be one of 'real', 'sim', 'fake', got 'hologram'"
+    ):
         load_config(_write(tmp_path, config))
 
 

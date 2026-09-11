@@ -41,18 +41,22 @@ The `ASREngine` reads from an injected **`audio_source`** (`source.start()` retu
 class RobotMicSource:
     """Pumps ReachyMiniApi.audio_input() into the asyncio.Queue[bytes] the ASREngine drains."""
 
-    def __init__(self, api: ReachyMiniApi) -> None: ...
-    def start(self) -> asyncio.Queue[bytes]: ...  # spawn the pump task, return the queue
+    def __init__(self, api: ReachyMiniApi, *, maxsize: int = _MIC_QUEUE_MAXSIZE) -> None: ...
+    def start(self) -> asyncio.Queue[bytes]: ...  # cancel any live pump, spawn a fresh one, return its queue
     def stop(self) -> None: ...                   # cancel the pump task
+    @property
+    def capture_error(self) -> str | None: ...    # why capture stopped on its own; None while healthy
 ```
 
-`start()`/`stop()` are **synchronous** — that is the [`AudioSource`](../../asr-engine/specs/audio-source.md) protocol the `ASREngine` drives its injected source through: the engine calls `audio_source.start()` (not awaited) to obtain the queue and `audio_source.stop()` on teardown, exactly as the bundled `AudioCapture` is called. `start()` runs on the engine's loop (the engine calls it from within its start coroutine), so it grabs `asyncio.get_running_loop()` and `loop.create_task(pump)` to spawn the pump task, then returns the queue immediately; the `async for chunk in api.audio_input()` loop lives in that pump task, not in `start`. `stop()` cancels the task. The source must be **restartable** (the engine may `start()` again after a `stop()`), so `start()` resets its queue and task each call. No `await`-able work happens in `start`/`stop` themselves, so an async signature would buy nothing and would break the sync protocol the engine expects.
+`start()`/`stop()` are **synchronous** — that is the [`AudioSource`](../../asr-engine/specs/audio-source.md) protocol the `ASREngine` drives its injected source through: the engine calls `audio_source.start()` (not awaited) to obtain the queue and `audio_source.stop()` on teardown, exactly as the bundled `AudioCapture` is called. `start()` runs on the engine's loop (the engine calls it from within its start coroutine), so it grabs `asyncio.get_running_loop()` and `loop.create_task(pump)` to spawn the pump task, then returns the queue immediately; the `async for chunk in api.audio_input()` loop lives in that pump task, not in `start`. `stop()` cancels the task. The source must be **restartable** (the engine may `start()` again after a `stop()`), so `start()` resets its queue, task, and `capture_error` each call — and first cancels any pump still live from a `start()` with no intervening `stop()`, so a pump task is never orphaned. No `await`-able work happens in `start`/`stop` themselves, so an async signature would buy nothing and would break the sync protocol the engine expects.
 
-- `api.audio_input()` is an **async iterator** yielding **int16 LE mono PCM `bytes`** at `api.mic_sample_rate` (**16 kHz**) — already the streaming-ASR contract (linear16 mono 16 kHz), so the pump is "iterate and `put_nowait`", no resampling or reformatting (see [reachy-mini-bridge audio.md](../../reachy-mini-bridge/specs/audio.md), which explicitly frames the queue adapter as a few caller-side lines). This is the whole point of routing through the robot: the audio is already echo-cancelled and noise-suppressed by the XVF3800, so the app needs no processing.
+- `api.audio_input()` is an **async iterator** yielding **int16 LE mono PCM `bytes`** at `api.mic_sample_rate` (**16 kHz**) — already the streaming-ASR contract (linear16 mono 16 kHz), so the pump is "iterate and enqueue", no resampling or reformatting (see [reachy-mini-bridge audio.md](../../reachy-mini-bridge/specs/audio.md), which explicitly frames the queue adapter as a few caller-side lines). This is the whole point of routing through the robot: the audio is already echo-cancelled and noise-suppressed by the XVF3800, so the app needs no processing.
 - The ASR config's `audio.device` is therefore **irrelevant** (no local device is opened); the ASR module must be configured for **16 kHz mono linear16** to match `mic_sample_rate`.
+- **Bounded, drop-oldest queue.** The queue holds at most `_MIC_QUEUE_MAXSIZE` chunks (200 — about 2 s of the robot's 10 ms capture blocks). If the engine falls behind, the pump discards the *oldest* chunk to make room for the newest — real-time audio semantics: stale speech is useless, and memory stays bounded instead of growing at ~32 KB/s behind a stalled consumer.
+- **A dead stream is visible, not silent.** If `audio_input()` raises, or ends on its own (the media session closed under it), the pump logs it and records the reason as `capture_error` (`"mic stream failed: …"` / `"mic stream ended"`). The engine would otherwise keep reporting `running` while hearing nothing; `AsrBridge.status()` carries `capture_error` so the ASR panel shows the stall. A deliberate `stop()` (cancellation) is not a failure and records nothing.
 - `RobotMicSource` shares the **one `ReachyMiniApi`** the app builds (the same instance behind `say` and the robot commands), so there is a single robot connection and one media session.
 
-`RobotMicSource` lives in this speech-in module; the app injects it as `ASREngine(cfg.asr_engine, audio_source=RobotMicSource(api))` and hands the engine to `AsrBridge`.
+`RobotMicSource` lives in this speech-in module; the app builds one `mic = RobotMicSource(api)`, injects it as `ASREngine(cfg.asr_engine, audio_source=mic)`, and hands both the engine and the same `mic` to `AsrBridge` (the engine keeps its source private, so the bridge gets its own reference for `status()` rather than reaching into the engine).
 
 ## `AsrBridge`
 
@@ -61,7 +65,13 @@ OnFinalSegment = Callable[[str], None]
 
 
 class AsrBridge:
-    def __init__(self, engine: ASREngine, *, on_final_segment: OnFinalSegment) -> None: ...
+    def __init__(
+        self,
+        engine: ASREngine,
+        *,
+        on_final_segment: OnFinalSegment,
+        mic: RobotMicSource | None = None,  # the engine's source, for capture health in status()
+    ) -> None: ...
 
     async def start(self) -> None:   # engine.start() in utterance mode
     async def stop(self) -> None:    # engine.stop()
@@ -72,7 +82,7 @@ class AsrBridge:
     # Live view for the UI.
     @property
     def display_text(self) -> str: ...   # current interim transcript, "" after a final
-    def status(self) -> dict: ...        # {"running", "dictating", "segmentation_mode"}
+    def status(self) -> dict: ...        # {"running", "dictating", "segmentation_mode", "capture_error"}
 
     # Dictation controls.
     async def start_dictation(self, segmentation_mode: str | None = None) -> str: ...
@@ -109,7 +119,7 @@ Semantics (a thin wrapper over the ASR engine's dictation — see [asr-engine en
 
 ## Status for the UI
 
-`status()` composes the engine's own accessors — `engine.status()["running"]`, `engine.dictating`, `engine.segmentation_mode` — into one dict the ASR panel renders, so a user can see at a glance whether ASR is live and whether it is currently in dictation mode (see [app.md](app.md)).
+`status()` composes the engine's own accessors — `engine.status()["running"]`, `engine.dictating`, `engine.segmentation_mode` — plus the mic source's `capture_error` (`None` when healthy, or when the bridge was given no `mic`) into one dict the ASR panel renders, so a user can see at a glance whether ASR is live, whether it is currently in dictation mode, and whether capture has stalled even though the engine still says `running` (see [app.md](app.md)).
 
 ## Testing
 
@@ -120,6 +130,9 @@ Drive `AsrBridge` against a fake `ASREngine` (no audio, no network) that lets a 
 - A sequence interim→interim→final yields exactly one `on_final_segment` call, with the final text.
 - `start_dictation()` calls the engine with `end_on_final_segment=True` and the resolved mode; `status()` reflects `dictating` / `segmentation_mode` from the (fake) engine.
 - `RobotMicSource.start()` returns a queue that receives the api's mic chunks in order; `stop()` cancels the pump.
+- A mic stream that raises (or ends) sets `capture_error`, which `AsrBridge.status()` reports; a restart clears it.
+- Undrained, the queue keeps only the newest `maxsize` chunks (oldest dropped, no error).
+- A second `start()` without `stop()` cancels the first pump — only one stream stays open.
 
 ## Open questions
 

@@ -1,2 +1,1 @@
-def hello() -> str:
-    return "Hello from reachy-mini-interaction-wica!"
+"""Reachy Mini Interaction WICA — talk to a WICA-driven Reachy Mini. See specs/_overview.md."""

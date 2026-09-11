@@ -4,6 +4,7 @@ code:
   - src/reachy_mini_interaction_wica/app_ui.py
 tests:
   - tests/test_app.py
+  - tests/test_app_ui.py
 ---
 
 # App
@@ -29,7 +30,7 @@ typed text ─────────────────────▶ wo
                                                                      └─ free text ─▶ output_sink (💭 thought)
 ```
 
-- **Speech in.** A closed ASR segment (over the robot's echo-cancelled mic stream) is written to the World's `speech_input` entry, which triggers one reasoning step. Interim (partial) speech only updates the ASR panel — it never wakes the agent.
+- **Speech in.** A closed ASR segment (over the robot's echo-cancelled mic stream) is written to the World's `speech_input` entry, which triggers one reasoning step. **Every** closed segment is written verbatim — including an empty/whitespace one (a passage that closed on silence), so the agent can react to the user saying nothing (see [asr-bridge.md](asr-bridge.md), "The segment → world rule"). Interim (partial) speech only updates the ASR panel — it never wakes the agent.
 - **Reason.** The WICA Agent renders the World into a prompt, runs inference, and acts.
 - **Speech out.** The agent speaks by calling the `say` **output Command**, which plays real TTS audio through the robot; its free text for the step becomes private reasoning delivered to the `output_sink`.
 - **Act.** The agent can call the robot commands (`play_emotion`, `start_head_tracking` / `stop_head_tracking`, `set_motors_state` / `get_motors_state`) — see [robot-control.md](robot-control.md).
@@ -61,21 +62,23 @@ Debug surface (behind the toggle, off by default):
 3. **World state (live).** The current World rendered as a table (key, value, last-changed) — `speech_input` and any running command entry — so a `say` or `play_emotion` that is "running" is visible while it runs.
 4. **Prompt.** The exact prompt sent to the model, read-only, with a dropdown of every step's prompt (labelled by time + trigger) that auto-snaps to the newest.
 
+**Refresh cost.** Each view is polled by its own `gr.Timer` (0.2 s) but pushes only what changed. The Conversation timer drains new events and re-sends the transcript only when it grew — the transcript is append-only, so its length is an O(1) change signal — and re-sends the Prompt selector/view only on a new step. The World view re-renders only when its HTML differs from the last push, and its timer is **paused while the debug panels are hidden** (showing them resumes it and pushes a fresh render at once). `PanelState`'s change-tracking is read and written under its lock: Gradio runs each timer callback with a per-listener concurrency of one, and the lock keeps the check-and-set correct regardless.
+
 ## Typed-text input
 
-A text box in the ASR panel, **always visible**, is the app's keyboard hatch into the agent. Submitting it writes the text to `speech_input` exactly as a closed ASR segment would — the *same* World update, so it flows through the identical reason → say/act → sink path and shows in the Conversation transcript as ordinary user speech. It is a first-class way in for anyone without a working mic, and — because it needs neither the ASR engine nor an ASR key — it is the path by which the app stays useful when only the WICA (and robot) side is available. It does **not** go through `AsrBridge` (no segment, no interim display); it calls `world.update("speech_input", text)` directly. It shares the one-call-at-a-time limit with spoken input: text submitted while a step is in flight is dropped, same as a segment would be.
+A text box in the ASR panel, **always visible**, is the app's keyboard hatch into the agent. Submitting it writes the text to `speech_input` exactly as a closed ASR segment would — the *same* World update, so it flows through the identical reason → say/act → sink path and shows in the Conversation transcript as ordinary user speech. It is a first-class way in for anyone without a working mic, and — because it needs neither the ASR engine nor an ASR key — it is the path by which the app stays useful when only the WICA (and robot) side is available. It does **not** go through `AsrBridge` (no segment, no interim display); it calls `world.update("speech_input", text)` directly. One difference from a closed segment: an **empty/whitespace typed line is ignored** — it has nothing to reply to. That guard belongs to the typed-text hatch alone; it never gates ASR finals, which reach `speech_input` even when empty. It shares the one-call-at-a-time limit with spoken input: text submitted while a step is in flight is dropped, same as a segment would be.
 
 ## Wiring and lifecycle
 
-`main()` builds the system from a `--config` path:
+`main()` builds the system from a **required** `--config` path. There is no default: the committed `config.example.json` targets a `real` robot, so a bare run exits with argparse's usage message rather than silently loading it (copy the example and pass it explicitly).
 
 1. `load_config(path)` → `AppConfig(wica, tts_engine, asr_engine, reachy)` (see [configuration.md](configuration.md)).
 2. Create the app-owned loop and start its daemon thread (see "One event loop").
 3. Build the **one `ReachyMiniApi`**: `ReachyMiniApi(cfg.reachy.backend, synthesizer=…)`, where the synthesizer is `TTSEngineSynthesizer(cfg.tts_engine)` built in its own guard just before (or `None` if its key is unset — see "No credentials, no robot"), and **enter it on the loop** (`run_coroutine_threadsafe(api.__aenter__(), loop)`) so its media session opens and its async verbs bind to that loop. This single instance backs `say`, the mic stream, and the robot commands.
 4. Build `VoiceOutput(api)` (the `say` output Command) and `RobotControl(api)` (the action commands).
 5. `Wica.init(cfg.wica, output_sink=…, output_command=voice.say, loop=loop)`; subscribe the panels to the instrumentation Events; `wica.world.register("speech_input", str, serialize_fn=…, triggers_llm_call=True)`.
-6. Build `ASREngine(cfg.asr_engine, audio_source=RobotMicSource(api))` and `AsrBridge(engine, on_final_segment=…)`, whose callback writes `speech_input` — the same funnel the typed-text box calls. Register `start_dictation` / `stop_dictation` and the `RobotControl` commands. The bridge is built **after** WICA so its callback resolves against a live agent with no placeholder.
-7. `wica.start()`, then schedule `asr_bridge.start()` onto the loop with `run_coroutine_threadsafe`, then launch the Gradio UI. Teardown (`_shutdown`) closes WICA, then schedules `asr_bridge.stop()` onto the loop, then `__aexit__`s the api on the loop, then stops the loop — the bridge before the api, so the mic pump is cancelled while the media session is still open.
+6. Build one `mic = RobotMicSource(api)`, then `ASREngine(cfg.asr_engine, audio_source=mic)` and `AsrBridge(engine, on_final_segment=…, mic=mic)`, whose callback writes every final verbatim to `speech_input` — the same World update the typed-text box makes, minus the typed path's empty-input guard. Register `start_dictation` / `stop_dictation` and the `RobotControl` commands. The bridge is built **after** WICA so its callback resolves against a live agent with no placeholder.
+7. `wica.start()`, then schedule `asr_bridge.start()` onto the loop with `run_coroutine_threadsafe`, then launch the Gradio UI. Starting and launching both sit **inside** the `try` whose `finally` runs teardown: `build_system` has already entered the robot's media session, so a raise in `wica.start()` / `asr_bridge.start()` still exits it and stops the loop. Teardown (`_shutdown`) closes WICA, then — only if `asr_bridge.status()["running"]` (a bridge can be built but never started) — schedules `asr_bridge.stop()` onto the loop, then `__aexit__`s the api on the loop, then stops the loop — the bridge before the api, so the mic pump is cancelled while the media session is still open. Each step runs **in isolation**, and each loop hop is bounded by a timeout (5 s): a step that raises or hangs is logged and the remaining steps still run, so one failure cannot strand the robot session or the loop thread.
 
 **One event loop — the app owns it; WICA and the robot adopt it.** A single asyncio loop runs the Agent, the `ReachyMiniApi` (its `say`, mic tap, and verbs are all async), and the ASR engine. This is not optional: the `ASREngine` binds `asyncio.get_running_loop()` when it starts, the mic tap streams on that loop, and `say`/robot verbs run there as Commands. The concrete arrangement is forced by one fact — **`Wica` exposes no public accessor for the loop it creates** — so the only way the app can also run the engines and the robot on that loop is to *own* it and inject it:
 
@@ -87,7 +90,7 @@ A text box in the ASR panel, **always visible**, is the app's keyboard hatch int
 
 Like the WICA demo, the app **opens even with keys unset (or no robot reachable)** and says what to fix, rather than crashing. `build_system` degrades along three independent axes, each captured as one line in the UI banner, and nothing contacts a model, ASR, TTS provider, or robot without its prerequisite in place:
 
-- **Agent key missing** (`Wica.init` raises `MissingEnvError`, or `ImportError` for a missing provider extra) — `Agent: …`. Nothing reasons; ASR capture is not started either (there is no consumer for speech). Everything else still builds.
+- **Agent key missing or agent config unusable** (`Wica.init` raises `MissingEnvError`; any other `ConfigError`, e.g. a missing/unreadable `system_prompt_file`; or `ImportError` for a missing provider extra) — `Agent: …`. Nothing reasons; ASR capture is not started either (there is no consumer for speech). Everything else still builds.
 - **TTS key missing** (`TTSEngineSynthesizer` raises when it resolves its key) — `TTS: …`. The robot is still built and entered, with **no synthesizer**: the mic, the ASR bridge, and the robot action commands are unaffected; `say` is registered and returns `"TTS error: …"` when called (the bridge's `say` raises `BridgeError` without a synthesizer).
 - **Robot unreachable** (a `real`/`sim` backend fails to construct or `__aenter__`) — `Robot: …`. There is no `ReachyMiniApi`, so the `say` voice and the robot action commands are **not registered** and no ASR bridge is built (its mic is the robot's). Typed text still drives the agent, so reasoning is visible; the agent simply has nothing to speak or move through.
 

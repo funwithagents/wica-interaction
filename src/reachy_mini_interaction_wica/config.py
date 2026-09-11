@@ -12,14 +12,18 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, get_args
 
 from asr_engine.config import ASREngineConfig
 from tts_engine.config import TTSEngineConfig
 from wica.config import WicaConfig
 
 _REQUIRED_SECTIONS = ("wica", "tts", "asr")
-_REACHY_BACKENDS = ("real", "sim", "fake")
+
+# The robot backends ReachyMiniApi accepts. The Literal lets pyright check callers; it cannot guard a
+# JSON file, so load_config still validates at runtime — against the same set, derived from the type.
+Backend = Literal["real", "sim", "fake"]
+_REACHY_BACKENDS: tuple[Backend, ...] = get_args(Backend)
 
 
 @dataclass
@@ -31,7 +35,7 @@ class ReachyConfig:
     is parsed here rather than delegated.
     """
 
-    backend: str = "real"
+    backend: Backend = "real"
 
 
 @dataclass

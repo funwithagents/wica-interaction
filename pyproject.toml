@@ -24,6 +24,9 @@ dependencies = [
     # this extra (see wica's optional-dependencies: openai, huggingface-hub).
     "wica[anthropic]",
     "gradio>=6",
+    # Imported directly by app_ui.py (langchain_core.messages, to render the Prompt panel), so it is
+    # declared rather than relied on transitively through wica.
+    "langchain-core",
 ]
 
 [project.scripts]

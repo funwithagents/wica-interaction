@@ -48,6 +48,20 @@ _WORLD_TABLE_HEADERS = ["Key", "Value", "Updated"]
 _WORLD_COL_WIDTHS = [34, 44, 22]
 
 
+class _RenderGate:
+    """Returns True only when the rendered value differs from the last one it accepted — so a timer
+    view can skip re-sending an unchanged render to the browser."""
+
+    def __init__(self) -> None:
+        self._last: object = object()  # sentinel: the first value always counts as a change
+
+    def changed(self, value: object) -> bool:
+        if value == self._last:
+            return False
+        self._last = value
+        return True
+
+
 def _describe_trigger(entry: WorldEntry) -> str:
     key = entry.key
     value = entry.current.value
@@ -77,8 +91,9 @@ class PanelState:
         # Every step's prompt, append-only, each {"label", "text"}; never mutated in place.
         self._prompts: list[dict[str, str]] = []
         self._last_trigger_label = "start"
+        # Change-tracking for tick_conversation (what was last pushed); read/written under _state_lock.
         self._last_shown_count = 0
-        self._last_conv_sig: tuple[Any, ...] | None = None
+        self._last_conv_len = 0
         # Reaction grouping: each step is one collapsible group; on_prompt opens it and the step's
         # outputs nest under it via metadata.parent_id. All on the agent loop, so no lock needed.
         self._reaction_count = 0
@@ -150,7 +165,13 @@ class PanelState:
     def tick_conversation(self) -> tuple[Any, Any, Any]:
         """Drain queued chat events into the transcript and snap the prompt view to the newest step.
         Push a new chatbot value only when the transcript actually changed, so gr.Chatbot's autoscroll
-        isn't re-triggered every fire (which would fight a user scrolling up)."""
+        isn't re-triggered every fire (which would fight a user scrolling up). The transcript is
+        append-only — entries are never mutated in place (a reaction's outputs are appended as
+        children; its group header keeps its empty content) — so its length is a sufficient, O(1)
+        change signal; nothing is copied or rebuilt on a tick with no new events."""
+        # Gradio runs this timer callback with its default per-listener concurrency of one; the
+        # check-and-set of the _last_* bookkeeping is still done under the lock, so it stays correct
+        # regardless of how the callback is scheduled.
         with self._state_lock:
             while True:
                 try:
@@ -158,25 +179,20 @@ class PanelState:
                 except queue.Empty:
                     break
                 self._conversation.append(event)
-            conversation = list(self._conversation)
-            conv_sig = tuple(str(m.get("content", "")) for m in conversation)
+
+            chatbot_update: Any = gr.update()
+            if len(self._conversation) != self._last_conv_len:
+                self._last_conv_len = len(self._conversation)
+                chatbot_update = list(self._conversation)
+
+            selector_update: Any = gr.update()
+            prompt_update: Any = gr.update()
             count = len(self._prompts)
-            choices = [(p["label"], i) for i, p in enumerate(self._prompts)]
-            newest_text = self._prompts[-1]["text"] if self._prompts else None
-
-        if conv_sig != self._last_conv_sig:
-            self._last_conv_sig = conv_sig
-            chatbot_update: Any = conversation
-        else:
-            chatbot_update = gr.update()
-
-        if count > self._last_shown_count:
-            self._last_shown_count = count
-            selector_update = gr.update(choices=choices, value=count - 1)
-            prompt_update = gr.update(value=newest_text)
-        else:
-            selector_update = gr.update()
-            prompt_update = gr.update()
+            if count > self._last_shown_count:
+                self._last_shown_count = count
+                choices = [(p["label"], i) for i, p in enumerate(self._prompts)]
+                selector_update = gr.update(choices=choices, value=count - 1)
+                prompt_update = gr.update(value=self._prompts[-1]["text"])
         return chatbot_update, selector_update, prompt_update
 
     def on_select_prompt(self, index: int | None) -> Any:
@@ -254,6 +270,9 @@ def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
         f"**ASR:** {'running' if status['running'] else 'stopped'} · "
         f"**mode:** {mode} (`{status['segmentation_mode']}`)"
     )
+    if status["capture_error"]:
+        # The engine can still say "running" while its mic stream is dead — say so plainly.
+        status_md += f" · ⚠️ **capture:** {status['capture_error']}"
     return display, status_md, gr.update(interactive=bool(status["dictating"]))
 
 
@@ -309,8 +328,23 @@ def build_ui(system: AppSystem) -> gr.Blocks:
         if bridge is not None and loop is not None:
             asyncio.run_coroutine_threadsafe(bridge.stop_dictation(), loop)
 
-    def on_toggle_debug(show: bool) -> Any:
-        return gr.update(visible=show)
+    # The World view re-renders only when its HTML changed since the last push (a 0.2 s timer would
+    # otherwise re-send the whole table every fire).
+    world_gate = _RenderGate()
+
+    def on_world_tick() -> Any:
+        html_now = tick_world(system)
+        return html_now if world_gate.changed(html_now) else gr.update()
+
+    def on_toggle_debug(show: bool) -> tuple[Any, Any, Any]:
+        # Hiding the debug panels pauses the World timer, so a hidden panel does no periodic work;
+        # showing them resumes it and pushes a fresh render at once. (The gate is shared by every
+        # browser session, so this push is also what brings a newly opened tab's World current.)
+        world_update: Any = gr.update()
+        if show:
+            world_update = tick_world(system)
+            world_gate.changed(world_update)
+        return gr.update(visible=show), gr.update(active=show), world_update
 
     with gr.Blocks(title="Reachy Mini Interaction WICA") as demo:
         gr.Markdown("# Talk to a WICA-driven Reachy Mini")
@@ -373,17 +407,22 @@ def build_ui(system: AppSystem) -> gr.Blocks:
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         stop_dictation.click(on_stop_dictation)  # pyright: ignore[reportAttributeAccessIssue]
-        show_debug.change(on_toggle_debug, inputs=show_debug, outputs=debug_panels)  # pyright: ignore[reportAttributeAccessIssue]
         prompt_selector.change(panels.on_select_prompt, inputs=prompt_selector, outputs=prompt_view)  # pyright: ignore[reportAttributeAccessIssue]
 
         # Independent timers so the panels don't share one round-trip (a growing transcript payload
-        # must not bottleneck the live World/ASR views).
+        # must not bottleneck the live World/ASR views). The conversation and ASR timers are always on
+        # (main surface); the conversation timer also refreshes the Prompt view, which it pushes only
+        # on a new step, so that debug view needs no pause of its own.
         conv_timer = gr.Timer(0.2)
         conv_timer.tick(  # pyright: ignore[reportAttributeAccessIssue]
             panels.tick_conversation, outputs=[chatbot, prompt_selector, prompt_view]
         )
-        world_timer = gr.Timer(0.2)
-        world_timer.tick(lambda: tick_world(system), outputs=world_view)  # pyright: ignore[reportAttributeAccessIssue]
+        # The debug panels start hidden, so the World timer starts paused; the toggle drives both.
+        world_timer = gr.Timer(0.2, active=False)
+        world_timer.tick(on_world_tick, outputs=world_view)  # pyright: ignore[reportAttributeAccessIssue]
+        show_debug.change(  # pyright: ignore[reportAttributeAccessIssue]
+            on_toggle_debug, inputs=show_debug, outputs=[debug_panels, world_timer, world_view]
+        )
         asr_timer = gr.Timer(0.2)
         asr_timer.tick(lambda: tick_asr(system), outputs=[asr_live, asr_status, stop_dictation])  # pyright: ignore[reportAttributeAccessIssue]
 

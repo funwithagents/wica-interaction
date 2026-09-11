@@ -63,15 +63,18 @@ On Reachy Mini, TTS must play **through the robot** for echo cancellation to wor
 "reachy": { "backend": "real" }
 ```
 
-- `backend` — one of `"real"` (default), `"sim"` (upstream MuJoCo mockup), or `"fake"` (the bridge's in-package stand-in — no daemon, no hardware; the offline/dev/test path). Validated against that set, raising a clear `ValueError` otherwise.
+- `backend` — one of `"real"` (default), `"sim"` (upstream MuJoCo mockup), or `"fake"` (the bridge's in-package stand-in — no daemon, no hardware; the offline/dev/test path). Validated against that set, raising a clear `ValueError` otherwise. In code the field is typed as the `Backend = Literal["real", "sim", "fake"]` alias, so pyright checks every caller against the closed set; a `Literal` cannot guard values read from JSON, so `load_config` still validates at load — against the same set, derived from the alias with `get_args` so the type and the runtime check cannot drift.
 - Absent-safe: no `reachy` key ⇒ `backend="real"`. (More knobs — a tuned XVF3800 `audio_config` profile, head-tracking weight — may join later; kept minimal in v1.)
 
 ## Loading: `load_config`
 
 ```python
+Backend = Literal["real", "sim", "fake"]
+
+
 @dataclass
 class ReachyConfig:
-    backend: str = "real"
+    backend: Backend = "real"
 
 
 @dataclass
