@@ -7,15 +7,7 @@ tests:
 
 # App
 
-**Status:** Updated
-
-> **Implementation lag (why `Updated`).** The [bridge-integration plan](../plans/_index.md) has landed
-> the core of this wiring: the app builds one `ReachyMiniApi`, routes `say` through the robot speaker,
-> feeds ASR the robot's echo-cancelled mic (`RobotMicSource`), enters/exits the api on the app-owned
-> loop, and drops the local `TTSEngine`. What remains is the robot *action* commands
-> (`play_emotion` / `list_emotions` / head-tracking / motors) named in the data flow and command set
-> below: `RobotControl` is not yet built or registered. Closing that last gap is the
-> [robot-control plan](../plans/_index.md); this spec returns to `Implemented` when it lands.
+**Status:** Implemented
 
 ## Purpose
 
@@ -102,4 +94,4 @@ Like the WICA demo, the app **opens even with keys unset (or no robot reachable)
 ## Open questions
 
 1. **Robot state in the UI.** Whether to surface the robot's connection / motor state in the ASR (or a new) panel — the app holds the `ReachyMiniApi` handle, so it is easy — is a nice-to-have, not wired.
-2. **Seeding emotion names into the prompt.** Whether `main()` calls `api.list_emotions()` at startup to fold the names into the system prompt is the open question carried in [robot-control.md](robot-control.md).
+2. **Seeding emotion names into the prompt.** Whether `main()` calls `api.list_emotions()` at startup to fold the names into the system prompt — deferred; v1 relies on the `list_emotions` command (see [robot-control.md](robot-control.md) open question 1).

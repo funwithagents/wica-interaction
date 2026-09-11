@@ -60,6 +60,7 @@ from wica.config import MissingEnvError
 
 from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
 from reachy_mini_interaction_wica.config import AppConfig, load_config
+from reachy_mini_interaction_wica.robot_control import RobotControl
 from reachy_mini_interaction_wica.tts_output import VoiceOutput
 
 logger = logging.getLogger(__name__)
@@ -456,6 +457,16 @@ def build_system(
         if bridge is not None:
             wica.register_command(bridge.start_dictation)
             wica.register_command(bridge.stop_dictation)
+        # Robot action commands, over the same api as the voice: emotions, head tracking, motors. Only
+        # when the robot is up (no api ⇒ nothing to act through); the agent still speaks/reasons without.
+        if robot is not None:
+            controls = RobotControl(robot)
+            wica.register_command(controls.list_emotions)
+            wica.register_command(controls.play_emotion)
+            wica.register_command(controls.start_head_tracking)
+            wica.register_command(controls.stop_head_tracking)
+            wica.register_command(controls.get_motors_state)
+            wica.register_command(controls.set_motors_state)
         wica.on_agent_prompt.subscribe(panels.on_prompt)
         wica.on_agent_trigger.subscribe(panels.on_trigger)
         wica.on_agent_command.subscribe(panels.on_command)

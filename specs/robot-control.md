@@ -2,11 +2,12 @@
 code:
   - src/reachy_mini_interaction_wica/robot_control.py
 tests:
+  - tests/test_robot_control.py
 ---
 
 # Robot control
 
-**Status:** Draft
+**Status:** Implemented
 
 ## Purpose
 
@@ -69,9 +70,11 @@ Drive `RobotControl` against the bridge's **`fake`** backend (or a fake `ReachyM
 
 A live test (the `sim` or a real robot actually moving) belongs in the opt-in `tests-e2e/` tier.
 
-## Open questions
+## Open questions (v1 resolutions)
 
-1. **Prompt-seeding vs. live `list_emotions`.** Whether the app renders the available emotion names into the system prompt at startup (fewer tool calls, but a static snapshot) or leaves the agent to call `list_emotions` (always current) — or both — is unsettled.
-2. **Compact-intent → emotion resolution.** The bridge keeps `play_emotion(name)` literal. Whether the app/agent layer adds friendlier intent mapping (e.g. "be happy" → a curated move, random fallback within a mood) — which the bridge explicitly leaves to the caller — is deferred.
-3. **Should motor management be agent-facing at all, or app-lifecycle?** Exposing `set_motors_state` to the model is one option; another is the app enabling motors at startup and hiding the concern. v1 leans agent-facing (the model can rest the robot when idle), but this needs validation on hardware, alongside the bridge's own open question on whether real hardware honors state changes.
-4. **Camera / "seeing".** `get_camera_frame` exists in the bridge but is intentionally unwired here; adding a perception command (frame → the World, or a describe-what-you-see verb) is the obvious post-v1 extension.
+All four are settled as deferrals — v1 ships the command set above; each of these is a post-v1 refinement, not a load-bearing unknown.
+
+1. **Prompt-seeding vs. live `list_emotions`.** **Resolved for v1: rely on the command.** The agent calls `list_emotions` on demand (always current), and [prompts/assistant.md](../prompts/assistant.md) already tells it to when unsure of a name. Prompt-seeding is deferred: the system prompt is a static file read inside `Wica.init`, with no append seam to fold startup-fetched names into — adding one is the future optimization (fewer tool calls, at the cost of a static snapshot).
+2. **Compact-intent → emotion resolution.** Deferred. The bridge keeps `play_emotion(name)` literal; whether the app/agent layer adds friendlier intent mapping (e.g. "be happy" → a curated move, random fallback within a mood) — which the bridge explicitly leaves to the caller — stays out of v1.
+3. **Should motor management be agent-facing at all, or app-lifecycle?** **Resolved for v1: agent-facing.** All six commands (including `set_motors_state`) are exposed, so the model can enable to move and rest the robot when idle. Whether real hardware honors state changes (the bridge's own open question) — and whether an app-lifecycle default enable is friendlier — is deferred to hardware validation.
+4. **Camera / "seeing".** Deferred post-v1. `get_camera_frame` exists in the bridge but is intentionally unwired here; a perception command (frame → the World, or a describe-what-you-see verb) is the obvious extension.

@@ -31,6 +31,7 @@ class FakeReachyMiniApi:
 
     def __init__(self, *, raise_on_enter: str | None = None) -> None:
         self.said: list[str] = []
+        self.played: list[str] = []
         self.entered = False
         self.exited = False
         self._raise_on_enter = raise_on_enter
@@ -46,6 +47,13 @@ class FakeReachyMiniApi:
 
     async def say(self, text: str) -> None:
         self.said.append(text)
+
+    # The robot-control slice: enough for a wiring test that a registered action command routes here.
+    async def get_motors_state(self) -> str:
+        return "enabled"
+
+    async def play_emotion(self, name: str) -> None:
+        self.played.append(name)
 
 
 class FakeASREngine:
@@ -126,6 +134,28 @@ def test_typed_text_drives_agent_and_speaks_through_robot() -> None:
         # The typed-text box and the ASR bridge share this one World update.
         system.submit_speech("hi")
         assert _wait_until(lambda: fake_api.said == ["hello there"])
+    finally:
+        system.wica.close()
+
+
+def test_robot_action_command_is_registered_and_routes_to_the_robot() -> None:
+    """A turn where the agent issues a robot action command reaches the robot — proving build_system
+    registered the RobotControl commands and routes them through the shared api."""
+    fake_api = FakeReachyMiniApi()
+    script = [
+        {"tool_calls": [{"name": "play_emotion", "args": {"name": "happy"}}]},
+        {"tool_calls": [{"name": "noop", "args": {}}]},
+    ]
+    system = build_system(
+        _config(script=script),
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+    )
+    assert system.wica is not None
+    system.wica.start()
+    try:
+        system.submit_speech("show me happy")
+        assert _wait_until(lambda: fake_api.played == ["happy"])
     finally:
         system.wica.close()
 
