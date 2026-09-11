@@ -42,7 +42,7 @@ The load-bearing rule: **partial speech is visible but inert; only a *closed* se
 
 Dictation is entered by the **agent**, on request, via a `start_dictation` Command; it captures a single passage (`end_on_final_segment=True`) and reverts automatically. It changes *only* how long a segment grows — dictated speech still feeds the agent and still gets a reply. A UI status indicator plus a **Stop dictation** button give a manual hatch.
 
-## The five modules
+## The six modules
 
 Each core concept is one module in `src/reachy_mini_interaction_wica/`, governed by one spec:
 
@@ -52,7 +52,8 @@ Each core concept is one module in `src/reachy_mini_interaction_wica/`, governed
 | `asr_bridge.py` | Speech-in: owns the `ASREngine` fed the robot's echo-cancelled mic stream, maps segments to `speech_input` (final only) + the live view, hosts the dictation command | [asr-bridge.md](asr-bridge.md) |
 | `tts_output.py` | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | [tts-output.md](tts-output.md) |
 | `robot_control.py` | Robot actions: WICA commands wrapping the bridge's `play_emotion` / `list_emotions` / head-tracking / motor-state verbs | [robot-control.md](robot-control.md) |
-| `app.py` | The Gradio UI + wiring: builds ASR + the robot (via `ReachyMiniApi`) behind WICA on one event loop, the observability + ASR panels, `main()` | [app.md](app.md) |
+| `app.py` | App wiring + lifecycle: builds ASR + the robot (via `ReachyMiniApi`) behind WICA on one event loop, registers commands, `main()` | [app.md](app.md) |
+| `app_ui.py` | The Gradio presentation layer: the instrumentation `PanelState`, the observability + ASR panel layout (`build_ui`), the live views the timers poll | [app.md](app.md) |
 
 Plus two cross-cutting specs: [project.md](project.md) (tooling/layout) and [testing.md](testing.md) (the two-tier test strategy).
 

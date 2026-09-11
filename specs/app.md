@@ -1,6 +1,7 @@
 ---
 code:
   - src/reachy_mini_interaction_wica/app.py
+  - src/reachy_mini_interaction_wica/app_ui.py
 tests:
   - tests/test_app.py
 ---
@@ -8,6 +9,8 @@ tests:
 # App
 
 **Status:** Implemented
+
+> **Code layout.** The app is split in two modules: [app.py](../src/reachy_mini_interaction_wica/app.py) holds the **wiring + lifecycle** (`build_system`, the `AppSystem` snapshot, `main`), and [app_ui.py](../src/reachy_mini_interaction_wica/app_ui.py) holds the **Gradio presentation layer** (the instrumentation `PanelState`, the `build_ui` layout, and the live views — `tick_world` / `tick_asr` — the timers poll). `app` imports `PanelState` / `build_ui` from `app_ui`; `app_ui` depends on `app` only for the `AppSystem` type, so there is no import cycle.
 
 ## Purpose
 
