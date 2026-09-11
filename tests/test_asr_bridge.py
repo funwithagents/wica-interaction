@@ -33,7 +33,9 @@ class FakeASREngine:
     to exercise the bridge's error path.
     """
 
-    def __init__(self, *, running: bool = True, segmentation_mode: str = "utterance") -> None:
+    def __init__(
+        self, *, running: bool = True, segmentation_mode: str = "utterance"
+    ) -> None:
         # AsrBridge.__init__ overwrites this with its own _on_segment.
         self.on_speech_segment = None
         self._running = running
@@ -57,7 +59,10 @@ class FakeASREngine:
         self, end_on_final_segment: bool = True, segmentation_mode: str | None = None
     ) -> None:
         self.start_dictation_calls.append(
-            {"end_on_final_segment": end_on_final_segment, "segmentation_mode": segmentation_mode}
+            {
+                "end_on_final_segment": end_on_final_segment,
+                "segmentation_mode": segmentation_mode,
+            }
         )
         if self.raise_on_start_dictation is not None:
             raise ValueError(self.raise_on_start_dictation)
@@ -217,7 +222,11 @@ class FakeMicApi:
     """
 
     def __init__(
-        self, chunks: list[bytes], *, hold_open: bool = False, raise_after: str | None = None
+        self,
+        chunks: list[bytes],
+        *,
+        hold_open: bool = False,
+        raise_after: str | None = None,
     ) -> None:
         self._chunks = chunks
         self._hold_open = hold_open
@@ -276,7 +285,9 @@ def test_robot_mic_source_stop_cancels_pump() -> None:
         await _take(queue, 1)  # the stream is live
         assert api.active == 1
         source.stop()
-        closed = await _eventually(lambda: api.active == 0)  # the cancelled pump closed the stream
+        closed = await _eventually(
+            lambda: api.active == 0
+        )  # the cancelled pump closed the stream
         return api.active, closed, source.capture_error
 
     active, closed, error = run(scenario())
@@ -301,11 +312,16 @@ def test_pump_error_is_recorded_and_surfaced() -> None:
     assert source.capture_error is not None and "usb unplugged" in source.capture_error
 
     bridge = AsrBridge(
-        cast(ASREngine, FakeASREngine(running=True)), on_final_segment=lambda _t: None, mic=source
+        cast(ASREngine, FakeASREngine(running=True)),
+        on_final_segment=lambda _t: None,
+        mic=source,
     )
     status = bridge.status()
     assert status["running"] is True
-    assert status["capture_error"] is not None and "usb unplugged" in status["capture_error"]
+    assert (
+        status["capture_error"] is not None
+        and "usb unplugged" in status["capture_error"]
+    )
 
 
 def test_stream_end_is_recorded_and_a_restart_clears_it() -> None:

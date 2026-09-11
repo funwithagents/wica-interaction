@@ -53,7 +53,9 @@ class _RenderGate:
     view can skip re-sending an unchanged render to the browser."""
 
     def __init__(self) -> None:
-        self._last: object = object()  # sentinel: the first value always counts as a change
+        self._last: object = (
+            object()
+        )  # sentinel: the first value always counts as a change
 
     def changed(self, value: object) -> bool:
         if value == self._last:
@@ -135,7 +137,9 @@ class PanelState:
             self._events.put(self._reaction_child("🚫 noop", "chose not to react"))
             return
         rendered = ", ".join(f"{k}={v!r}" for k, v in command.args.items())
-        self._events.put(self._reaction_child(f"🦾 {command.name}", f"{command.name}({rendered})"))
+        self._events.put(
+            self._reaction_child(f"🦾 {command.name}", f"{command.name}({rendered})")
+        )
 
     def on_prompt(self, messages: list[BaseMessage]) -> None:
         """Capture the exact messages sent to the model (labelled by time + trigger) and open this
@@ -145,7 +149,9 @@ class PanelState:
         stamp = datetime.now().astimezone().strftime("%H:%M:%S")
         trigger_label = self._last_trigger_label
         with self._state_lock:
-            self._prompts.append({"label": f"{stamp} — {trigger_label}", "text": rendered})
+            self._prompts.append(
+                {"label": f"{stamp} — {trigger_label}", "text": rendered}
+            )
 
         self._reaction_count += 1
         self._current_reaction_id = f"reaction-{self._reaction_count}"
@@ -236,7 +242,9 @@ def _render_message(m: BaseMessage) -> str:
     assistant message carries in its structured field (its .content is otherwise blank)."""
     lines = [f"### {m.type.upper()}"]
     if isinstance(m, ToolMessage):
-        lines.append(f"🔧 result for [id={m.tool_call_id}] => {_flatten_content(m.content)}")
+        lines.append(
+            f"🔧 result for [id={m.tool_call_id}] => {_flatten_content(m.content)}"
+        )
         return "\n".join(lines)
     body = _flatten_content(m.content)
     if body:
@@ -356,7 +364,7 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                 f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
                 "own key is set. With no robot, the `say` voice and the robot actions are not registered "
                 "(the agent reasons but cannot speak or move); with no TTS key, `say` exists but reports "
-                "a TTS error. For offline development, set `reachy.backend` to `\"fake\"` or `\"sim\"`."
+                'a TTS error. For offline development, set `reachy.backend` to `"fake"` or `"sim"`.'
             )
         gr.Markdown(
             "Speak (or type) a turn; the assistant reasons over the World and replies with its **🗣️ "
@@ -401,13 +409,18 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                         interactive=True,
                     )
                     prompt_view = gr.Textbox(
-                        show_label=False, lines=16, interactive=False, value=_NO_PROMPT_YET
+                        show_label=False,
+                        lines=16,
+                        interactive=False,
+                        value=_NO_PROMPT_YET,
                     )
 
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         stop_dictation.click(on_stop_dictation)  # pyright: ignore[reportAttributeAccessIssue]
-        prompt_selector.change(panels.on_select_prompt, inputs=prompt_selector, outputs=prompt_view)  # pyright: ignore[reportAttributeAccessIssue]
+        prompt_selector.change(
+            panels.on_select_prompt, inputs=prompt_selector, outputs=prompt_view
+        )  # pyright: ignore[reportAttributeAccessIssue]
 
         # Independent timers so the panels don't share one round-trip (a growing transcript payload
         # must not bottleneck the live World/ASR views). The conversation and ASR timers are always on
@@ -421,9 +434,13 @@ def build_ui(system: AppSystem) -> gr.Blocks:
         world_timer = gr.Timer(0.2, active=False)
         world_timer.tick(on_world_tick, outputs=world_view)  # pyright: ignore[reportAttributeAccessIssue]
         show_debug.change(  # pyright: ignore[reportAttributeAccessIssue]
-            on_toggle_debug, inputs=show_debug, outputs=[debug_panels, world_timer, world_view]
+            on_toggle_debug,
+            inputs=show_debug,
+            outputs=[debug_panels, world_timer, world_view],
         )
         asr_timer = gr.Timer(0.2)
-        asr_timer.tick(lambda: tick_asr(system), outputs=[asr_live, asr_status, stop_dictation])  # pyright: ignore[reportAttributeAccessIssue]
+        asr_timer.tick(
+            lambda: tick_asr(system), outputs=[asr_live, asr_status, stop_dictation]
+        )  # pyright: ignore[reportAttributeAccessIssue]
 
     return demo

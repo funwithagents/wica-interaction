@@ -41,8 +41,10 @@ unchanged; only how often/how much the views recompute and push changes.
    ```python
    class _RenderGate:
        """Returns True only when the rendered value differs from the last one it accepted."""
+
        def __init__(self) -> None:
            self._last: object = object()  # sentinel: first call always changes
+
        def changed(self, value: object) -> bool:
            if value == self._last:
                return False

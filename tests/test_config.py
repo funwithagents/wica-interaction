@@ -81,7 +81,9 @@ def test_system_prompt_file_is_located_against_config_dir(tmp_path: Path) -> Non
     # A relative system_prompt_file must resolve against the config file's own directory,
     # proving base_dir was threaded into WicaConfig.from_dict. Compare *resolved* paths:
     # WICA calls Path.resolve(), which canonicalizes symlinks (macOS /var -> /private/var).
-    cfg = load_config(_write(tmp_path, _composed(system_prompt_file="prompts/assistant.md")))
+    cfg = load_config(
+        _write(tmp_path, _composed(system_prompt_file="prompts/assistant.md"))
+    )
 
     located = cfg.wica.agent.system_prompt_file
     assert located is not None
@@ -120,11 +122,15 @@ def test_missing_section_names_the_missing_key(tmp_path: Path) -> None:
 def test_section_without_engine_block_raises(tmp_path: Path) -> None:
     config = _composed()
     config["tts"] = {"not_engine": {}}
-    with pytest.raises(ValueError, match="section 'tts' must be an object with an 'engine' block"):
+    with pytest.raises(
+        ValueError, match="section 'tts' must be an object with an 'engine' block"
+    ):
         load_config(_write(tmp_path, config))
 
 
-def test_loads_with_credentials_unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_loads_with_credentials_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # The composed file references keys by env-var name; with those vars unset, loading must still
     # succeed (no env read at load — the "app opens without credentials" contract).
     for var in ("WICA_ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "DEEPGRAM_API_KEY"):
@@ -161,7 +167,8 @@ def test_invalid_reachy_backend_raises(tmp_path: Path) -> None:
     config["reachy"] = {"backend": "hologram"}
     # The message lists exactly the allowed set (derived from the `Backend` Literal), then the culprit.
     with pytest.raises(
-        ValueError, match="reachy.backend must be one of 'real', 'sim', 'fake', got 'hologram'"
+        ValueError,
+        match="reachy.backend must be one of 'real', 'sim', 'fake', got 'hologram'",
     ):
         load_config(_write(tmp_path, config))
 

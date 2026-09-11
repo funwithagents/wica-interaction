@@ -127,7 +127,9 @@ def build_system(
     bypassing the real build.
     """
     loop = asyncio.new_event_loop()
-    threading.Thread(target=loop.run_forever, name="reachy-mini-interaction-loop", daemon=True).start()
+    threading.Thread(
+        target=loop.run_forever, name="reachy-mini-interaction-loop", daemon=True
+    ).start()
 
     panels = PanelState()
     missing: list[str] = []
@@ -151,7 +153,9 @@ def build_system(
     robot: ReachyMiniApi | None = None
     try:
         robot = (
-            api if api is not None else ReachyMiniApi(config.reachy.backend, synthesizer=synthesizer)
+            api
+            if api is not None
+            else ReachyMiniApi(config.reachy.backend, synthesizer=synthesizer)
         )
         asyncio.run_coroutine_threadsafe(robot.__aenter__(), loop).result()
     except Exception as exc:  # noqa: BLE001 - any construct/connect failure degrades, it never crashes
@@ -215,7 +219,9 @@ def build_system(
 
     # --- Wire the agent to the World, the commands, and the panels ------------------------------
     if wica is not None:
-        wica.world.register("speech_input", str, serialize_fn=_speech_input, triggers_llm_call=True)
+        wica.world.register(
+            "speech_input", str, serialize_fn=_speech_input, triggers_llm_call=True
+        )
         if bridge is not None:
             wica.register_command(bridge.start_dictation)
             wica.register_command(bridge.stop_dictation)
@@ -250,7 +256,9 @@ def _start(system: AppSystem) -> None:
     if system.wica is not None:
         system.wica.start()
         if system.bridge is not None and system.loop is not None:
-            asyncio.run_coroutine_threadsafe(system.bridge.start(), system.loop).result()
+            asyncio.run_coroutine_threadsafe(
+                system.bridge.start(), system.loop
+            ).result()
 
 
 def _degraded_system(message: str) -> AppSystem:
@@ -280,7 +288,9 @@ def _run_on_loop(
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
         future.result(_SHUTDOWN_TIMEOUT_S)
-    except Exception:  # one teardown step must not abort the rest (a timeout lands here too)
+    except (
+        Exception
+    ):  # one teardown step must not abort the rest (a timeout lands here too)
         future.cancel()
         logger.exception("teardown step %r failed", step)
 

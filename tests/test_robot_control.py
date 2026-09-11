@@ -90,7 +90,9 @@ def test_movement_needs_motors_enabled_and_does_not_move_while_off() -> None:
 def test_movement_succeeds_after_enabling_motors() -> None:
     control, robot = _control()
 
-    assert "set_motors_state('enabled')" in run(control.start_head_tracking())  # off ⇒ refused
+    assert "set_motors_state('enabled')" in run(
+        control.start_head_tracking()
+    )  # off ⇒ refused
 
     run(control.set_motors_state("enabled"))
     result = run(control.start_head_tracking())

@@ -48,7 +48,7 @@ A live test needs real credentials, and it must **skip — never fail** — when
 
 ## Tooling
 
-- **`pytest`** is the runner; **`ruff`** lints/formats; **`pyright`** (`standard` mode) type-checks. All three are the gate after any change — lint, type check, and tests must pass before work is considered done (see [AGENTS.md](../AGENTS.md), "Verification").
+- **`pytest`** is the runner; **`ruff`** lints/formats; **`pyright`** (`standard` mode) type-checks. All three are the gate after any change — lint (`ruff check`), format (`ruff format`), type check, and tests must pass before work is considered done (see [AGENTS.md](../AGENTS.md), "Verification").
 - **`pyright` covers test code too:** its `include` is `src`, `tests`, and `tests-e2e`, so tests are type-checked alongside the library rather than being a blind spot.
 
 ## Open questions

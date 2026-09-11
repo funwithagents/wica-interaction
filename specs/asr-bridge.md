@@ -41,11 +41,19 @@ The `ASREngine` reads from an injected **`audio_source`** (`source.start()` retu
 class RobotMicSource:
     """Pumps ReachyMiniApi.audio_input() into the asyncio.Queue[bytes] the ASREngine drains."""
 
-    def __init__(self, api: ReachyMiniApi, *, maxsize: int = _MIC_QUEUE_MAXSIZE) -> None: ...
-    def start(self) -> asyncio.Queue[bytes]: ...  # cancel any live pump, spawn a fresh one, return its queue
-    def stop(self) -> None: ...                   # cancel the pump task
+    def __init__(
+        self, api: ReachyMiniApi, *, maxsize: int = _MIC_QUEUE_MAXSIZE
+    ) -> None: ...
+    def start(
+        self,
+    ) -> asyncio.Queue[
+        bytes
+    ]: ...  # cancel any live pump, spawn a fresh one, return its queue
+    def stop(self) -> None: ...  # cancel the pump task
     @property
-    def capture_error(self) -> str | None: ...    # why capture stopped on its own; None while healthy
+    def capture_error(
+        self,
+    ) -> str | None: ...  # why capture stopped on its own; None while healthy
 ```
 
 `start()`/`stop()` are **synchronous** — that is the [`AudioSource`](../../asr-engine/specs/audio-source.md) protocol the `ASREngine` drives its injected source through: the engine calls `audio_source.start()` (not awaited) to obtain the queue and `audio_source.stop()` on teardown, exactly as the bundled `AudioCapture` is called. `start()` runs on the engine's loop (the engine calls it from within its start coroutine), so it grabs `asyncio.get_running_loop()` and `loop.create_task(pump)` to spawn the pump task, then returns the queue immediately; the `async for chunk in api.audio_input()` loop lives in that pump task, not in `start`. `stop()` cancels the task. The source must be **restartable** (the engine may `start()` again after a `stop()`), so `start()` resets its queue, task, and `capture_error` each call — and first cancels any pump still live from a `start()` with no intervening `stop()`, so a pump task is never orphaned. No `await`-able work happens in `start`/`stop` themselves, so an async signature would buy nothing and would break the sync protocol the engine expects.

@@ -89,8 +89,12 @@ def load_config(path: str) -> AppConfig:
 
     return AppConfig(
         wica=WicaConfig.from_dict(data["wica"], base_dir=base_dir),
-        tts_engine=TTSEngineConfig.from_dict(_engine_block(data["tts"], name="tts", path=path)),
-        asr_engine=ASREngineConfig.from_dict(_engine_block(data["asr"], name="asr", path=path)),
+        tts_engine=TTSEngineConfig.from_dict(
+            _engine_block(data["tts"], name="tts", path=path)
+        ),
+        asr_engine=ASREngineConfig.from_dict(
+            _engine_block(data["asr"], name="asr", path=path)
+        ),
         reachy=_reachy_config(data.get("reachy"), path=path),
     )
 

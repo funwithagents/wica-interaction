@@ -48,7 +48,9 @@ class RobotMicSource:
     builds (same connection/media session as ``say``).
     """
 
-    def __init__(self, api: ReachyMiniApi, *, maxsize: int = _MIC_QUEUE_MAXSIZE) -> None:
+    def __init__(
+        self, api: ReachyMiniApi, *, maxsize: int = _MIC_QUEUE_MAXSIZE
+    ) -> None:
         self._api = api
         self._maxsize = maxsize
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=maxsize)

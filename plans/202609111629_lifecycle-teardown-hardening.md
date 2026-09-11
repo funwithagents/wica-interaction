@@ -55,7 +55,9 @@ ASR mic pump (see the mic-source plan) or the input funnel semantics (see the em
    and swallowing any failure so the next step still runs:
 
    ```python
-   def _run_on_loop(loop: asyncio.AbstractEventLoop, coro: Coroutine[Any, Any, Any], *, step: str) -> None:
+   def _run_on_loop(
+       loop: asyncio.AbstractEventLoop, coro: Coroutine[Any, Any, Any], *, step: str
+   ) -> None:
        try:
            asyncio.run_coroutine_threadsafe(coro, loop).result(_SHUTDOWN_TIMEOUT_S)
        except Exception:  # noqa: BLE001 - one teardown step must not abort the rest

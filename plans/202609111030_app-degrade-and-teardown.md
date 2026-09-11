@@ -128,11 +128,16 @@ def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
         assert system.voice is not None  # … so the voice exists (say is registered) …
         assert system.bridge is not None  # … and so does the mic-fed ASR bridge
         # The failure is reported on the TTS axis, naming the env var — not as a robot failure.
-        assert any(m.startswith("TTS:") and "WICA_TEST_UNSET_TTS_KEY" in m for m in system.missing)
+        assert any(
+            m.startswith("TTS:") and "WICA_TEST_UNSET_TTS_KEY" in m
+            for m in system.missing
+        )
         assert not any(m.startswith("Robot:") for m in system.missing)
         # say degrades to a readable string on the app loop (VoiceOutput maps the BridgeError).
         assert system.loop is not None
-        result = asyncio.run_coroutine_threadsafe(system.voice.say("hi"), system.loop).result(2.0)
+        result = asyncio.run_coroutine_threadsafe(
+            system.voice.say("hi"), system.loop
+        ).result(2.0)
         assert result.startswith("TTS error:")
         # The robot action commands were registered (the fake honors motor state).
         assert system.wica is not None
@@ -152,16 +157,18 @@ Run the gate. If pyright complains that `system.voice` may be `None` inside the 
 In [app.py](../src/reachy_mini_interaction_wica/app.py), find the end of `main()`:
 
 ```python
-    try:
-        build_ui(system).launch()
-    finally:
-        if system.wica is not None:
-            system.wica.close()
-        if system.api is not None and system.loop is not None:
-            # Close the media session + robot connection on the loop before the loop stops.
-            asyncio.run_coroutine_threadsafe(system.api.__aexit__(None, None, None), system.loop).result()
-        if system.loop is not None:
-            system.loop.call_soon_threadsafe(system.loop.stop)
+try:
+    build_ui(system).launch()
+finally:
+    if system.wica is not None:
+        system.wica.close()
+    if system.api is not None and system.loop is not None:
+        # Close the media session + robot connection on the loop before the loop stops.
+        asyncio.run_coroutine_threadsafe(
+            system.api.__aexit__(None, None, None), system.loop
+        ).result()
+    if system.loop is not None:
+        system.loop.call_soon_threadsafe(system.loop.stop)
 ```
 
 Replace with:
@@ -186,7 +193,9 @@ def _shutdown(system: AppSystem) -> None:
         asyncio.run_coroutine_threadsafe(system.bridge.stop(), system.loop).result()
     if system.api is not None and system.loop is not None:
         # Close the media session + robot connection on the loop before the loop stops.
-        asyncio.run_coroutine_threadsafe(system.api.__aexit__(None, None, None), system.loop).result()
+        asyncio.run_coroutine_threadsafe(
+            system.api.__aexit__(None, None, None), system.loop
+        ).result()
     if system.loop is not None:
         system.loop.call_soon_threadsafe(system.loop.stop)
 ```
@@ -244,18 +253,18 @@ Run the gate. The project's ruff config uses the default rule set, which does no
 In [app_ui.py](../src/reachy_mini_interaction_wica/app_ui.py), find:
 
 ```python
-                f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
-                "own key is set, even with no robot (speech-out and robot actions will report the robot "
-                "as missing). For offline development, set `reachy.backend` to `\"fake\"` or `\"sim\"`."
+f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
+"own key is set, even with no robot (speech-out and robot actions will report the robot "
+'as missing). For offline development, set `reachy.backend` to `"fake"` or `"sim"`.'
 ```
 
 Replace with:
 
 ```python
-                f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
-                "own key is set. With no robot, the `say` voice and the robot actions are not registered "
-                "(the agent reasons but cannot speak or move); with no TTS key, `say` exists but reports "
-                "a TTS error. For offline development, set `reachy.backend` to `\"fake\"` or `\"sim\"`."
+f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
+"own key is set. With no robot, the `say` voice and the robot actions are not registered "
+"(the agent reasons but cannot speak or move); with no TTS key, `say` exists but reports "
+'a TTS error. For offline development, set `reachy.backend` to `"fake"` or `"sim"`.'
 ```
 
 Run the gate (ruff line length is the only thing that can bite here).

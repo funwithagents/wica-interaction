@@ -55,16 +55,23 @@ def test_tick_conversation_pushes_only_on_new_events() -> None:
     _step(panels, "hi", prompt="PROMPT-1")
     first = panels.tick_conversation()[0]
     assert isinstance(first, list)
-    assert [m["role"] for m in first] == ["user", "assistant"]  # the input, then the reaction group
+    assert [m["role"] for m in first] == [
+        "user",
+        "assistant",
+    ]  # the input, then the reaction group
     assert "hi" in first[0]["content"]
 
-    assert panels.tick_conversation()[0] == _NO_OP  # no new events ⇒ no re-push (no autoscroll)
+    assert (
+        panels.tick_conversation()[0] == _NO_OP
+    )  # no new events ⇒ no re-push (no autoscroll)
 
     panels.on_command(CommandIssued(name="say", args={"text": "hello back"}))
     grown = panels.tick_conversation()[0]
     assert isinstance(grown, list) and len(grown) == 3
     assert grown[-1]["content"] == "hello back"
-    assert grown[-1]["metadata"]["parent_id"] == first[1]["metadata"]["id"]  # nested in the step
+    assert (
+        grown[-1]["metadata"]["parent_id"] == first[1]["metadata"]["id"]
+    )  # nested in the step
 
 
 def test_tick_conversation_snaps_prompt_selector_to_newest() -> None:
@@ -78,7 +85,9 @@ def test_tick_conversation_snaps_prompt_selector_to_newest() -> None:
     assert "PROMPT-2" in prompt["value"]
 
     _, selector_again, prompt_again = panels.tick_conversation()
-    assert selector_again == _NO_OP and prompt_again == _NO_OP  # not re-pushed without a new step
+    assert (
+        selector_again == _NO_OP and prompt_again == _NO_OP
+    )  # not re-pushed without a new step
 
     # Picking an older step from the dropdown shows that step's exact prompt.
     assert "PROMPT-1" in panels.on_select_prompt(0)

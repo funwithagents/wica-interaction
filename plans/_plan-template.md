@@ -20,4 +20,4 @@ Ordered, buildable steps. Each should be concrete enough to implement without re
 
 ## Verification
 
-How to confirm it's done: the specific tests to add/run, plus lint + type-check + full test run. Mark this plan `Done` (here and in [_index.md](_index.md)) only once all pass.
+How to confirm it's done: the specific tests to add/run, plus lint + format + type-check + full test run. Mark this plan `Done` (here and in [_index.md](_index.md)) only once all pass.

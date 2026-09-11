@@ -82,13 +82,14 @@ Some tests call real external services over the network. They live in `tests-e2e
 
 ## Verification
 
-After any code change, run linting, type checking, and tests, and fix any failures before considering the work done.
+After any code change, run linting, formatting, type checking, and tests (see Commands), and fix any failures before considering the work done. `ruff format .` rewrites files in place — its changes belong in the same change as the work.
 
 ## Commands
 
 ```
 uv sync --dev
 uv run ruff check .
+uv run ruff format .
 uv run pyright
 uv run pytest
 ```

@@ -7,7 +7,9 @@ _PKG = _REPO_ROOT / "src" / "reachy_mini_interaction_wica"
 _SPECS_DIR = _REPO_ROOT / "specs"
 
 # Matches link targets like `src/reachy_mini_interaction_wica/foo.py` anywhere in AGENTS.md.
-_MODULE_LINK = re.compile(r"src/reachy_mini_interaction_wica/([A-Za-z_][A-Za-z0-9_]*\.py)")
+_MODULE_LINK = re.compile(
+    r"src/reachy_mini_interaction_wica/([A-Za-z_][A-Za-z0-9_]*\.py)"
+)
 
 # Package glue that isn't a spec'd concept, so it needs no owning spec.
 _NON_CONCEPT_MODULES = {"__init__.py"}

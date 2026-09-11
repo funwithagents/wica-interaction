@@ -48,6 +48,7 @@ delivers every final — empty included. It also fixes the tautological
        if wica is not None and wica.is_running:
            wica.world.update("speech_input", text)
 
+
    def submit_speech(text: str) -> None:
        # The typed-text path: an empty typed line has nothing to reply to, so it is inert.
        text = text.strip()

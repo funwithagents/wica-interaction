@@ -31,7 +31,9 @@ if TYPE_CHECKING:
     from reachy_mini_bridge.api import ReachyMiniApi
 
 # The one motor-precondition message: it names the exact fix so the agent can enable and retry.
-_MOTORS_OFF = "Can't do that: the motors are off. Call set_motors_state('enabled') first."
+_MOTORS_OFF = (
+    "Can't do that: the motors are off. Call set_motors_state('enabled') first."
+)
 
 
 class RobotControl:

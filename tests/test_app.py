@@ -42,7 +42,9 @@ class FakeReachyMiniApi:
     (shared with `FakeASREngine`) to record teardown steps in order.
     """
 
-    def __init__(self, *, raise_on_enter: str | None = None, log: list[str] | None = None) -> None:
+    def __init__(
+        self, *, raise_on_enter: str | None = None, log: list[str] | None = None
+    ) -> None:
         self.said: list[str] = []
         self.played: list[str] = []
         self.entered = False
@@ -171,7 +173,9 @@ def test_typed_text_drives_agent_and_speaks_through_robot() -> None:
         asr_engine=cast(ASREngine, FakeASREngine()),
     )
     try:
-        assert fake_api.entered  # build_system opened the robot's media session on the loop
+        assert (
+            fake_api.entered
+        )  # build_system opened the robot's media session on the loop
         assert system.voice is not None and system.bridge is not None
         _start(system)
         # The typed-text box writes the same World update a closed ASR segment makes.
@@ -222,7 +226,9 @@ def test_empty_typed_text_is_ignored() -> None:
         # transcript is complete for inputs by now.
         chatbot, _, _ = system.panels.tick_conversation()
         assert isinstance(chatbot, list)
-        assert [m["content"] for m in chatbot if m["role"] == "user"] == ['🗣️ "a real turn"']
+        assert [m["content"] for m in chatbot if m["role"] == "user"] == [
+            '🗣️ "a real turn"'
+        ]
     finally:
         _shutdown(system)
 
@@ -233,12 +239,18 @@ def _final_segment(transcript: str) -> SpeechSegment:
     )
 
 
-def _emit_segment(system: AppSystem, fake_asr: FakeASREngine, segment: SpeechSegment) -> None:
+def _emit_segment(
+    system: AppSystem, fake_asr: FakeASREngine, segment: SpeechSegment
+) -> None:
     """Emit *segment* the way the real ASREngine does: await its `on_speech_segment` callback (which
     the bridge wired to itself) on the app loop."""
     assert system.loop is not None
-    assert fake_asr.on_speech_segment is not None  # the bridge claimed the engine's callback
-    asyncio.run_coroutine_threadsafe(fake_asr.on_speech_segment(segment), system.loop).result(2.0)
+    assert (
+        fake_asr.on_speech_segment is not None
+    )  # the bridge claimed the engine's callback
+    asyncio.run_coroutine_threadsafe(
+        fake_asr.on_speech_segment(segment), system.loop
+    ).result(2.0)
 
 
 def test_closed_segment_reaches_agent_like_typed_text() -> None:
@@ -365,11 +377,16 @@ def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
         assert system.voice is not None  # … so the voice exists (say is registered) …
         assert system.bridge is not None  # … and so does the mic-fed ASR bridge
         # The failure is reported on the TTS axis, naming the env var — not as a robot failure.
-        assert any(m.startswith("TTS:") and "WICA_TEST_UNSET_TTS_KEY" in m for m in system.missing)
+        assert any(
+            m.startswith("TTS:") and "WICA_TEST_UNSET_TTS_KEY" in m
+            for m in system.missing
+        )
         assert not any(m.startswith("Robot:") for m in system.missing)
         # say degrades to a readable string on the app loop (VoiceOutput maps the BridgeError).
         assert system.loop is not None
-        result = asyncio.run_coroutine_threadsafe(system.voice.say("hi"), system.loop).result(2.0)
+        result = asyncio.run_coroutine_threadsafe(
+            system.voice.say("hi"), system.loop
+        ).result(2.0)
         assert result.startswith("TTS error:")
         # And the agent still reasons over typed input despite the voice being degraded.
         assert system.wica is not None
@@ -448,11 +465,15 @@ def test_bad_system_prompt_file_degrades(tmp_path: Path) -> None:
     )
     fake_api = FakeReachyMiniApi()
     system = build_system(
-        config, api=cast(ReachyMiniApi, fake_api), asr_engine=cast(ASREngine, FakeASREngine())
+        config,
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, FakeASREngine()),
     )
     try:
         assert system.wica is None
-        assert any(m.startswith("Agent:") and "no-such-prompt.md" in m for m in system.missing)
+        assert any(
+            m.startswith("Agent:") and "no-such-prompt.md" in m for m in system.missing
+        )
         assert system.voice is not None  # the robot side is unaffected
     finally:
         _shutdown(system)
@@ -465,7 +486,9 @@ def test_shutdown_isolates_a_failing_step() -> None:
     system = build_system(
         _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]),
         api=cast(ReachyMiniApi, fake_api),
-        asr_engine=cast(ASREngine, FakeASREngine(raise_on_stop="provider socket broke")),
+        asr_engine=cast(
+            ASREngine, FakeASREngine(raise_on_stop="provider socket broke")
+        ),
     )
     _start(system)
 

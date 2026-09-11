@@ -25,6 +25,7 @@ Consumed as local path dependencies (in the parent folder), per [specs/project.m
 ```
 uv sync --dev
 uv run ruff check .
+uv run ruff format .
 uv run pyright
 uv run pytest
 ```
