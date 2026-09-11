@@ -99,7 +99,7 @@ def load_config(path: str) -> AppConfig: ...
 
 ## Secrets stay referenced, never stored
 
-Each section keeps the same secret hygiene its engine already prescribes: an `api_key_env` naming an environment variable, not a literal key. The composed file is safe to commit; a literal-key variant lives in a git-ignored `*.local.json` copy. A missing env var surfaces as that engine's own error at build time (WICA raises `MissingEnvError` at `Wica.init`; the ASR module and the bridge's synthesizer raise when they resolve their key) — the app catches it and reports what to set (see [app.md](app.md), "No credentials"). The robot backend needs no key; a `real` backend simply fails to connect if no daemon is reachable, which the app reports the same way.
+Each section keeps the same secret hygiene its engine already prescribes: an `api_key_env` naming an environment variable, not a literal key. The composed file is safe to commit; a literal-key variant lives in a git-ignored `*.local.json` copy. A missing env var surfaces as that engine's own error at build time (WICA raises `MissingEnvError` at `Wica.init`; the ASR module and the bridge's synthesizer raise when they resolve their key) — the app catches each one separately and reports what to set (see [app.md](app.md), "No credentials, no robot"); in particular an unset TTS key degrades only `say`, the robot itself still comes up. The robot backend needs no key; a `real` backend simply fails to connect if no daemon is reachable, which the app reports the same way.
 
 ## Relies on the engines' `from_dict`
 

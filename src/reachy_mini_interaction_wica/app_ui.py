@@ -320,8 +320,9 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                 "> ⚠️ **Some parts could not start — set the missing variables (or connect the robot) "
                 "and restart.**\n"
                 f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
-                "own key is set, even with no robot (speech-out and robot actions will report the robot "
-                "as missing). For offline development, set `reachy.backend` to `\"fake\"` or `\"sim\"`."
+                "own key is set. With no robot, the `say` voice and the robot actions are not registered "
+                "(the agent reasons but cannot speak or move); with no TTS key, `say` exists but reports "
+                "a TTS error. For offline development, set `reachy.backend` to `\"fake\"` or `\"sim\"`."
             )
         gr.Markdown(
             "Speak (or type) a turn; the assistant reasons over the World and replies with its **🗣️ "

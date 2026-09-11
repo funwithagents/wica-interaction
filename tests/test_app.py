@@ -9,6 +9,7 @@ at the robot and ASR build seams.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Self, cast
 
@@ -18,7 +19,7 @@ from reachy_mini_bridge.api import ReachyMiniApi
 from tts_engine.config import TTSEngineConfig
 from wica.config import WicaConfig
 
-from reachy_mini_interaction_wica.app import build_system
+from reachy_mini_interaction_wica.app import _shutdown, _start, build_system
 from reachy_mini_interaction_wica.config import AppConfig, ReachyConfig
 
 
@@ -26,15 +27,17 @@ class FakeReachyMiniApi:
     """The slice of `ReachyMiniApi` the app touches: an async-context robot whose `say` records.
 
     `build_system` enters it on the loop (`__aenter__`); `VoiceOutput.say` calls `say`. Set
-    `raise_on_enter` to simulate a robot that fails to connect (the broad degrade path).
+    `raise_on_enter` to simulate a robot that fails to connect (the broad degrade path). Pass `log`
+    (shared with `FakeASREngine`) to record teardown steps in order.
     """
 
-    def __init__(self, *, raise_on_enter: str | None = None) -> None:
+    def __init__(self, *, raise_on_enter: str | None = None, log: list[str] | None = None) -> None:
         self.said: list[str] = []
         self.played: list[str] = []
         self.entered = False
         self.exited = False
         self._raise_on_enter = raise_on_enter
+        self._log = log
 
     async def __aenter__(self) -> Self:
         if self._raise_on_enter is not None:
@@ -43,6 +46,8 @@ class FakeReachyMiniApi:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
+        if self._log is not None:
+            self._log.append("api.exit")
         self.exited = True
 
     async def say(self, text: str) -> None:
@@ -60,19 +65,23 @@ class FakeASREngine:
     """The slice of `ASREngine` that `AsrBridge` and `build_system` touch — construction needs no key.
 
     `AsrBridge.__init__` assigns `on_speech_segment`; `start`/`stop` and the `status()`/`dictating`/
-    `segmentation_mode` accessors back the bridge's own surface.
+    `segmentation_mode` accessors back the bridge's own surface. Pass `log` (shared with
+    `FakeReachyMiniApi`) to record teardown steps in order.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, log: list[str] | None = None) -> None:
         self.on_speech_segment: Any = None
         self.dictating = False
         self.segmentation_mode = "utterance"
         self.started = False
+        self._log = log
 
     async def start(self) -> None:
         self.started = True
 
     async def stop(self) -> None:
+        if self._log is not None:
+            self._log.append("asr.stop")
         self.started = False
 
     def status(self) -> dict[str, Any]:
@@ -261,3 +270,74 @@ def test_missing_asr_key_degrades_but_robot_voice_survive(monkeypatch: Any) -> N
     finally:
         if system.wica is not None:
             system.wica.close()
+
+
+def _tts_degrade_config() -> AppConfig:
+    """A real TTS config referencing an unset env var (so the synthesizer build raises), with a fake
+    WICA agent and the bridge's `fake` robot backend — only the voice should degrade."""
+    wica = WicaConfig.from_dict(
+        {"agent": {"provider": "fake", "model": "scripted", "system_prompt": "double"}}
+    )
+    tts = TTSEngineConfig.from_dict(
+        {"module": {"type": "elevenlabs", "api_key_env": "WICA_TEST_UNSET_TTS_KEY"}}
+    )
+    return AppConfig(
+        wica=wica,
+        tts_engine=tts,
+        asr_engine=cast(ASREngineConfig, None),  # a fake engine is injected
+        reachy=ReachyConfig(backend="fake"),
+    )
+
+
+def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
+    """With the TTS key unset, the robot still comes up (mic/ASR/actions intact) and `say` reports a
+    readable TTS error instead of the whole robot being reported missing."""
+    monkeypatch.delenv("WICA_TEST_UNSET_TTS_KEY", raising=False)
+    fake_asr = FakeASREngine()
+    # No `api=` injected: build_system builds the real fake-backend api with a synthesizer of None.
+    system = build_system(_tts_degrade_config(), asr_engine=cast(ASREngine, fake_asr))
+    try:
+        assert system.api is not None  # the robot is up …
+        assert system.voice is not None  # … so the voice exists (say is registered) …
+        assert system.bridge is not None  # … and so does the mic-fed ASR bridge
+        # The failure is reported on the TTS axis, naming the env var — not as a robot failure.
+        assert any(m.startswith("TTS:") and "WICA_TEST_UNSET_TTS_KEY" in m for m in system.missing)
+        assert not any(m.startswith("Robot:") for m in system.missing)
+        # say degrades to a readable string on the app loop (VoiceOutput maps the BridgeError).
+        assert system.loop is not None
+        result = asyncio.run_coroutine_threadsafe(system.voice.say("hi"), system.loop).result(2.0)
+        assert result.startswith("TTS error:")
+        # And the agent still reasons over typed input despite the voice being degraded.
+        assert system.wica is not None
+        system.wica.start()
+        system.submit_speech("are you there")
+        assert _wait_until(lambda: len(system.panels._prompts) > 0)
+    finally:
+        if system.api is not None and system.loop is not None:
+            asyncio.run_coroutine_threadsafe(
+                system.api.__aexit__(None, None, None), system.loop
+            ).result(2.0)
+        if system.wica is not None:
+            system.wica.close()
+
+
+def test_shutdown_stops_asr_before_the_robot_exits() -> None:
+    """Teardown stops the ASR bridge (cancelling the mic pump) *before* the robot's media session
+    closes, then exits the api — the order specs/app.md lists."""
+    log: list[str] = []
+    fake_api = FakeReachyMiniApi(log=log)
+    fake_asr = FakeASREngine(log=log)
+    system = build_system(
+        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]),
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, fake_asr),
+    )
+    _start(system)
+    assert fake_asr.started  # capture was live before teardown
+
+    _shutdown(system)
+
+    assert not fake_asr.started
+    assert fake_api.exited
+    assert log == ["asr.stop", "api.exit"]
+    assert system.wica is not None and not system.wica.is_running

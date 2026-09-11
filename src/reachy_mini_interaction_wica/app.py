@@ -14,7 +14,8 @@ Three seams keep the wiring testable without a browser:
   ``speech_input``, wires the bridge callback, collects panel state. Its ``api=`` / ``asr_engine=``
   kwargs are test seams for injecting fakes.
 - ``build_ui(system)`` — the Gradio layout only (in [app_ui.py](app_ui.py)).
-- ``main()`` — parse ``--config``, build, start, launch, and ``__aexit__`` the api at teardown.
+- ``main()`` — parse ``--config``, build, start, launch, and ``_shutdown`` at teardown (the
+  bridge is stopped before the api exits).
 
 Two objects hold the running system, split by dependency so both can be *fully formed at
 construction* (no post-hoc mutation):
@@ -81,8 +82,9 @@ class AppSystem:
     reaches the agent whenever ``wica`` is running, needing neither ASR nor the robot. ``build_system``
     enters the robot's media session (so ``say``/mic are live), but does not *start* the agent or ASR
     capture (``main`` does), so a test can inspect a built-but-not-listening system. ``main`` is what
-    ``__aexit__``s the api at teardown. The live views the UI polls (``tick_world`` / ``tick_asr``) are
-    free functions in [app_ui.py](app_ui.py) that read this snapshot.
+    tears down via ``_shutdown`` (agent, then ASR bridge, then the api's ``__aexit__``, then the loop).
+    The live views the UI polls (``tick_world`` / ``tick_asr``) are free functions in
+    [app_ui.py](app_ui.py) that read this snapshot.
     """
 
     loop: asyncio.AbstractEventLoop | None
@@ -119,10 +121,12 @@ def build_system(
     engine and the robot api share the loop the Agent runs on. Builds in dependency order — robot api →
     voice → wica → bridge — so every component is fully formed when the frozen ``AppSystem`` is
     assembled at the end. The one ``ReachyMiniApi`` is built and **entered on the loop** here (its
-    media session opens), because both ``say`` and the mic stream ride it; a ``real``/``sim`` backend
-    can raise at **construction** (``build_robot`` connects) and/or at ``__aenter__``, and the failure
-    is an upstream ``reachy_mini`` exception (not a bridge type), so both are wrapped in one broad
-    ``except`` that appends to ``missing``. Each remaining build that can raise on an unset key
+    media session opens), because both ``say`` and the mic stream ride it. The ``TTSEngineSynthesizer``
+    is built first, in its own guard (an unset TTS key appends a ``TTS:`` entry and the robot is built
+    with no synthesizer, so only ``say`` degrades); a ``real``/``sim`` backend can raise at
+    **construction** (``build_robot`` connects) and/or at ``__aenter__``, and the failure is an upstream
+    ``reachy_mini`` exception (not a bridge type), so both are wrapped in one broad ``except`` that
+    appends to ``missing``. Each remaining build that can raise on an unset key
     (``Wica.init`` → ``MissingEnvError`` / ``ImportError`` for a missing provider extra, ``ASREngine``
     → ``ValueError``) is likewise caught into ``missing`` rather than crashing, so the returned system
     opens even with credentials or a robot absent. ``api`` / ``asr_engine`` inject fakes for tests,
@@ -134,17 +138,26 @@ def build_system(
     panels = PanelState()
     missing: list[str] = []
 
+    # --- The voice's synthesizer: built on its own so an unset TTS key degrades only `say` ------
+    # TTSEngineSynthesizer resolves the TTS module's key at construction and raises when it is
+    # unset. That must not take the robot down with it (the mic, ASR, and actions need no TTS key),
+    # so it is guarded separately and the robot is built with `synthesizer=None` on failure — the
+    # bridge accepts that and `api.say` then raises a BridgeError, which VoiceOutput maps to a
+    # readable "TTS error: …". Skipped when a test injects `api=` (the fake carries its own say).
+    synthesizer: TTSEngineSynthesizer | None = None
+    if api is None:
+        try:
+            synthesizer = TTSEngineSynthesizer(config.tts_engine)
+        except Exception as exc:  # noqa: BLE001 - an unset/invalid TTS key degrades, it never crashes
+            missing.append(f"TTS: {exc}")
+
     # --- The robot: one ReachyMiniApi behind say + the mic stream, entered on the app loop ------
     # Construction connects a real/sim robot and __aenter__ opens the media session; both can raise an
     # upstream reachy_mini exception, so wrap both in one broad except and degrade (api stays None).
     robot: ReachyMiniApi | None = None
     try:
         robot = (
-            api
-            if api is not None
-            else ReachyMiniApi(
-                config.reachy.backend, synthesizer=TTSEngineSynthesizer(config.tts_engine)
-            )
+            api if api is not None else ReachyMiniApi(config.reachy.backend, synthesizer=synthesizer)
         )
         asyncio.run_coroutine_threadsafe(robot.__aenter__(), loop).result()
     except Exception as exc:  # noqa: BLE001 - any construct/connect failure degrades, it never crashes
@@ -249,6 +262,23 @@ def _degraded_system(message: str) -> AppSystem:
     )
 
 
+def _shutdown(system: AppSystem) -> None:
+    """Tear the system down in dependency order: the agent, then ASR capture, then the robot's
+    media session, then the loop. The bridge is stopped *before* the api exits so the mic pump is
+    cancelled while its stream is still valid, rather than iterating a closed media session."""
+    if system.wica is not None:
+        system.wica.close()
+    if system.bridge is not None and system.loop is not None:
+        # Unconditional: safe even when the bridge was never started (no agent ⇒ _start skipped it),
+        # since ASREngine.stop() only cancels the segmenter's timers and signals the module to stop.
+        asyncio.run_coroutine_threadsafe(system.bridge.stop(), system.loop).result()
+    if system.api is not None and system.loop is not None:
+        # Close the media session + robot connection on the loop before the loop stops.
+        asyncio.run_coroutine_threadsafe(system.api.__aexit__(None, None, None), system.loop).result()
+    if system.loop is not None:
+        system.loop.call_soon_threadsafe(system.loop.stop)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("wica").setLevel(logging.INFO)
@@ -271,13 +301,7 @@ def main() -> None:
     try:
         build_ui(system).launch()
     finally:
-        if system.wica is not None:
-            system.wica.close()
-        if system.api is not None and system.loop is not None:
-            # Close the media session + robot connection on the loop before the loop stops.
-            asyncio.run_coroutine_threadsafe(system.api.__aexit__(None, None, None), system.loop).result()
-        if system.loop is not None:
-            system.loop.call_soon_threadsafe(system.loop.stop)
+        _shutdown(system)
 
 
 if __name__ == "__main__":

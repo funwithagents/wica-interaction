@@ -16,6 +16,7 @@ Implementation plans for Reachy Mini Interaction WICA — each plan turns a sett
 | [202609041824_app.md](202609041824_app.md) | The Gradio app + `main()` wiring: three engines behind WICA on one app-owned loop, Conversation/ASR + debug panels, typed-text hatch, no-credentials degrade | Done |
 | [202609101700_bridge-integration.md](202609101700_bridge-integration.md) | Route speech and control through `reachy-mini-bridge`: one `ReachyMiniApi`, `say` via the robot speaker, ASR over the robot mic stream (`RobotMicSource`), a `reachy` config section, drop the local `TTSEngine` + audio-processing | Done |
 | [202609101715_robot-control.md](202609101715_robot-control.md) | The `RobotControl` commands: non-raising WICA wrappers over the bridge's `play_emotion` / `list_emotions` / head-tracking / motor-state verbs, registered with the agent | Done |
+| [202609111030_app-degrade-and-teardown.md](202609111030_app-degrade-and-teardown.md) | App degrade paths + teardown: an unset TTS key degrades only the voice, honest robot-less wording (spec + banner), `asr_bridge.stop()` before `api.__aexit__` | Done |
 | _(add plans here — see [_plan-template.md](_plan-template.md))_ | | |
 
 ## Status legend

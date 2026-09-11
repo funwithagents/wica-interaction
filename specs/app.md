@@ -8,7 +8,7 @@ tests:
 
 # App
 
-**Status:** Updated
+**Status:** Implemented
 
 > **Code layout.** The app is split in two modules: [app.py](../src/reachy_mini_interaction_wica/app.py) holds the **wiring + lifecycle** (`build_system`, the `AppSystem` snapshot, `main`), and [app_ui.py](../src/reachy_mini_interaction_wica/app_ui.py) holds the **Gradio presentation layer** (the instrumentation `PanelState`, the `build_ui` layout, and the live views — `tick_world` / `tick_asr` — the timers poll). `app` imports `PanelState` / `build_ui` from `app_ui`; `app_ui` depends on `app` only for the `AppSystem` type, so there is no import cycle.
 
@@ -71,11 +71,11 @@ A text box in the ASR panel, **always visible**, is the app's keyboard hatch int
 
 1. `load_config(path)` → `AppConfig(wica, tts_engine, asr_engine, reachy)` (see [configuration.md](configuration.md)).
 2. Create the app-owned loop and start its daemon thread (see "One event loop").
-3. Build the **one `ReachyMiniApi`**: `ReachyMiniApi(cfg.reachy.backend, synthesizer=TTSEngineSynthesizer(cfg.tts_engine))`, and **enter it on the loop** (`run_coroutine_threadsafe(api.__aenter__(), loop)`) so its media session opens and its async verbs bind to that loop. This single instance backs `say`, the mic stream, and the robot commands.
+3. Build the **one `ReachyMiniApi`**: `ReachyMiniApi(cfg.reachy.backend, synthesizer=…)`, where the synthesizer is `TTSEngineSynthesizer(cfg.tts_engine)` built in its own guard just before (or `None` if its key is unset — see "No credentials, no robot"), and **enter it on the loop** (`run_coroutine_threadsafe(api.__aenter__(), loop)`) so its media session opens and its async verbs bind to that loop. This single instance backs `say`, the mic stream, and the robot commands.
 4. Build `VoiceOutput(api)` (the `say` output Command) and `RobotControl(api)` (the action commands).
 5. `Wica.init(cfg.wica, output_sink=…, output_command=voice.say, loop=loop)`; subscribe the panels to the instrumentation Events; `wica.world.register("speech_input", str, serialize_fn=…, triggers_llm_call=True)`.
 6. Build `ASREngine(cfg.asr_engine, audio_source=RobotMicSource(api))` and `AsrBridge(engine, on_final_segment=…)`, whose callback writes `speech_input` — the same funnel the typed-text box calls. Register `start_dictation` / `stop_dictation` and the `RobotControl` commands. The bridge is built **after** WICA so its callback resolves against a live agent with no placeholder.
-7. `wica.start()`, then schedule `asr_bridge.start()` onto the loop with `run_coroutine_threadsafe`, then launch the Gradio UI. Teardown `__aexit__`s the api on the loop.
+7. `wica.start()`, then schedule `asr_bridge.start()` onto the loop with `run_coroutine_threadsafe`, then launch the Gradio UI. Teardown (`_shutdown`) closes WICA, then schedules `asr_bridge.stop()` onto the loop, then `__aexit__`s the api on the loop, then stops the loop — the bridge before the api, so the mic pump is cancelled while the media session is still open.
 
 **One event loop — the app owns it; WICA and the robot adopt it.** A single asyncio loop runs the Agent, the `ReachyMiniApi` (its `say`, mic tap, and verbs are all async), and the ASR engine. This is not optional: the `ASREngine` binds `asyncio.get_running_loop()` when it starts, the mic tap streams on that loop, and `say`/robot verbs run there as Commands. The concrete arrangement is forced by one fact — **`Wica` exposes no public accessor for the loop it creates** — so the only way the app can also run the engines and the robot on that loop is to *own* it and inject it:
 
@@ -85,7 +85,13 @@ A text box in the ASR panel, **always visible**, is the app's keyboard hatch int
 
 ## No credentials, no robot
 
-Like the WICA demo, the app **opens even with keys unset (or no robot reachable)** and says what to fix, rather than crashing: `Wica.init` raises `MissingEnvError` for an unset agent key; the ASR module and the bridge's synthesizer raise when they resolve their key; and connecting a `real` robot fails if no daemon is reachable. `main()` catches these at build, still launches the UI, and shows what is missing — nothing contacts a model, ASR, TTS provider, or robot without the prerequisites being in place. Typed text still reaches the agent whenever WICA is up, so the reason → say/act path is exercisable as far as each present prerequisite allows (e.g. WICA up but no robot: reasoning is visible even if `say`/actions report the robot missing). For offline development, `reachy.backend = "fake"` (or `"sim"`) gives a robot with no hardware.
+Like the WICA demo, the app **opens even with keys unset (or no robot reachable)** and says what to fix, rather than crashing. `build_system` degrades along three independent axes, each captured as one line in the UI banner, and nothing contacts a model, ASR, TTS provider, or robot without its prerequisite in place:
+
+- **Agent key missing** (`Wica.init` raises `MissingEnvError`, or `ImportError` for a missing provider extra) — `Agent: …`. Nothing reasons; ASR capture is not started either (there is no consumer for speech). Everything else still builds.
+- **TTS key missing** (`TTSEngineSynthesizer` raises when it resolves its key) — `TTS: …`. The robot is still built and entered, with **no synthesizer**: the mic, the ASR bridge, and the robot action commands are unaffected; `say` is registered and returns `"TTS error: …"` when called (the bridge's `say` raises `BridgeError` without a synthesizer).
+- **Robot unreachable** (a `real`/`sim` backend fails to construct or `__aenter__`) — `Robot: …`. There is no `ReachyMiniApi`, so the `say` voice and the robot action commands are **not registered** and no ASR bridge is built (its mic is the robot's). Typed text still drives the agent, so reasoning is visible; the agent simply has nothing to speak or move through.
+
+ASR's own key (`ASR: …`) degrades only speech-in — typed text remains the way in. For offline development, `reachy.backend = "fake"` (or `"sim"`) gives a robot with no hardware.
 
 ## Out of scope (v1)
 
