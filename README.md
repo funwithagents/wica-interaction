@@ -17,8 +17,7 @@ Consumed as local path dependencies (in the parent folder), per [specs/project.m
 
 - `wica` (`../wica-framework`) — the agentic framework.
 - `asr-engine` (`../asr-engine`) — speech-to-text over the robot's mic stream.
-- `reachy-mini-bridge` (`../reachy-mini-bridge`) — the robot's interaction API (which itself wraps `tts-engine` for the voice).
-- `tts-engine` (`../tts-engine`) — pulled directly only for its config type: the app builds the `TTSEngineConfig` it hands to the bridge's synthesizer.
+- `reachy-mini-bridge` (`../reachy-mini-bridge`) — the robot's interaction API: connects to the robot, manages the daemon, and builds the voice itself from the config's `reachy.tts` block (a `tts-engine` `engine` block — `reachy-mini-bridge[tts]` pulls `tts-engine`).
 
 ## Development
 
@@ -30,7 +29,7 @@ uv run pyright
 uv run pytest
 ```
 
-Run the app (opens the Gradio UI; use `reachy.backend = "fake"` or `"sim"` in the config for offline development):
+Run the app (opens the Gradio UI); `config.example.json` is a template, not a config to run unmodified — copy it, fill in the API keys, and point `reachy.backend` at what you're driving. As committed it targets a **headful `sim`** daemon (`"reachy": {"backend": "sim", "daemon": {"spawn": "auto", "headless": false}}`), which the bridge spawns itself and opens the MuJoCo viewer in (needs `mjpython` on `PATH` and an unlocked GUI session — see [reachy-mini-bridge docs/running-the-sim-daemon.md](../reachy-mini-bridge/docs/running-the-sim-daemon.md)); set `reachy.daemon.headless` to `true` for a windowless daemon. For the offline `fake` backend or the physical robot, change `reachy.backend` to `"fake"` / `"real"` **and delete the `reachy.daemon` block** (daemon spawning is valid only with `sim`, so the loader rejects it otherwise) — keep `reachy.tts`, or the robot comes up without a voice:
 
 ```
 uv run reachy-mini-interaction-wica --config config.example.json

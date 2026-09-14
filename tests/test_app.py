@@ -24,7 +24,7 @@ from asr_engine.config import ASREngineConfig
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
 from reachy_mini_bridge.api import ReachyMiniApi
-from tts_engine.config import TTSEngineConfig
+from reachy_mini_bridge.config import ReachyMiniConfig
 from wica.config import WicaConfig
 from wica.contrib.gradio import PromptLog, TranscriptLog
 
@@ -39,7 +39,7 @@ from reachy_mini_interaction_wica.app import (
     wire,
 )
 from reachy_mini_interaction_wica.app_ui import display_entry
-from reachy_mini_interaction_wica.config import AppConfig, Backend, ReachyConfig
+from reachy_mini_interaction_wica.config import AppConfig
 
 
 class FakeReachyMiniApi:
@@ -126,10 +126,10 @@ class FakeASREngine:
         return {"running": self.started}
 
 
-def _config(*, script: list[dict], reachy_backend: Backend = "fake") -> AppConfig:
+def _config(*, script: list[dict], reachy: ReachyMiniConfig | None = None) -> AppConfig:
     """An `AppConfig` whose WICA section is the `fake` provider running *script*.
 
-    The engine sections are unused here (tests inject fakes), so they are `None` behind a cast.
+    The ASR section is unused here (tests inject fakes), so it is `None` behind a cast.
     """
     wica = WicaConfig.from_dict(
         {
@@ -143,9 +143,8 @@ def _config(*, script: list[dict], reachy_backend: Backend = "fake") -> AppConfi
     )
     return AppConfig(
         wica=wica,
-        tts_engine=cast(TTSEngineConfig, None),
         asr_engine=cast(ASREngineConfig, None),
-        reachy=ReachyConfig(backend=reachy_backend),
+        reachy=reachy if reachy is not None else ReachyMiniConfig(backend="fake"),
     )
 
 
@@ -386,9 +385,8 @@ def _asr_degrade_config() -> AppConfig:
     )
     return AppConfig(
         wica=wica,
-        tts_engine=cast(TTSEngineConfig, None),
         asr_engine=asr,
-        reachy=ReachyConfig(backend="fake"),
+        reachy=ReachyMiniConfig(backend="fake"),
     )
 
 
@@ -413,19 +411,22 @@ def test_missing_asr_key_degrades_but_robot_voice_survive(monkeypatch: Any) -> N
 
 
 def _tts_degrade_config() -> AppConfig:
-    """A real TTS config referencing an unset env var (so the synthesizer build raises), with a fake
-    WICA agent and the bridge's `fake` robot backend — only the voice should degrade."""
+    """A real `reachy.tts` block referencing an unset env var (so the bridge's synthesizer build
+    fails), with a fake WICA agent and the bridge's `fake` robot backend — only the voice should
+    degrade (the bridge itself, not this app, builds and records the failed synthesizer)."""
     wica = WicaConfig.from_dict(
         {"agent": {"provider": "fake", "model": "scripted", "system_prompt": "double"}}
     )
-    tts = TTSEngineConfig.from_dict(
-        {"module": {"type": "elevenlabs", "api_key_env": "WICA_TEST_UNSET_TTS_KEY"}}
+    reachy = ReachyMiniConfig(
+        backend="fake",
+        tts={
+            "module": {"type": "elevenlabs", "api_key_env": "WICA_TEST_UNSET_TTS_KEY"}
+        },
     )
     return AppConfig(
         wica=wica,
-        tts_engine=tts,
         asr_engine=cast(ASREngineConfig, None),  # a fake engine is injected
-        reachy=ReachyConfig(backend="fake"),
+        reachy=reachy,
     )
 
 
@@ -434,7 +435,8 @@ def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
     readable TTS error instead of the whole robot being reported missing."""
     monkeypatch.delenv("WICA_TEST_UNSET_TTS_KEY", raising=False)
     fake_asr = FakeASREngine()
-    # No `api=` injected: build_system builds the real fake-backend api with a synthesizer of None.
+    # No `api=` injected: build_system builds the real fake-backend api, whose `tts` block fails to
+    # build — the bridge records that as `synthesizer_error` instead of raising.
     system = build_system(_tts_degrade_config(), asr_engine=cast(ASREngine, fake_asr))
     try:
         assert system.api is not None  # the robot is up …
@@ -458,6 +460,30 @@ def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
         _start(system)
         system.submit_speech("are you there")
         assert _wait_until(lambda: _prompt_captured(prompts))
+    finally:
+        _shutdown(system)
+
+
+def test_absent_tts_block_is_reported_on_the_tts_axis() -> None:
+    """A `reachy` config with no `tts` block still brings the robot up (mic/ASR intact), reports the
+    missing voice as a `TTS:` banner entry — not a robot failure — and `say` degrades to a string."""
+    fake_asr = FakeASREngine()
+    config = _config(script=_say_once("hi"), reachy=ReachyMiniConfig(backend="fake"))
+    # No `api=` injected, so the real fake-backend api is built and the TTS check runs.
+    system = build_system(config, asr_engine=cast(ASREngine, fake_asr))
+    try:
+        assert system.api is not None
+        assert system.voice is not None
+        assert system.bridge is not None
+        assert (
+            "TTS: no reachy.tts block configured (say is unavailable)" in system.missing
+        )
+        assert not any(m.startswith("Robot:") for m in system.missing)
+        assert system.loop is not None
+        result = asyncio.run_coroutine_threadsafe(
+            system.voice.say("hi"), system.loop
+        ).result(2.0)
+        assert result.startswith("TTS error:")
     finally:
         _shutdown(system)
 
@@ -531,9 +557,8 @@ def test_bad_system_prompt_file_degrades(tmp_path: Path) -> None:
     )
     config = AppConfig(
         wica=wica,
-        tts_engine=cast(TTSEngineConfig, None),
         asr_engine=cast(ASREngineConfig, None),
-        reachy=ReachyConfig(backend="fake"),
+        reachy=ReachyMiniConfig(backend="fake"),
     )
     fake_api = FakeReachyMiniApi()
     system = build_system(
@@ -608,7 +633,8 @@ def test_main_requires_a_config_path(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A bare run (no --config) exits with usage guidance before building anything — it never falls
-    back to a default file (the committed example targets a real robot)."""
+    back to a default file (the committed example is a template to copy and adapt, not one meant to
+    run unmodified)."""
     monkeypatch.setattr(sys, "argv", ["reachy-mini-interaction-wica"])
     built: list[AppConfig] = []
     monkeypatch.setattr(app, "build_system", lambda config, **_kw: built.append(config))

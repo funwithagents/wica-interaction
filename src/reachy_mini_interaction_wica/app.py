@@ -12,9 +12,9 @@ which is the order the framework's output-wiring setters exist for (``Wica.init`
 application callables; the sink and the output Command are set afterwards):
 
 - ``build_system(config)`` — pure build, no Gradio, no wiring: owns the loop, builds the one
-  ``ReachyMiniApi`` (and enters it on the loop), builds the voice, ``Wica.init``s the agent and
-  registers the ``speech_input`` entry, builds the ASR bridge. Its ``api=`` / ``asr_engine=`` kwargs
-  are test seams for injecting fakes.
+  ``ReachyMiniApi`` (which builds its own voice from ``config.reachy.tts``) and enters it on the loop,
+  ``Wica.init``s the agent and registers the ``speech_input`` entry, builds the ASR bridge. Its
+  ``api=`` / ``asr_engine=`` kwargs are test seams for injecting fakes.
 - ``build_ui(system)`` — the Gradio page (in [app_ui.py](app_ui.py)); it owns the contrib presenters
   (``TranscriptLog`` / ``PromptLog``, subscribed to the agent's Events in their constructors) and hands
   the transcript back on an ``AppUi`` handle.
@@ -49,7 +49,6 @@ from typing import Any
 import gradio as gr
 from asr_engine.engine import ASREngine
 from reachy_mini_bridge.api import ReachyMiniApi
-from reachy_mini_bridge.audio import TTSEngineSynthesizer
 from wica import Content, TextPart, Wica
 from wica.config import ConfigError, MissingEnvError
 from wica.contrib.gradio import TranscriptLog
@@ -114,18 +113,20 @@ def build_system(
     Owns a fresh event loop (run in a daemon thread) and injects it into ``Wica.init`` so the ASR
     engine and the robot api share the loop the Agent runs on. Builds in dependency order — robot api →
     voice → wica → bridge — so every component is fully formed when the frozen ``AppSystem`` is
-    assembled at the end. The one ``ReachyMiniApi`` is built and **entered on the loop** here (its
-    media session opens), because both ``say`` and the mic stream ride it. The ``TTSEngineSynthesizer``
-    is built first, in its own guard (an unset TTS key appends a ``TTS:`` entry and the robot is built
-    with no synthesizer, so only ``say`` degrades); a ``real``/``sim`` backend can raise at
-    **construction** (``build_robot`` connects) and/or at ``__aenter__``, and the failure is an upstream
-    ``reachy_mini`` exception (not a bridge type), so both are wrapped in one broad ``except`` that
-    appends to ``missing``. Each remaining build that can raise on an unset key
-    (``Wica.init`` → ``MissingEnvError``, any other ``ConfigError`` such as an unreadable
-    ``system_prompt_file``, or ``ImportError`` for a missing provider extra; ``ASREngine`` →
-    ``ValueError``) is likewise caught into ``missing`` rather than crashing, so the returned system
-    opens even with credentials or a robot absent. ``api`` / ``asr_engine`` inject fakes for tests,
-    bypassing the real build.
+    assembled at the end. The one ``ReachyMiniApi`` is built from ``config.reachy`` (which builds its
+    own voice from the config's ``tts`` block, degrading to no voice rather than raising on a build
+    failure) and **entered on the loop** here (bringing up the daemon when configured, the robot
+    connection, and the media session), because both ``say`` and the mic stream ride it. Construction
+    never connects — only ``__aenter__`` does — so a failure there (an upstream ``reachy_mini``
+    exception, or the bridge's own ``DaemonError``/``BridgeError``) is caught into a ``Robot:`` entry in
+    ``missing``. After a successful construct + enter, ``api.synthesizer_error`` (or the absence of any
+    ``reachy.tts`` block) is read into a ``TTS:`` entry — the voice degrades independently, the rest of
+    the robot stays up. Skipped when a test injects ``api=`` (the fake carries its own ``say``). Each
+    remaining build that can raise on an unset key (``Wica.init`` → ``MissingEnvError``, any other
+    ``ConfigError`` such as an unreadable ``system_prompt_file``, or ``ImportError`` for a missing
+    provider extra; ``ASREngine`` → ``ValueError``) is likewise caught into ``missing`` rather than
+    crashing, so the returned system opens even with credentials or a robot absent. ``api`` /
+    ``asr_engine`` inject fakes for tests, bypassing the real build.
     """
     loop = asyncio.new_event_loop()
     threading.Thread(
@@ -134,33 +135,29 @@ def build_system(
 
     missing: list[str] = []
 
-    # --- The voice's synthesizer: built on its own so an unset TTS key degrades only `say` ------
-    # TTSEngineSynthesizer resolves the TTS module's key at construction and raises when it is
-    # unset. That must not take the robot down with it (the mic, ASR, and actions need no TTS key),
-    # so it is guarded separately and the robot is built with `synthesizer=None` on failure — the
-    # bridge accepts that and `api.say` then raises a BridgeError, which VoiceOutput maps to a
-    # readable "TTS error: …". Skipped when a test injects `api=` (the fake carries its own say).
-    synthesizer: TTSEngineSynthesizer | None = None
-    if api is None:
-        try:
-            synthesizer = TTSEngineSynthesizer(config.tts_engine)
-        except Exception as exc:  # noqa: BLE001 - an unset/invalid TTS key degrades, it never crashes
-            missing.append(f"TTS: {exc}")
-
-    # --- The robot: one ReachyMiniApi behind say + the mic stream, entered on the app loop ------
-    # Construction connects a real/sim robot and __aenter__ opens the media session; both can raise an
-    # upstream reachy_mini exception, so wrap both in one broad except and degrade (api stays None).
+    # --- The robot: one ReachyMiniApi (which builds its own voice from config.reachy.tts) behind
+    # say + the mic stream, entered on the app loop. Construction never connects; __aenter__ brings up
+    # the daemon (when configured), the robot connection, and the media session — any failure there is
+    # an upstream reachy_mini exception or a bridge type, so wrap it in one broad except and degrade
+    # (api stays None). -------------------------------------------------------------------------
     robot: ReachyMiniApi | None = None
     try:
-        robot = (
-            api
-            if api is not None
-            else ReachyMiniApi(config.reachy.backend, synthesizer=synthesizer)
-        )
+        robot = api if api is not None else ReachyMiniApi(config.reachy)
         asyncio.run_coroutine_threadsafe(robot.__aenter__(), loop).result()
     except Exception as exc:  # noqa: BLE001 - any construct/connect failure degrades, it never crashes
         missing.append(f"Robot: {exc}")
         robot = None
+    else:
+        # The voice degrades independently of the rest of the robot: a build failure (typically the
+        # TTS key unset) leaves `robot.synthesizer_error` set instead of raising. Skipped when a test
+        # injects `api=` (the fake carries its own `say`, with nothing to report here).
+        if api is None:
+            if config.reachy.tts is None:
+                missing.append(
+                    "TTS: no reachy.tts block configured (say is unavailable)"
+                )
+            elif robot.synthesizer_error is not None:
+                missing.append(f"TTS: {robot.synthesizer_error}")
 
     # --- Speech out: the robot-backed voice, or None when the robot is unavailable --------------
     voice = VoiceOutput(robot) if robot is not None else None
@@ -351,8 +348,8 @@ def main() -> None:
     logging.getLogger("wica").setLevel(logging.INFO)
 
     parser = argparse.ArgumentParser(description="Talk to a WICA-driven Reachy Mini.")
-    # Required, with no default: the committed config.example.json targets a *real* robot, so a bare
-    # run must not silently pick it up — argparse exits with usage guidance instead.
+    # Required, with no default: config.example.json is a template to copy and adapt, not a config
+    # anyone should run unmodified — argparse exits with usage guidance instead of silently loading it.
     parser.add_argument(
         "--config",
         required=True,

@@ -7,16 +7,6 @@
       "system_prompt_file": "prompts/assistant.md"
     }
   },
-  "tts": {
-    "engine": {
-      "module": {
-        "type": "elevenlabs",
-        "api_key_env": "ELEVENLABS_API_KEY",
-        "voice_id": "JBFqnCBsd6RMkjVDRZzb",
-        "model": "eleven_flash_v2_5"
-      }
-    }
-  },
   "asr": {
     "engine": {
       "module": {
@@ -28,5 +18,18 @@
       "dictation_default_segmentation_mode": "trigger_word"
     }
   },
-  "reachy": { "backend": "real" }
+  "reachy": {
+    "backend": "sim",
+    "robot": {},
+    "daemon": { "spawn": "auto", "headless": false },
+    "tts": {
+      "module": {
+        "type": "elevenlabs",
+        "api_key_env": "ELEVENLABS_API_KEY",
+        "voice_id": "JBFqnCBsd6RMkjVDRZzb",
+        "model": "eleven_flash_v2_5"
+      }
+    },
+    "audio": { "xvf3800": null }
+  }
 }

@@ -2894,7 +2894,6 @@ dependencies = [
     { name = "asr-engine" },
     { name = "gradio" },
     { name = "reachy-mini-bridge", extra = ["tts"] },
-    { name = "tts-engine" },
     { name = "wica", extra = ["anthropic", "gradio"] },
 ]
 
@@ -2911,7 +2910,6 @@ requires-dist = [
     { name = "asr-engine", editable = "../asr-engine" },
     { name = "gradio", specifier = ">=6" },
     { name = "reachy-mini-bridge", extras = ["tts"], editable = "../reachy-mini-bridge" },
-    { name = "tts-engine", editable = "../tts-engine" },
     { name = "wica", extras = ["anthropic", "gradio"], editable = "../wica-framework" },
 ]
 

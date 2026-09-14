@@ -1,10 +1,10 @@
-"""Composed application config: one JSON file with `wica`/`tts`/`asr` (+ optional `reachy`) sections.
+"""Composed application config: one JSON file with `wica`/`asr` (+ optional `reachy`) sections.
 
-Each engine section holds exactly the document that engine's own loader expects, and is handed to
-that engine's `from_dict` constructor so all field-level validation and defaults come from the
-engine, not from here. The one exception is `reachy`, which is not an engine with its own loader: it
-selects the robot backend handed to `reachy-mini-bridge`'s ``ReachyMiniApi``, so it is parsed here
-into a small app-owned ``ReachyConfig``. See specs/configuration.md.
+Each section holds exactly the document its owner's own loader expects, and is handed to that
+loader's `from_dict` constructor so all field-level validation and defaults come from the owner, not
+from here. `wica` and `asr` are engine sections; `reachy` is the whole robot backend, including the
+voice (`reachy.tts`) — a verbatim `reachy-mini-bridge` config, delegated to
+`reachy_mini_bridge.config.ReachyMiniConfig.from_dict`. See specs/configuration.md.
 """
 
 from __future__ import annotations
@@ -12,56 +12,38 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Literal, get_args
+from typing import Any
 
 from asr_engine.config import ASREngineConfig
-from tts_engine.config import TTSEngineConfig
+from reachy_mini_bridge.config import ReachyMiniConfig
 from wica.config import WicaConfig
 
-_REQUIRED_SECTIONS = ("wica", "tts", "asr")
-
-# The robot backends ReachyMiniApi accepts. The Literal lets pyright check callers; it cannot guard a
-# JSON file, so load_config still validates at runtime — against the same set, derived from the type.
-Backend = Literal["real", "sim", "fake"]
-_REACHY_BACKENDS: tuple[Backend, ...] = get_args(Backend)
-
-
-@dataclass
-class ReachyConfig:
-    """Which robot backend the app hands to ``ReachyMiniApi``.
-
-    ``backend`` is one of ``real`` (default), ``sim`` (upstream MuJoCo mockup), or ``fake`` (the
-    bridge's in-package stand-in — no daemon, no hardware). Not an engine with its own loader, so it
-    is parsed here rather than delegated.
-    """
-
-    backend: Backend = "real"
+_REQUIRED_SECTIONS = ("wica", "asr")
 
 
 @dataclass
 class AppConfig:
-    """The whole app's config: one live engine config per section, plus the robot backend."""
+    """The whole app's config: one live engine config per section, plus the robot (and voice)."""
 
     wica: WicaConfig
-    tts_engine: TTSEngineConfig
     asr_engine: ASREngineConfig
-    reachy: ReachyConfig
+    reachy: ReachyMiniConfig
 
 
 def load_config(path: str) -> AppConfig:
     """Load the composed app config at *path* into an ``AppConfig``.
 
-    Reads one JSON object with the required `wica`, `tts`, and `asr` sections (and the optional
-    `reachy` section) and delegates each engine section to its engine's ``from_dict`` constructor (no
-    temp files). WICA's section is located against the config file's own directory so a relative
-    ``system_prompt_file`` resolves there, exactly as ``WicaConfig.from_json`` would. No env var or
-    prompt file is read here — that stays deferred to engine build — so this loads even with
-    credentials unset. The optional `reachy` section is parsed here into a ``ReachyConfig`` (absent ⇒
-    ``backend="real"``).
+    Reads one JSON object with the required `wica` and `asr` sections (and the optional `reachy`
+    section) and delegates each to its own ``from_dict`` constructor (no temp files). WICA's section is
+    located against the config file's own directory so a relative ``system_prompt_file`` resolves
+    there, exactly as ``WicaConfig.from_json`` would. No env var or prompt file is read here — that
+    stays deferred to engine build — so this loads even with credentials unset. The optional `reachy`
+    section is a verbatim ``reachy-mini-bridge`` config (absent ⇒ that bridge's own defaults: the
+    `real` backend, no voice).
 
-    Raises ``ValueError`` if the file is missing, is not a JSON object, lacks a required section, or
-    names an unknown ``reachy.backend``. Field-level errors propagate from the engine loaders
-    unchanged.
+    Raises ``ValueError`` if the file is missing, is not a JSON object, or lacks a required section.
+    Field-level errors propagate from the engine loaders unchanged (the bridge's ``ConfigError`` is a
+    ``ValueError`` subclass, so this holds for `reachy` too).
     """
     try:
         with open(path, encoding="utf-8") as f:
@@ -89,9 +71,6 @@ def load_config(path: str) -> AppConfig:
 
     return AppConfig(
         wica=WicaConfig.from_dict(data["wica"], base_dir=base_dir),
-        tts_engine=TTSEngineConfig.from_dict(
-            _engine_block(data["tts"], name="tts", path=path)
-        ),
         asr_engine=ASREngineConfig.from_dict(
             _engine_block(data["asr"], name="asr", path=path)
         ),
@@ -99,23 +78,18 @@ def load_config(path: str) -> AppConfig:
     )
 
 
-def _reachy_config(section: Any, *, path: str) -> ReachyConfig:
-    """Parse the optional `reachy` section (absent ⇒ ``backend="real"``), validating the backend."""
+def _reachy_config(section: Any, *, path: str) -> ReachyMiniConfig:
+    """Parse the optional `reachy` section (absent ⇒ the bridge's own defaults), delegated to the
+    bridge's loader for every field-level validation rule."""
     if section is None:
-        return ReachyConfig()
+        return ReachyMiniConfig()
     if not isinstance(section, dict):
         raise ValueError(f"config file {path!r}: section 'reachy' must be an object")  # noqa: TRY004
-    backend = section.get("backend", "real")
-    if backend not in _REACHY_BACKENDS:
-        raise ValueError(
-            f"config file {path!r}: reachy.backend must be one of "
-            f"{', '.join(repr(b) for b in _REACHY_BACKENDS)}, got {backend!r}"
-        )
-    return ReachyConfig(backend=backend)
+    return ReachyMiniConfig.from_dict(section)
 
 
 def _engine_block(section: Any, *, name: str, path: str) -> dict[str, Any]:
-    """Return the `engine` block of a `tts`/`asr` section, or raise a clear error about its shape."""
+    """Return the `engine` block of an engine section, or raise a clear error about its shape."""
     if not isinstance(section, dict) or "engine" not in section:
         raise ValueError(
             f"config file {path!r}: section {name!r} must be an object with an 'engine' block"

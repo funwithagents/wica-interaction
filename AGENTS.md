@@ -22,7 +22,7 @@ Where things live. This is a coarse, module-level map — for the full file inve
 
 | Module | Role | Spec |
 |---|---|---|
-| [config.py](src/reachy_mini_interaction_wica/config.py) | Composed app config: one JSON with `wica`/`tts`/`asr` engine sections (each delegated to its own loader) plus the app-owned `reachy` robot-backend section | [configuration.md](specs/configuration.md) |
+| [config.py](src/reachy_mini_interaction_wica/config.py) | Composed app config: one JSON with `wica`/`asr` engine sections plus `reachy` — a verbatim `reachy-mini-bridge` config (voice included) — each section delegated to its own loader | [configuration.md](specs/configuration.md) |
 | [asr_bridge.py](src/reachy_mini_interaction_wica/asr_bridge.py) | Speech-in: owns the `ASREngine` (fed the robot's echo-cancelled mic stream), maps segments to World `speech_input` (final only) + live partial view, hosts the dictation command | [asr-bridge.md](specs/asr-bridge.md) |
 | [tts_output.py](src/reachy_mini_interaction_wica/tts_output.py) | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | [tts-output.md](specs/tts-output.md) |
 | [robot_control.py](src/reachy_mini_interaction_wica/robot_control.py) | Robot commands: non-raising WICA commands wrapping `reachy-mini-bridge` verbs — play/list emotions, start/stop head tracking, get/set motor state | [robot-control.md](specs/robot-control.md) |

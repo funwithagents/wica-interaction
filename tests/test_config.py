@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from asr_engine.config import ASREngineConfig
-from tts_engine.config import TTSEngineConfig
+from reachy_mini_bridge.config import ReachyMiniConfig
 from wica.config import WicaConfig
 
 from reachy_mini_interaction_wica.config import AppConfig, load_config
@@ -24,16 +24,6 @@ def _composed(system_prompt_file: str = "prompts/assistant.md") -> dict:
                 "system_prompt_file": system_prompt_file,
             }
         },
-        "tts": {
-            "engine": {
-                "module": {
-                    "type": "elevenlabs",
-                    "api_key_env": "ELEVENLABS_API_KEY",
-                    "voice_id": "JBFqnCBsd6RMkjVDRZzb",
-                },
-                "player": {"device": None},
-            }
-        },
         "asr": {
             "engine": {
                 "module": {
@@ -46,6 +36,16 @@ def _composed(system_prompt_file: str = "prompts/assistant.md") -> dict:
                 "segmentation": {"end_of_speech_timeout_s": 2.0},
             }
         },
+        "reachy": {
+            "tts": {
+                "module": {
+                    "type": "elevenlabs",
+                    "api_key_env": "ELEVENLABS_API_KEY",
+                    "voice_id": "JBFqnCBsd6RMkjVDRZzb",
+                },
+                "player": {"device": None},
+            }
+        },
     }
 
 
@@ -55,7 +55,9 @@ def _write(tmp_path: Path, config: dict, name: str = "app.json") -> str:
     return str(path)
 
 
-def test_happy_path_builds_all_three_engine_configs(tmp_path: Path) -> None:
+def test_happy_path_builds_both_engine_configs_and_a_bridge_config(
+    tmp_path: Path,
+) -> None:
     cfg = load_config(_write(tmp_path, _composed()))
 
     assert isinstance(cfg, AppConfig)
@@ -64,17 +66,17 @@ def test_happy_path_builds_all_three_engine_configs(tmp_path: Path) -> None:
     assert cfg.wica.agent.provider == "anthropic"
     assert cfg.wica.agent.model == "claude-sonnet-5"
 
-    assert isinstance(cfg.tts_engine, TTSEngineConfig)
-    assert cfg.tts_engine.module["type"] == "elevenlabs"
-    # The module block is carried through verbatim, extra fields intact.
-    assert cfg.tts_engine.module["voice_id"] == "JBFqnCBsd6RMkjVDRZzb"
-
     assert isinstance(cfg.asr_engine, ASREngineConfig)
     assert cfg.asr_engine.module.type == "deepgram_v2"
     assert cfg.asr_engine.dictation_default_segmentation_mode == "timeout"
 
-    # No `reachy` section in the composed fixture ⇒ the default backend.
+    # The `reachy` section is a verbatim bridge config, delegated to ReachyMiniConfig.from_dict.
+    assert isinstance(cfg.reachy, ReachyMiniConfig)
     assert cfg.reachy.backend == "real"
+    assert cfg.reachy.tts is not None
+    assert cfg.reachy.tts["module"]["type"] == "elevenlabs"
+    # The module block is carried through verbatim, extra fields intact.
+    assert cfg.reachy.tts["module"]["voice_id"] == "JBFqnCBsd6RMkjVDRZzb"
 
 
 def test_system_prompt_file_is_located_against_config_dir(tmp_path: Path) -> None:
@@ -121,9 +123,9 @@ def test_missing_section_names_the_missing_key(tmp_path: Path) -> None:
 
 def test_section_without_engine_block_raises(tmp_path: Path) -> None:
     config = _composed()
-    config["tts"] = {"not_engine": {}}
+    config["asr"] = {"not_engine": {}}
     with pytest.raises(
-        ValueError, match="section 'tts' must be an object with an 'engine' block"
+        ValueError, match="section 'asr' must be an object with an 'engine' block"
     ):
         load_config(_write(tmp_path, config))
 
@@ -132,7 +134,8 @@ def test_loads_with_credentials_unset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The composed file references keys by env-var name; with those vars unset, loading must still
-    # succeed (no env read at load — the "app opens without credentials" contract).
+    # succeed (no env read at load — the "app opens without credentials" contract). Neither WICA's
+    # loader, ASR's, nor the bridge's reads an env var at load time.
     for var in ("WICA_ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "DEEPGRAM_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
@@ -141,42 +144,77 @@ def test_loads_with_credentials_unset(
 
 
 @pytest.mark.parametrize("backend", ["real", "sim", "fake"])
-def test_reachy_backend_parses(tmp_path: Path, backend: str) -> None:
+def test_reachy_backend_round_trips(tmp_path: Path, backend: str) -> None:
     config = _composed()
-    config["reachy"] = {"backend": backend}
+    config["reachy"]["backend"] = backend
     cfg = load_config(_write(tmp_path, config))
     assert cfg.reachy.backend == backend
 
 
-def test_reachy_absent_defaults_to_real(tmp_path: Path) -> None:
+def test_reachy_daemon_block_is_parsed(tmp_path: Path) -> None:
     config = _composed()
-    config.pop("reachy", None)  # the fixture has none, but be explicit
+    config["reachy"]["backend"] = "sim"
+    config["reachy"]["daemon"] = {"spawn": "auto", "headless": False}
     cfg = load_config(_write(tmp_path, config))
-    assert cfg.reachy.backend == "real"
+    assert cfg.reachy.daemon.spawn == "auto"
+    assert cfg.reachy.daemon.headless is False
 
 
-def test_reachy_empty_object_defaults_to_real(tmp_path: Path) -> None:
+def test_reachy_audio_profile_is_carried(tmp_path: Path) -> None:
     config = _composed()
-    config["reachy"] = {}  # present but no backend key ⇒ default
+    config["reachy"]["audio"] = {"xvf3800": [["AEC_ENABLE", [1]]]}
     cfg = load_config(_write(tmp_path, config))
+    assert cfg.reachy.audio.xvf3800 == [["AEC_ENABLE", [1]]]
+
+
+def test_reachy_absent_defaults_to_the_bridges_own_defaults(tmp_path: Path) -> None:
+    config = _composed()
+    config.pop("reachy", None)
+    cfg = load_config(_write(tmp_path, config))
+    assert cfg.reachy == ReachyMiniConfig()
     assert cfg.reachy.backend == "real"
+    assert cfg.reachy.tts is None
+
+
+def test_reachy_empty_object_defaults_the_same_way(tmp_path: Path) -> None:
+    config = _composed()
+    config["reachy"] = {}
+    cfg = load_config(_write(tmp_path, config))
+    assert cfg.reachy == ReachyMiniConfig()
 
 
 def test_invalid_reachy_backend_raises(tmp_path: Path) -> None:
     config = _composed()
-    config["reachy"] = {"backend": "hologram"}
-    # The message lists exactly the allowed set (derived from the `Backend` Literal), then the culprit.
-    with pytest.raises(
-        ValueError,
-        match="reachy.backend must be one of 'real', 'sim', 'fake', got 'hologram'",
-    ):
+    config["reachy"]["backend"] = "hologram"
+    with pytest.raises(ValueError, match="'backend' must be one of"):
+        load_config(_write(tmp_path, config))
+
+
+def test_unknown_reachy_key_raises(tmp_path: Path) -> None:
+    config = _composed()
+    config["reachy"]["bogus"] = True
+    with pytest.raises(ValueError, match="unknown key"):
+        load_config(_write(tmp_path, config))
+
+
+def test_daemon_spawn_on_non_sim_backend_raises(tmp_path: Path) -> None:
+    config = _composed()
+    config["reachy"]["backend"] = "real"
+    config["reachy"]["daemon"] = {"spawn": "auto"}
+    with pytest.raises(ValueError, match="requires backend 'sim'"):
+        load_config(_write(tmp_path, config))
+
+
+def test_reachy_not_an_object_raises(tmp_path: Path) -> None:
+    config = _composed()
+    config["reachy"] = "real"
+    with pytest.raises(ValueError, match="section 'reachy' must be an object"):
         load_config(_write(tmp_path, config))
 
 
 def test_reachy_section_is_optional_but_required_sections_stay(tmp_path: Path) -> None:
-    # `reachy` missing is fine; a missing *required* engine section still raises even with reachy set.
+    # `reachy` missing is fine; a missing *required* section still raises even with reachy set.
     config = _composed()
-    config["reachy"] = {"backend": "fake"}
     del config["wica"]
     with pytest.raises(ValueError, match="missing required section.*'wica'"):
         load_config(_write(tmp_path, config))

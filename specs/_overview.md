@@ -10,7 +10,7 @@ An **interaction application for the [Reachy Mini](https://github.com/pollen-rob
 - **[WICA](../../wica-framework/INTEGRATING.md)** — the agent: serializes state into a prompt, reasons, and acts (the brain).
 - **[`reachy-mini-bridge`](../../reachy-mini-bridge/specs/_overview.md)** — the robot. Its `ReachyMiniApi` owns the robot: it **speaks** (`say`, synthesized speech routed to the robot speaker), exposes the **echo-cancelled microphone** as a stream, and offers action verbs (`play_emotion`, `start_head_tracking`, `set_motors_state`, …). The bridge, in turn, wraps the first-party [`tts-engine`](../../tts-engine) for its voice.
 
-`asr-engine`, `wica`, and `reachy-mini-bridge` are **sibling path dependencies** (`../asr-engine`, `../wica-framework`, `../reachy-mini-bridge`) consumed **in-process** as libraries — this app runs no MCP servers. (`tts-engine` is a direct dependency too, but only for the `TTSEngineConfig` the app builds and hands to the bridge's synthesizer — see [configuration.md](configuration.md).) Compared with WICA's [conversation demo](../../wica-framework/specs/conversation-demo.md) (a text box faking speech), here speech in is a live robot mic, speech out is real audio on the robot, and the agent can move the robot — while the same observability panels (WICA's reusable `wica.contrib.gradio` components, behind the `wica[gradio]` extra) let you watch the framework work.
+`asr-engine`, `wica`, and `reachy-mini-bridge` are **sibling path dependencies** (`../asr-engine`, `../wica-framework`, `../reachy-mini-bridge`) consumed **in-process** as libraries — this app runs no MCP servers. The voice is configured as part of the robot: the `reachy` config section is a verbatim `reachy-mini-bridge` config, including its `tts` block, so the bridge builds and owns the synthesizer — see [configuration.md](configuration.md). Compared with WICA's [conversation demo](../../wica-framework/specs/conversation-demo.md) (a text box faking speech), here speech in is a live robot mic, speech out is real audio on the robot, and the agent can move the robot — while the same observability panels (WICA's reusable `wica.contrib.gradio` components, behind the `wica[gradio]` extra) let you watch the framework work.
 
 ## Why the robot, not local audio
 
@@ -48,7 +48,7 @@ Each core concept is one module in `src/reachy_mini_interaction_wica/`, governed
 
 | Module | Role | Spec |
 |---|---|---|
-| `config.py` | One composed JSON (`wica`/`asr`/`tts` engine sections + a `reachy` robot-backend section), each engine section delegated to its own loader | [configuration.md](configuration.md) |
+| `config.py` | One composed JSON (`wica`/`asr` engine sections + a `reachy` robot-backend section, voice included), each section delegated to its own loader | [configuration.md](configuration.md) |
 | `asr_bridge.py` | Speech-in: owns the `ASREngine` fed the robot's echo-cancelled mic stream, maps segments to `speech_input` (final only) + the live view, hosts the dictation command | [asr-bridge.md](asr-bridge.md) |
 | `tts_output.py` | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | [tts-output.md](tts-output.md) |
 | `robot_control.py` | Robot actions: WICA commands wrapping the bridge's `play_emotion` / `list_emotions` / head-tracking / motor-state verbs | [robot-control.md](robot-control.md) |
@@ -59,7 +59,7 @@ Plus two cross-cutting specs: [project.md](project.md) (tooling/layout) and [tes
 
 ## Configuration in one file
 
-The whole app is stood up from a single JSON file with sections `wica`, `asr`, `tts`, and `reachy` — each engine section holding *exactly* the document that engine's own loader expects, and `reachy` naming the robot backend (`real` / `sim` / `fake`). Switching provider, voice, ASR backend, robot backend, or persona is a file edit, not a code change. Keys are referenced by env-var name, never stored; a missing key surfaces as that engine's own error, and the app still opens and says what to set. Full detail: [configuration.md](configuration.md).
+The whole app is stood up from a single JSON file with sections `wica`, `asr`, and `reachy` — each section holding *exactly* the document that engine's own loader expects, `reachy` a verbatim `reachy-mini-bridge` config (backend, daemon lifecycle, the voice at `reachy.tts`, audio profile). Switching provider, voice, ASR backend, robot backend, or persona is a file edit, not a code change. Keys are referenced by env-var name, never stored; a missing key surfaces as that engine's own error, and the app still opens and says what to set. Full detail: [configuration.md](configuration.md).
 
 ## What it is (and isn't) — v1
 

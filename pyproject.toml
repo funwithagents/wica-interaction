@@ -12,13 +12,10 @@ dependencies = [
     # embeds no ASR — see reachy-mini-bridge specs/audio.md).
     "asr-engine",
     # The robot: high-level interaction verbs (say, mic stream, play_emotion, head tracking, motors)
-    # over a real/sim/fake Reachy Mini. The `tts` extra pulls the default tts-engine-backed
-    # SpeechSynthesizer the bridge's `say` uses to route speech to the robot speaker.
+    # over a real/sim/fake Reachy Mini. The bridge owns its own config (ReachyMiniConfig) and builds
+    # the voice itself from the `reachy.tts` block; the `tts` extra pulls the tts-engine-backed
+    # SpeechSynthesizer it uses to route speech to the robot speaker.
     "reachy-mini-bridge[tts]",
-    # TTS engine config. Speech-out now plays through the robot (reachy-mini-bridge's `say`), so
-    # VoiceOutput no longer imports this; config.py still builds a TTSEngineConfig, which the app hands
-    # to the bridge's TTSEngineSynthesizer (the `tts` extra above) — see specs/configuration.md.
-    "tts-engine",
     # The anthropic extra pulls langchain-anthropic so the committed config.example.json (provider
     # "anthropic") runs with just an API key set. Switch provider by editing the config and swapping
     # that extra (see wica's optional-dependencies: openai, huggingface-hub). The gradio extra is not
@@ -48,7 +45,8 @@ dev = [
 
 [tool.uv.sources]
 # First-party sibling repos, consumed as local path dependencies during development (a pinned git
-# URL later, per specs/project.md). They live in the parent folder.
+# URL later, per specs/project.md). They live in the parent folder. tts-engine is not a direct
+# dependency (reachy-mini-bridge[tts] pulls it); its editable source matches the bridge's own.
 wica = { path = "../wica-framework", editable = true }
 tts-engine = { path = "../tts-engine", editable = true }
 asr-engine = { path = "../asr-engine", editable = true }
