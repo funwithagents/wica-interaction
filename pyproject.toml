@@ -21,12 +21,11 @@ dependencies = [
     "tts-engine",
     # The anthropic extra pulls langchain-anthropic so the committed config.example.json (provider
     # "anthropic") runs with just an API key set. Switch provider by editing the config and swapping
-    # this extra (see wica's optional-dependencies: openai, huggingface-hub).
-    "wica[anthropic]",
+    # that extra (see wica's optional-dependencies: openai, huggingface-hub). The gradio extra is not
+    # a provider: it makes `wica.contrib.gradio` importable — the reusable observability panels the
+    # UI places (core wica never imports Gradio).
+    "wica[anthropic,gradio]",
     "gradio>=6",
-    # Imported directly by app_ui.py (langchain_core.messages, to render the Prompt panel), so it is
-    # declared rather than relied on transitively through wica.
-    "langchain-core",
 ]
 
 [project.scripts]

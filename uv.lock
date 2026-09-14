@@ -2893,10 +2893,9 @@ source = { editable = "." }
 dependencies = [
     { name = "asr-engine" },
     { name = "gradio" },
-    { name = "langchain-core" },
     { name = "reachy-mini-bridge", extra = ["tts"] },
     { name = "tts-engine" },
-    { name = "wica", extra = ["anthropic"] },
+    { name = "wica", extra = ["anthropic", "gradio"] },
 ]
 
 [package.dev-dependencies]
@@ -2911,10 +2910,9 @@ dev = [
 requires-dist = [
     { name = "asr-engine", editable = "../asr-engine" },
     { name = "gradio", specifier = ">=6" },
-    { name = "langchain-core" },
     { name = "reachy-mini-bridge", extras = ["tts"], editable = "../reachy-mini-bridge" },
     { name = "tts-engine", editable = "../tts-engine" },
-    { name = "wica", extras = ["anthropic"], editable = "../wica-framework" },
+    { name = "wica", extras = ["anthropic", "gradio"], editable = "../wica-framework" },
 ]
 
 [package.metadata.requires-dev]
@@ -3838,16 +3836,20 @@ dependencies = [
 anthropic = [
     { name = "langchain-anthropic" },
 ]
+gradio = [
+    { name = "gradio" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "gradio", marker = "extra == 'gradio'", specifier = ">=5.0.0" },
     { name = "langchain", specifier = ">=1.0" },
     { name = "langchain-anthropic", marker = "extra == 'anthropic'", specifier = ">=1.0" },
     { name = "langchain-core", specifier = ">=1.0" },
     { name = "langchain-huggingface", marker = "extra == 'huggingface-hub'", specifier = ">=1.2" },
     { name = "langchain-openai", marker = "extra == 'openai'", specifier = ">=1.0" },
 ]
-provides-extras = ["anthropic", "openai", "huggingface-hub"]
+provides-extras = ["anthropic", "openai", "huggingface-hub", "gradio"]
 
 [package.metadata.requires-dev]
 demo = [
@@ -3857,6 +3859,7 @@ demo = [
     { name = "langchain-openai", specifier = ">=1.0" },
 ]
 dev = [
+    { name = "gradio", specifier = ">=5.0.0" },
     { name = "langchain-anthropic", specifier = ">=1.0" },
     { name = "langchain-huggingface", specifier = ">=1.2" },
     { name = "langchain-openai", specifier = ">=1.0" },

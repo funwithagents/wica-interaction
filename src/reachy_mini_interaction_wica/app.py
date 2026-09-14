@@ -4,32 +4,31 @@ Stands up the robot and the ASR engine behind WICA on one app-owned event loop �
 in (fed the robot's echo-cancelled mic via ``RobotMicSource``), the WICA Agent in the middle,
 [VoiceOutput](tts_output.py) out (spoken through the robot speaker). Speech-out and the mic stream both
 ride a single ``reachy-mini-bridge`` ``ReachyMiniApi``, so there is one robot connection and one media
-session. The Gradio presentation layer (panels, layout, live views) lives in [app_ui.py](app_ui.py).
-See specs/app.md.
+session. The Gradio presentation layer (the page, the presenters it owns, the ASR live view) lives in
+[app_ui.py](app_ui.py). See specs/app.md.
 
-Three seams keep the wiring testable without a browser:
+The composition follows WICA's conversation demo — **build → UI → wire → start → launch → close** —
+which is the order the framework's output-wiring setters exist for (``Wica.init`` takes no
+application callables; the sink and the output Command are set afterwards):
 
-- ``build_system(config)`` — pure wiring, no Gradio: owns the loop, builds the one ``ReachyMiniApi``
-  (and enters it on the loop), builds/adopts the engines behind WICA, registers commands +
-  ``speech_input``, wires the bridge callback, collects panel state. Its ``api=`` / ``asr_engine=``
-  kwargs are test seams for injecting fakes.
-- ``build_ui(system)`` — the Gradio layout only (in [app_ui.py](app_ui.py)).
-- ``main()`` — parse ``--config``, build, then ``_serve``: start + launch inside a ``try`` whose
-  ``finally`` runs ``_shutdown`` (isolated, time-bounded steps; the bridge is stopped before the api
-  exits).
+- ``build_system(config)`` — pure build, no Gradio, no wiring: owns the loop, builds the one
+  ``ReachyMiniApi`` (and enters it on the loop), builds the voice, ``Wica.init``s the agent and
+  registers the ``speech_input`` entry, builds the ASR bridge. Its ``api=`` / ``asr_engine=`` kwargs
+  are test seams for injecting fakes.
+- ``build_ui(system)`` — the Gradio page (in [app_ui.py](app_ui.py)); it owns the contrib presenters
+  (``TranscriptLog`` / ``PromptLog``, subscribed to the agent's Events in their constructors) and hands
+  the transcript back on an ``AppUi`` handle.
+- ``wire(system, transcript)`` — Gradio-free: sets the transcript's ``output_sink`` and the voice's
+  ``say`` as the output Command on the agent, registers the dictation + robot Commands. Tests call it
+  with a ``TranscriptLog`` they build themselves, playing the UI's role.
+- ``main()`` — parse ``--config``, build, build the UI, wire, then ``_serve``: start + launch inside a
+  ``try`` whose ``finally`` runs ``_shutdown`` (isolated, time-bounded steps; the bridge is stopped
+  before the api exits).
 
-Two objects hold the running system, split by dependency so both can be *fully formed at
-construction* (no post-hoc mutation):
-
-- ``PanelState`` ([app_ui.py](app_ui.py)) — the instrumentation sink + the panel view-state. It depends
-  on nothing (no WICA), so it is built first and handed to ``Wica.init`` as the ``output_sink`` and
-  subscribed to the agent's Events.
-- ``AppSystem`` — a frozen snapshot of the resolved components (loop, wica, bridge, voice, panels) and
-  the typed-text ``submit_speech`` hatch. Built last, once everything it holds exists.
-
-The build order — panels → voice → **wica → bridge** — is deliberate: WICA needs only the panels and
-the voice, and the bridge's ``on_final_segment`` needs WICA, so building WICA *before* the bridge lets
-every reference resolve forward with no placeholder/back-patching.
+``AppSystem`` is a frozen snapshot of the resolved components (loop, api, wica, bridge, voice) and the
+typed-text ``submit_speech`` hatch — fully formed at construction, nothing back-patched. The build
+order — robot → voice → **wica → bridge** — is deliberate: the bridge's ``on_final_segment`` needs
+WICA, so building WICA *before* the bridge lets every reference resolve forward with no placeholder.
 
 WICA exposes no accessor for the loop it runs on, so the app *owns* the loop and injects it into
 ``Wica.init(loop=…)`` — the only way to schedule the ASR engine and the robot api onto the same loop
@@ -47,13 +46,15 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
+import gradio as gr
 from asr_engine.engine import ASREngine
 from reachy_mini_bridge.api import ReachyMiniApi
 from reachy_mini_bridge.audio import TTSEngineSynthesizer
 from wica import Content, TextPart, Wica
 from wica.config import ConfigError, MissingEnvError
+from wica.contrib.gradio import TranscriptLog
 
-from reachy_mini_interaction_wica.app_ui import PanelState, build_ui
+from reachy_mini_interaction_wica.app_ui import build_ui
 from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
 from reachy_mini_interaction_wica.config import AppConfig, load_config
 from reachy_mini_interaction_wica.robot_control import RobotControl
@@ -66,7 +67,9 @@ def _speech_input(value: Any, previous: Any) -> Content:
     """Render the triggering `speech_input` entry into the prompt (voice-assistant phrasing).
 
     An empty string — an ASR final that closed on silence, delivered verbatim — is a real value,
-    rendered as ``said to you: ""``; only ``None`` means the person hasn't spoken yet."""
+    rendered as ``said to you: ""``; only ``None`` means the person hasn't spoken yet. Its
+    person-facing counterpart (how the same entry reads in the transcript) is ``display_entry`` in
+    [app_ui.py](app_ui.py)."""
     if value is None:
         return [TextPart("The person hasn't said anything to you yet.")]
     return [TextPart(f'The person said to you: "{value}"')]
@@ -74,19 +77,17 @@ def _speech_input(value: Any, previous: Any) -> Content:
 
 @dataclass(frozen=True)
 class AppSystem:
-    """A frozen snapshot of the built system: the resolved components on one app-owned loop, the panel
-    state, and the typed-text ``submit_speech`` hatch.
+    """A frozen snapshot of the built system: the resolved components on one app-owned loop and the
+    typed-text ``submit_speech`` hatch.
 
-    Every field is final at construction — the two-phase ``system.wica = …`` back-patch is gone because
-    ``build_system`` builds WICA before the bridge (see the module docstring). ``api`` / ``wica`` /
-    ``bridge`` / ``voice`` are ``None`` when that component failed to build (its reason is captured in
-    ``missing``); the UI still opens and the surviving paths still work — notably typed text, which
-    reaches the agent whenever ``wica`` is running, needing neither ASR nor the robot. ``build_system``
-    enters the robot's media session (so ``say``/mic are live), but does not *start* the agent or ASR
-    capture (``main`` does), so a test can inspect a built-but-not-listening system. ``main`` is what
-    tears down via ``_shutdown`` (agent, then ASR bridge, then the api's ``__aexit__``, then the loop).
-    The live views the UI polls (``tick_world`` / ``tick_asr``) are free functions in
-    [app_ui.py](app_ui.py) that read this snapshot.
+    Every field is final at construction. ``api`` / ``wica`` / ``bridge`` / ``voice`` are ``None`` when
+    that component failed to build (its reason is captured in ``missing``); the UI still opens and the
+    surviving paths still work — notably typed text, which reaches the agent whenever ``wica`` is
+    running, needing neither ASR nor the robot. ``build_system`` enters the robot's media session (so
+    ``say``/mic are live), but neither wires the output channel (``wire`` does, once the UI's
+    transcript exists) nor *starts* the agent or ASR capture (``main`` does), so a test can inspect a
+    built-but-not-listening system. ``main`` is what tears down via ``_shutdown`` (agent, then ASR
+    bridge, then the api's ``__aexit__``, then the loop).
     """
 
     loop: asyncio.AbstractEventLoop | None
@@ -94,7 +95,6 @@ class AppSystem:
     wica: Wica | None
     bridge: AsrBridge | None
     voice: VoiceOutput | None
-    panels: PanelState
     missing: list[str]
     # The typed-text hatch: writes the same `speech_input` World update a closed ASR segment makes (so
     # both flow through the identical reason → say → sink path), but ignores empty/whitespace input —
@@ -108,7 +108,8 @@ def build_system(
     api: ReachyMiniApi | None = None,
     asr_engine: ASREngine | None = None,
 ) -> AppSystem:
-    """Stand up the whole system from *config* — the wiring `main` does, minus starting/launching.
+    """Stand up the whole system from *config* — the build step of `main`, minus the UI, the output
+    wiring, and starting/launching.
 
     Owns a fresh event loop (run in a daemon thread) and injects it into ``Wica.init`` so the ASR
     engine and the robot api share the loop the Agent runs on. Builds in dependency order — robot api →
@@ -131,7 +132,6 @@ def build_system(
         target=loop.run_forever, name="reachy-mini-interaction-loop", daemon=True
     ).start()
 
-    panels = PanelState()
     missing: list[str] = []
 
     # --- The voice's synthesizer: built on its own so an unset TTS key degrades only `say` ------
@@ -165,15 +165,11 @@ def build_system(
     # --- Speech out: the robot-backed voice, or None when the robot is unavailable --------------
     voice = VoiceOutput(robot) if robot is not None else None
 
-    # --- The agent, on the app-owned loop (needs only the panels sink + the voice) --------------
+    # --- The agent, on the app-owned loop. No callables here: the sink and the output Command are
+    # set in `wire`, once the UI's transcript exists (build, then wire, then start). ---------------
     wica: Wica | None = None
     try:
-        wica = Wica.init(
-            config.wica,
-            output_sink=panels.output_sink,
-            output_command=voice.say if voice is not None else None,
-            loop=loop,
-        )
+        wica = Wica.init(config.wica, loop=loop)
     except MissingEnvError as exc:
         missing.append(f"Agent: environment variable {exc.env_var!r} is not set")
     except ConfigError as exc:
@@ -184,6 +180,12 @@ def build_system(
         # The configured provider's extra isn't installed (a setup gap, not a missing key). Surface
         # it in the banner rather than crashing, so the app still opens and says what to install.
         missing.append(f"Agent: {exc}")
+
+    if wica is not None:
+        # A World-schema operation, so it belongs to the build (like the demo's register_world).
+        wica.world.register(
+            "speech_input", str, serialize_fn=_speech_input, triggers_llm_call=True
+        )
 
     # The two input paths into `speech_input`. `wica` is already final here (built above), so plain
     # closures capture it. world.update is guarded on a running agent (it raises while stopped, and
@@ -217,38 +219,49 @@ def build_system(
         except ValueError as exc:
             missing.append(f"ASR: {exc}")
 
-    # --- Wire the agent to the World, the commands, and the panels ------------------------------
-    if wica is not None:
-        wica.world.register(
-            "speech_input", str, serialize_fn=_speech_input, triggers_llm_call=True
-        )
-        if bridge is not None:
-            wica.register_command(bridge.start_dictation)
-            wica.register_command(bridge.stop_dictation)
-        # Robot action commands, over the same api as the voice: emotions, head tracking, motors. Only
-        # when the robot is up (no api ⇒ nothing to act through); the agent still speaks/reasons without.
-        if robot is not None:
-            controls = RobotControl(robot)
-            wica.register_command(controls.list_emotions)
-            wica.register_command(controls.play_emotion)
-            wica.register_command(controls.start_head_tracking)
-            wica.register_command(controls.stop_head_tracking)
-            wica.register_command(controls.get_motors_state)
-            wica.register_command(controls.set_motors_state)
-        wica.on_agent_prompt.subscribe(panels.on_prompt)
-        wica.on_agent_trigger.subscribe(panels.on_trigger)
-        wica.on_agent_command.subscribe(panels.on_command)
-
     return AppSystem(
         loop=loop,
         api=robot,
         wica=wica,
         bridge=bridge,
         voice=voice,
-        panels=panels,
         missing=missing,
         submit_speech=submit_speech,
     )
+
+
+def wire(system: AppSystem, transcript: TranscriptLog) -> None:
+    """Wire the output channel and the Commands onto the agent — after the UI's presenters exist and
+    before ``start()``. Gradio-free: it takes the transcript presenter, not the page, so the tests
+    call it with a ``TranscriptLog`` they build themselves.
+
+    The transcript's ``output_sink`` receives the model's free text (private reasoning, shown as the
+    💭 item); the voice's ``say`` becomes the output Command (setting it recomposes the system prompt
+    to name it, which is why it precedes ``start()``); the dictation and robot-action Commands are
+    registered. Each is wired only when its component was built. A no-op without an agent — there is
+    nothing to wire into, and the banner already says why."""
+    wica = system.wica
+    if wica is None:
+        return
+    wica.set_output_sink(transcript.output_sink)
+    if system.voice is not None:
+        wica.set_output_command(system.voice.say)
+    if system.bridge is not None:
+        wica.register_command(system.bridge.start_dictation)
+        wica.register_command(system.bridge.stop_dictation)
+    # Robot action commands, over the same api as the voice: emotions, head tracking, motors. Only
+    # when the robot is up (no api ⇒ nothing to act through); the agent still speaks/reasons without.
+    if system.api is not None:
+        controls = RobotControl(system.api)
+        for command in (
+            controls.list_emotions,
+            controls.play_emotion,
+            controls.start_head_tracking,
+            controls.stop_head_tracking,
+            controls.get_motors_state,
+            controls.set_motors_state,
+        ):
+            wica.register_command(command)
 
 
 def _start(system: AppSystem) -> None:
@@ -269,7 +282,6 @@ def _degraded_system(message: str) -> AppSystem:
         wica=None,
         bridge=None,
         voice=None,
-        panels=PanelState(),
         missing=[message],
         submit_speech=lambda _text: None,
     )
@@ -300,8 +312,10 @@ def _shutdown(system: AppSystem) -> None:
     media session, then the loop. The bridge is stopped *before* the api exits so the mic pump is
     cancelled while its stream is still valid, rather than iterating a closed media session.
 
-    Each step is isolated (and each loop hop time-bounded): a step that raises or hangs is logged and
-    the rest still run, so one failure cannot strand the robot session or the loop thread."""
+    Runs on the Gradio thread once ``launch()`` returns (never from a sink, Command, or Event
+    subscriber — those run on the loop). Each step is isolated (and each loop hop time-bounded): a
+    step that raises or hangs is logged and the rest still run, so one failure cannot strand the
+    robot session or the loop thread."""
     loop = system.loop
     if system.wica is not None:
         try:
@@ -320,13 +334,14 @@ def _shutdown(system: AppSystem) -> None:
         loop.call_soon_threadsafe(loop.stop)
 
 
-def _serve(system: AppSystem) -> None:
-    """Start the system and run the UI, tearing down whatever happens. ``_start`` sits *inside* the
-    ``try``: ``build_system`` has already entered the robot's media session, so a raise in
-    ``wica.start()`` / ``asr_bridge.start()`` must still exit it and stop the loop."""
+def _serve(system: AppSystem, blocks: gr.Blocks) -> None:
+    """Start the system and run the (already built and wired) page, tearing down whatever happens.
+    ``_start`` sits *inside* the ``try``: ``build_system`` has already entered the robot's media
+    session, so a raise in ``wica.start()`` / ``asr_bridge.start()`` must still exit it and stop the
+    loop."""
     try:
         _start(system)
-        build_ui(system).launch()
+        blocks.launch()
     finally:
         _shutdown(system)
 
@@ -352,7 +367,11 @@ def main() -> None:
         system = _degraded_system(str(exc))
     else:
         system = build_system(config)
-    _serve(system)
+    # build → UI → wire → start (+ launch, then close): the UI owns the presenters, so it comes before
+    # the wiring that needs the transcript's sink; everything is wired before start.
+    ui = build_ui(system)
+    wire(system, ui.transcript)
+    _serve(system, ui.blocks)
 
 
 if __name__ == "__main__":

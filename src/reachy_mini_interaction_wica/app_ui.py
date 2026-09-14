@@ -1,268 +1,78 @@
-"""The Gradio UI: panel view-state, instrumentation sink, and the browser layout.
+"""The Gradio UI: the page layout, the presenters it owns, and the app's own ASR live view.
 
-This is the *presentation* half of the app, split from the wiring in [app.py](app.py). It holds
-everything the browser needs and nothing that stands up the robot/engines:
+This is the *presentation* half of the app, split from the wiring in [app.py](app.py). The three
+framework-observability panels — Conversation, World state, Prompt — are **not** implemented here:
+they are WICA's reusable ``wica.contrib.gradio`` components (the ``wica[gradio]`` extra), each a
+presenter built over the ``Wica`` plus a panel function that creates the components and owns the
+timer keeping them live. What this module holds:
 
-- ``PanelState`` — the instrumentation sink + panel view-state handed to ``Wica.init`` as the
-  ``output_sink`` and subscribed to the agent's Events. It depends on nothing (no WICA), so ``app`` can
-  build it before the agent.
-- ``build_ui(system)`` — the Gradio layout: Conversation + ASR as the main surface, World + Prompt
-  behind a debug toggle, a banner for any missing credentials, and the typed-text hatch.
-- the live-view renderers the UI timers poll — ``tick_world`` / ``tick_asr`` — plus the message/value
-  rendering helpers. These read a built ``AppSystem`` but belong to the view, so they live here as free
-  functions rather than methods on the frozen wiring snapshot.
+- ``display_entry`` — the one hook through which the app injects persona knowledge into those generic
+  panels: how a World entry reads to a *person* (`speech_input` → `🗣️ "…"`, a `say` execution →
+  the spoken text). The person-facing counterpart of the ``speech_input`` ``serialize_fn`` in
+  [app.py](app.py).
+- ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``PromptLog``, subscribed to the
+  agent's Events in their constructors, both given ``display_entry``), lays out the page (the three
+  contrib panels, the app's ASR panel, the typed-text hatch, a banner for anything missing, the
+  debug toggle), and returns the page plus the transcript on an ``AppUi`` handle so the app can wire
+  the transcript's sink (``wire`` in [app.py](app.py)). The UI wires nothing itself.
+- ``tick_asr`` — the live view the ASR panel's timer polls (the only timer the app owns).
 
 The only dependency on ``app`` is the ``AppSystem`` *type* (for annotations), imported under
-``TYPE_CHECKING`` so there is no import cycle: ``app`` imports ``PanelState`` / ``build_ui`` from here at
-runtime, and this module never imports ``app`` at runtime. See specs/app.md.
+``TYPE_CHECKING`` so there is no import cycle: ``app`` imports ``build_ui`` from here at runtime, and
+this module never imports ``app`` at runtime. See specs/app.md.
 """
 
 from __future__ import annotations
 
 import asyncio
 import html
-import queue
-import threading
-from datetime import datetime
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import gradio as gr
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
-from wica import CommandIssued, WorldEntry
-from wica.agent import CommandExecution
+from wica import CommandExecution, WorldEntry
+from wica.contrib.gradio import (
+    EntryDisplay,
+    PromptLog,
+    TranscriptLog,
+    conversation_panel,
+    prompt_panel,
+    world_state_panel,
+)
 
 if TYPE_CHECKING:
     from reachy_mini_interaction_wica.app import AppSystem
 
-# The output Command's name (VoiceOutput.say.__name__): what the model calls to speak, and what
-# on_command reads to render the 🗣️ say bubble. WICA auto-registers a `noop` Command the model calls
-# to declare "no reaction"; it fires on_command like any issued command so the panel can show it.
-_OUTPUT_COMMAND_NAME = "say"
-_NOOP_COMMAND_NAME = "noop"
+# The output Command's name (VoiceOutput.say.__name__): the voice, whose execution item the hook
+# titles by channel with the spoken text as body.
+_SAY_COMMAND_NAME = "say"
 
-_NO_PROMPT_YET = "(no prompt sent to the model yet)"
 _NO_LIVE_SPEECH = "(no speech yet)"
 
-_WORLD_TABLE_HEADERS = ["Key", "Value", "Updated"]
-# Fixed column widths (percent, summing to 100) so the table never reflows when a long value lands.
-_WORLD_COL_WIDTHS = [34, 44, 22]
 
-
-class _RenderGate:
-    """Returns True only when the rendered value differs from the last one it accepted — so a timer
-    view can skip re-sending an unchanged render to the browser."""
-
-    def __init__(self) -> None:
-        self._last: object = (
-            object()
-        )  # sentinel: the first value always counts as a change
-
-    def changed(self, value: object) -> bool:
-        if value == self._last:
-            return False
-        self._last = value
-        return True
-
-
-def _describe_trigger(entry: WorldEntry) -> str:
-    key = entry.key
+def display_entry(entry: WorldEntry) -> EntryDisplay | None:
+    """How the app's entries show in the transcript and the prompt labels — the person-facing
+    counterpart of the `speech_input` serialize_fn. Anything it doesn't recognise returns None and
+    gets the contrib's generic default (`⚡ key = value`, `🦾 name(args)` for a Command)."""
     value = entry.current.value
-    if key == "speech_input":
-        return f'🗣️ "{value}"'
-    if key.startswith("agent:command:"):
-        name = value.name if isinstance(value, CommandExecution) else key
-        return f"⚡ command finished: {name}"
-    return f"⚡ {key} = {value!r}"
+    if entry.key == "speech_input":
+        return EntryDisplay(f'🗣️ "{value}"')
+    if isinstance(value, CommandExecution) and value.name == _SAY_COMMAND_NAME:
+        # The voice: title it by channel and show what the robot set out to say as the body.
+        return EntryDisplay("🗣️ say", str(value.args.get("text", "")))
+    return None
 
 
-class PanelState:
-    """The instrumentation sink and the panel view-state — everything the UI shows, and nothing that
-    depends on WICA.
+@dataclass(frozen=True)
+class AppUi:
+    """What build_ui() returns: the page, plus the transcript presenter the app wires into the agent
+    (`transcript.output_sink` → `wica.set_output_sink`)."""
 
-    Built before the agent so its ``output_sink`` / ``on_trigger`` / ``on_command`` / ``on_prompt``
-    can be handed to ``Wica.init`` and subscribed to the agent's Events. Instrumentation Events fire
-    on the agent loop and push chat events onto one thread-safe queue that a ``gr.Timer`` drains, so
-    the Gradio side stays synchronous; a single ordered queue keeps triggers, spoken replies, and
-    command calls interleaved in the order they happened.
-    """
-
-    def __init__(self) -> None:
-        self._events: queue.Queue[dict[str, Any]] = queue.Queue()
-        self._state_lock = threading.Lock()
-        self._conversation: list[dict[str, Any]] = []
-        # Every step's prompt, append-only, each {"label", "text"}; never mutated in place.
-        self._prompts: list[dict[str, str]] = []
-        self._last_trigger_label = "start"
-        # Change-tracking for tick_conversation (what was last pushed); read/written under _state_lock.
-        self._last_shown_count = 0
-        self._last_conv_len = 0
-        # Reaction grouping: each step is one collapsible group; on_prompt opens it and the step's
-        # outputs nest under it via metadata.parent_id. All on the agent loop, so no lock needed.
-        self._reaction_count = 0
-        self._current_reaction_id: str | None = None
-
-    # --- Instrumentation handlers (subscribed to WICA's Events) --------------------------------
-
-    def _reaction_child(self, title: str, content: str) -> dict[str, Any]:
-        metadata: dict[str, Any] = {"title": title}
-        if self._current_reaction_id is not None:
-            metadata["parent_id"] = self._current_reaction_id
-        return {"role": "assistant", "content": content, "metadata": metadata}
-
-    async def output_sink(self, text: str) -> None:
-        """The agent's free text for a step — private reasoning, since `say` is the voice. Labelled
-        so the panel makes plain which channel produced it, set apart from the spoken reply."""
-        if text.strip():
-            self._events.put(self._reaction_child("💭 output sink", text))
-
-    def on_trigger(self, entry: WorldEntry) -> None:
-        """A World entry triggered a step — show it on the input (right) side, and always record the
-        label so on_prompt can tag this step's prompt. The agent's own command-completion re-triggers
-        are labelled but not echoed on the transcript (they already show as command calls)."""
-        label = _describe_trigger(entry)
-        self._last_trigger_label = label
-        if entry.key.startswith("agent:command:"):
-            return
-        self._events.put({"role": "user", "content": label})
-
-    def on_command(self, command: CommandIssued) -> None:
-        """A command the model issued — shown on the assistant (left) side. `say` renders as the
-        spoken reply (🗣️, its `text` arg is what the user heard); `noop` is the agent choosing not to
-        react; every other command (start_dictation, …) is a 🦾 action."""
-        if command.name == _OUTPUT_COMMAND_NAME:
-            spoken = command.args.get("text", "")
-            self._events.put(self._reaction_child("🗣️ say", str(spoken)))
-            return
-        if command.name == _NOOP_COMMAND_NAME:
-            self._events.put(self._reaction_child("🚫 noop", "chose not to react"))
-            return
-        rendered = ", ".join(f"{k}={v!r}" for k, v in command.args.items())
-        self._events.put(
-            self._reaction_child(f"🦾 {command.name}", f"{command.name}({rendered})")
-        )
-
-    def on_prompt(self, messages: list[BaseMessage]) -> None:
-        """Capture the exact messages sent to the model (labelled by time + trigger) and open this
-        step's reaction group so its outputs nest under one header. Once per step, on the agent loop,
-        before the model call — so it precedes the step's say/output-sink/command events."""
-        rendered = "\n\n".join(_render_message(m) for m in messages)
-        stamp = datetime.now().astimezone().strftime("%H:%M:%S")
-        trigger_label = self._last_trigger_label
-        with self._state_lock:
-            self._prompts.append(
-                {"label": f"{stamp} — {trigger_label}", "text": rendered}
-            )
-
-        self._reaction_count += 1
-        self._current_reaction_id = f"reaction-{self._reaction_count}"
-        self._events.put(
-            {
-                "role": "assistant",
-                "content": "",
-                "metadata": {
-                    "id": self._current_reaction_id,
-                    "title": f"💬 reaction {self._reaction_count} · {trigger_label}",
-                },
-            }
-        )
-
-    # --- Timer handlers the panels poll (panel state only; no WICA) -----------------------------
-
-    def tick_conversation(self) -> tuple[Any, Any, Any]:
-        """Drain queued chat events into the transcript and snap the prompt view to the newest step.
-        Push a new chatbot value only when the transcript actually changed, so gr.Chatbot's autoscroll
-        isn't re-triggered every fire (which would fight a user scrolling up). The transcript is
-        append-only — entries are never mutated in place (a reaction's outputs are appended as
-        children; its group header keeps its empty content) — so its length is a sufficient, O(1)
-        change signal; nothing is copied or rebuilt on a tick with no new events."""
-        # Gradio runs this timer callback with its default per-listener concurrency of one; the
-        # check-and-set of the _last_* bookkeeping is still done under the lock, so it stays correct
-        # regardless of how the callback is scheduled.
-        with self._state_lock:
-            while True:
-                try:
-                    event = self._events.get_nowait()
-                except queue.Empty:
-                    break
-                self._conversation.append(event)
-
-            chatbot_update: Any = gr.update()
-            if len(self._conversation) != self._last_conv_len:
-                self._last_conv_len = len(self._conversation)
-                chatbot_update = list(self._conversation)
-
-            selector_update: Any = gr.update()
-            prompt_update: Any = gr.update()
-            count = len(self._prompts)
-            if count > self._last_shown_count:
-                self._last_shown_count = count
-                choices = [(p["label"], i) for i, p in enumerate(self._prompts)]
-                selector_update = gr.update(choices=choices, value=count - 1)
-                prompt_update = gr.update(value=self._prompts[-1]["text"])
-        return chatbot_update, selector_update, prompt_update
-
-    def on_select_prompt(self, index: int | None) -> Any:
-        """User picked a prompt from the dropdown — show its exact text."""
-        if index is None:
-            return gr.update()
-        with self._state_lock:
-            if 0 <= index < len(self._prompts):
-                return self._prompts[index]["text"]
-        return gr.update()
+    blocks: gr.Blocks
+    transcript: TranscriptLog
 
 
-def _format_value(value: Any) -> str:
-    if value is None:
-        return "—"
-    if isinstance(value, CommandExecution):
-        args = ", ".join(f"{k}={v!r}" for k, v in value.args.items())
-        return f"{value.name}({args}) [{value.state}]"
-    return str(value)
-
-
-def _flatten_content(content: str | list[Any]) -> str:
-    if isinstance(content, str):
-        return content
-    parts: list[str] = []
-    for block in content:
-        if isinstance(block, dict):
-            if block.get("type") == "text":
-                parts.append(str(block.get("text", "")))
-            elif block.get("type") == "image":
-                parts.append(f"[image {block.get('mime_type', '')}]")
-            else:
-                parts.append(str(block))
-        else:
-            parts.append(str(block))
-    return "".join(parts)
-
-
-def _render_message(m: BaseMessage) -> str:
-    """Render one LangChain message to text for the prompt panel, making explicit the tool_calls an
-    assistant message carries in its structured field (its .content is otherwise blank)."""
-    lines = [f"### {m.type.upper()}"]
-    if isinstance(m, ToolMessage):
-        lines.append(
-            f"🔧 result for [id={m.tool_call_id}] => {_flatten_content(m.content)}"
-        )
-        return "\n".join(lines)
-    body = _flatten_content(m.content)
-    if body:
-        lines.append(body)
-    if isinstance(m, AIMessage):
-        for call in m.tool_calls:
-            args = ", ".join(f"{k}={v!r}" for k, v in call["args"].items())
-            lines.append(f"🔧 tool_call {call['name']}({args})  [id={call['id']}]")
-    return "\n".join(lines)
-
-
-# --- Live views the UI timers poll (read a built AppSystem; belong to the view) -----------------
-
-
-def tick_world(system: AppSystem) -> str:
-    """Refresh only the World table, on its own timer, reading live state directly (so a fleeting
-    command entry — e.g. a `say` that is `running` only while it speaks — isn't lost)."""
-    return _world_html(system)
+# --- The ASR live view its timer polls --------------------------------------------------------
 
 
 def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
@@ -284,75 +94,32 @@ def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
     return display, status_md, gr.update(interactive=bool(status["dictating"]))
 
 
-# --- World table rendering (HTML, not gr.Dataframe: renders fleeting command rows reliably) -----
+# --- Layout ------------------------------------------------------------------------------------
 
 
-def _world_rows(system: AppSystem) -> list[list[str]]:
-    wica = system.wica
-    if wica is None:
-        return []
-    rows: list[list[str]] = []
-    for entry in wica.world.get_prompt_entries():
-        version = entry.current
-        stamp = version.timestamp.astimezone().strftime("%H:%M:%S")
-        rows.append([entry.key, _format_value(version.value), stamp])
-    return rows
-
-
-def _world_html(system: AppSystem) -> str:
-    cols = "".join(f'<col style="width:{w}%">' for w in _WORLD_COL_WIDTHS)
-    header_cells = "".join(f"<th>{html.escape(h)}</th>" for h in _WORLD_TABLE_HEADERS)
-    body_rows: list[str] = []
-    for row in _world_rows(system):
-        is_command = row[0].startswith("agent:command:")
-        cells = "".join(f"<td>{html.escape(cell)}</td>" for cell in row)
-        cls = ' class="cmd"' if is_command else ""
-        body_rows.append(f"<tr{cls}>{cells}</tr>")
-    return (
-        "<div class='world-table'><style>"
-        ".world-table table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13px}"
-        ".world-table th,.world-table td{border:1px solid var(--border-color-primary,#ccc);"
-        "padding:4px 8px;text-align:left;vertical-align:top;"
-        "overflow-wrap:anywhere;word-break:break-word}"
-        ".world-table th{font-weight:600}"
-        ".world-table tr.cmd td{background:var(--color-accent-soft,#fff4e5)}"
-        f"</style><table><colgroup>{cols}</colgroup><thead><tr>"
-        f"{header_cells}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>"
-    )
-
-
-def build_ui(system: AppSystem) -> gr.Blocks:
-    """The Gradio layout: Conversation + ASR as the main surface, World + Prompt behind a debug
-    toggle, a banner for any missing credentials, and the typed-text hatch into `speech_input`."""
+def build_ui(system: AppSystem) -> AppUi:
+    """Assemble the page over an already-built (not yet wired, not yet started) system: Conversation
+    + ASR as the main surface, World + Prompt behind a debug toggle, a banner for any missing
+    credentials, and the typed-text hatch into `speech_input`. Input widgets only touch
+    `system.submit_speech` / the bridge; the panels refresh on their own timers. With no agent
+    (`system.wica is None`) the presenters are built over `None` — the contrib's explore-only mode:
+    they subscribe to nothing and render empty."""
     loop = system.loop
-    panels = system.panels
+    wica = system.wica
+    # The presenters subscribe to the agent's Events in their constructors, so the Wica must already
+    # exist (it does: build_system ran first). One hook for both, so transcript items and prompt
+    # labels read alike.
+    transcript = TranscriptLog(wica, display_entry)
+    prompts = PromptLog(wica, display_entry)
 
     def on_send(user_text: str) -> str:
         system.submit_speech(user_text)  # empty/whitespace is ignored inside
-        return ""  # clear the box; the transcript updates via the timer
+        return ""  # clear the box; the transcript updates via its own timer
 
     def on_stop_dictation() -> None:
         bridge = system.bridge
         if bridge is not None and loop is not None:
             asyncio.run_coroutine_threadsafe(bridge.stop_dictation(), loop)
-
-    # The World view re-renders only when its HTML changed since the last push (a 0.2 s timer would
-    # otherwise re-send the whole table every fire).
-    world_gate = _RenderGate()
-
-    def on_world_tick() -> Any:
-        html_now = tick_world(system)
-        return html_now if world_gate.changed(html_now) else gr.update()
-
-    def on_toggle_debug(show: bool) -> tuple[Any, Any, Any]:
-        # Hiding the debug panels pauses the World timer, so a hidden panel does no periodic work;
-        # showing them resumes it and pushes a fresh render at once. (The gate is shared by every
-        # browser session, so this push is also what brings a newly opened tab's World current.)
-        world_update: Any = gr.update()
-        if show:
-            world_update = tick_world(system)
-            world_gate.changed(world_update)
-        return gr.update(visible=show), gr.update(active=show), world_update
 
     with gr.Blocks(title="Reachy Mini Interaction WICA") as demo:
         gr.Markdown("# Talk to a WICA-driven Reachy Mini")
@@ -362,7 +129,7 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                 "> ⚠️ **Some parts could not start — set the missing variables (or connect the robot) "
                 "and restart.**\n"
                 f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
-                "own key is set. With no robot, the `say` voice and the robot actions are not registered "
+                "own key is set. With no robot, the `say` voice and the robot actions are not wired "
                 "(the agent reasons but cannot speak or move); with no TTS key, `say` exists but reports "
                 'a TTS error. For offline development, set `reachy.backend` to `"fake"` or `"sim"`.'
             )
@@ -371,16 +138,18 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             "say** voice. It handles **one reasoning call at a time** (v1): input arriving mid-step is "
             "dropped, not queued. On the left, each step is one collapsible **💬 reaction**; inside it, "
             "items are labelled by channel — **🗣️ say** (what you heard), **💭 output sink** (private "
-            "free text), **🦾** commands, **🚫 noop**."
+            "free text), **🦾** commands, **🚫 noop**. Every command item shows its **execution state "
+            "live**: a spinner while it runs, then ✅ complete / ❌ failed / ⏹ cancelled with its result "
+            "and duration."
         )
 
         with gr.Row():
             with gr.Column(scale=3):
-                # gradio 6 renders the messages format (role/content/metadata dicts) natively — the
-                # only format now — so no `type=` is needed. Its dynamic event methods (.click/.tick/…)
-                # aren't in the stubs, hence the narrow ignores below.
-                chatbot = gr.Chatbot(label="Conversation", height=420)
+                # The contrib transcript: its own timer, pushed only when the transcript changed.
+                conversation_panel(transcript)
                 with gr.Row():
+                    # gradio's dynamic event methods (.click/.submit/.change/.tick) aren't in the
+                    # stubs, hence the narrow ignores below.
                     msg = gr.Textbox(
                         placeholder="Type a turn (works with no mic / no ASR key)…",
                         show_label=False,
@@ -400,47 +169,30 @@ def build_ui(system: AppSystem) -> gr.Blocks:
 
             with gr.Column(scale=2):
                 show_debug = gr.Checkbox(label="Show debug panels", value=False)
+                # The toggle is visibility only: the contrib panels own their timers and keep
+                # ticking while hidden (see specs/app.md, "Refresh cost").
                 with gr.Column(visible=False) as debug_panels:
                     gr.Markdown("### World state (live)")
-                    world_view = gr.HTML(value=_world_html(system))
-                    prompt_selector = gr.Dropdown(
-                        label="Prompt sent to the model (newest shown automatically)",
-                        choices=[],
-                        interactive=True,
-                    )
-                    prompt_view = gr.Textbox(
-                        show_label=False,
-                        lines=16,
-                        interactive=False,
-                        value=_NO_PROMPT_YET,
-                    )
+                    if wica is not None:
+                        world_state_panel(wica.world)
+                    else:
+                        gr.Markdown("_No agent — there is no World to show._")
+                    prompt_panel(prompts)
 
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         stop_dictation.click(on_stop_dictation)  # pyright: ignore[reportAttributeAccessIssue]
-        prompt_selector.change(
-            panels.on_select_prompt, inputs=prompt_selector, outputs=prompt_view
-        )  # pyright: ignore[reportAttributeAccessIssue]
-
-        # Independent timers so the panels don't share one round-trip (a growing transcript payload
-        # must not bottleneck the live World/ASR views). The conversation and ASR timers are always on
-        # (main surface); the conversation timer also refreshes the Prompt view, which it pushes only
-        # on a new step, so that debug view needs no pause of its own.
-        conv_timer = gr.Timer(0.2)
-        conv_timer.tick(  # pyright: ignore[reportAttributeAccessIssue]
-            panels.tick_conversation, outputs=[chatbot, prompt_selector, prompt_view]
-        )
-        # The debug panels start hidden, so the World timer starts paused; the toggle drives both.
-        world_timer = gr.Timer(0.2, active=False)
-        world_timer.tick(on_world_tick, outputs=world_view)  # pyright: ignore[reportAttributeAccessIssue]
         show_debug.change(  # pyright: ignore[reportAttributeAccessIssue]
-            on_toggle_debug,
+            lambda show: gr.update(visible=show),
             inputs=show_debug,
-            outputs=[debug_panels, world_timer, world_view],
+            outputs=debug_panels,
         )
+
+        # The one timer the app owns: the ASR panel reads the bridge (the contrib panels above each
+        # own theirs, so the surfaces never share one round-trip).
         asr_timer = gr.Timer(0.2)
         asr_timer.tick(
             lambda: tick_asr(system), outputs=[asr_live, asr_status, stop_dictation]
         )  # pyright: ignore[reportAttributeAccessIssue]
 
-    return demo
+    return AppUi(blocks=demo, transcript=transcript)

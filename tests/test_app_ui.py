@@ -1,9 +1,8 @@
 """Functional tests for the Gradio presentation layer's view logic (`app_ui`) — no browser.
 
-Drives `PanelState` the way WICA's instrumentation Events do (`on_trigger` / `on_prompt` /
-`on_command`) and asserts on what the timer callbacks return to Gradio: a fresh value when the view
-changed, a `gr.update()` no-op when it didn't. Also covers the World render gate and the ASR status
-line. See specs/app.md ("What the user sees").
+Covers the app's `display_entry` hook (how its World entries read to a person in the contrib panels)
+and the ASR status line. The three observability panels themselves are WICA's `wica.contrib.gradio`
+components, tested in WICA's own suite, not here. See specs/app.md ("What the user sees").
 """
 
 from __future__ import annotations
@@ -11,86 +10,47 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, cast
 
-import gradio as gr
 from asr_engine.engine import ASREngine
-from langchain_core.messages import HumanMessage
-from wica import CommandIssued
+from wica import CommandExecution
+from wica.contrib.gradio import EntryDisplay
 from wica.world import WorldEntry, WorldEntryVersion
 
 from reachy_mini_interaction_wica.app import AppSystem
-from reachy_mini_interaction_wica.app_ui import PanelState, _RenderGate, tick_asr
+from reachy_mini_interaction_wica.app_ui import display_entry, tick_asr
 from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
 
-_NO_OP = gr.update()
 
-
-def _speech_entry(text: str) -> WorldEntry:
+def _entry(key: str, value: Any) -> WorldEntry:
     return WorldEntry(
-        key="speech_input",
-        type=str,
+        key=key,
+        type=type(value),
         bypass_coalescing=False,
-        current=WorldEntryVersion(id=1, value=text, timestamp=datetime.now(UTC)),
+        current=WorldEntryVersion(id=1, value=value, timestamp=datetime.now(UTC)),
         previous=None,
     )
 
 
-def _step(panels: PanelState, heard: str, *, prompt: str) -> None:
-    """One reasoning step as WICA reports it: the trigger, then the prompt sent to the model."""
-    panels.on_trigger(_speech_entry(heard))
-    panels.on_prompt([HumanMessage(prompt)])
+def _command_entry(call_id: str, name: str, args: dict[str, Any]) -> WorldEntry:
+    return _entry(
+        f"agent:command:{call_id}",
+        CommandExecution(name=name, args=args, state="running"),
+    )
 
 
-def test_render_gate_only_reports_real_changes() -> None:
-    gate = _RenderGate()
-    assert gate.changed("<table>a</table>")  # first render always goes out
-    assert not gate.changed("<table>a</table>")  # identical ⇒ skip the push
-    assert gate.changed("<table>b</table>")  # a real change goes out again
-    assert gate.changed("<table>a</table>")  # …including a change back
-
-
-def test_tick_conversation_pushes_only_on_new_events() -> None:
-    panels = PanelState()
-    assert panels.tick_conversation()[0] == _NO_OP  # nothing happened yet
-
-    _step(panels, "hi", prompt="PROMPT-1")
-    first = panels.tick_conversation()[0]
-    assert isinstance(first, list)
-    assert [m["role"] for m in first] == [
-        "user",
-        "assistant",
-    ]  # the input, then the reaction group
-    assert "hi" in first[0]["content"]
-
+def test_display_entry_labels_the_app_entries() -> None:
+    """The person-facing rendering of the app's entries: the speech input as what was said, the
+    voice titled by channel with the spoken text as body, everything else left to the generic
+    default (None)."""
+    assert display_entry(_entry("speech_input", "hi")) == EntryDisplay('🗣️ "hi"')
+    # An empty final (closed on silence) still reads as speech — an empty quote, not a blank.
+    assert display_entry(_entry("speech_input", "")) == EntryDisplay('🗣️ ""')
+    assert display_entry(
+        _command_entry("c1", "say", {"text": "hi there"})
+    ) == EntryDisplay("🗣️ say", "hi there")
     assert (
-        panels.tick_conversation()[0] == _NO_OP
-    )  # no new events ⇒ no re-push (no autoscroll)
-
-    panels.on_command(CommandIssued(name="say", args={"text": "hello back"}))
-    grown = panels.tick_conversation()[0]
-    assert isinstance(grown, list) and len(grown) == 3
-    assert grown[-1]["content"] == "hello back"
-    assert (
-        grown[-1]["metadata"]["parent_id"] == first[1]["metadata"]["id"]
-    )  # nested in the step
-
-
-def test_tick_conversation_snaps_prompt_selector_to_newest() -> None:
-    panels = PanelState()
-    _step(panels, "one", prompt="PROMPT-1")
-    _step(panels, "two", prompt="PROMPT-2")
-
-    _, selector, prompt = panels.tick_conversation()
-    assert selector["value"] == 1  # the newest of the two steps
-    assert len(selector["choices"]) == 2
-    assert "PROMPT-2" in prompt["value"]
-
-    _, selector_again, prompt_again = panels.tick_conversation()
-    assert (
-        selector_again == _NO_OP and prompt_again == _NO_OP
-    )  # not re-pushed without a new step
-
-    # Picking an older step from the dropdown shows that step's exact prompt.
-    assert "PROMPT-1" in panels.on_select_prompt(0)
+        display_entry(_command_entry("c2", "play_emotion", {"name": "happy"})) is None
+    )
+    assert display_entry(_entry("something_else", "value")) is None
 
 
 class _FakeEngine:
@@ -124,7 +84,6 @@ def _system_with_mic(capture_error: str | None) -> AppSystem:
         wica=None,
         bridge=bridge,
         voice=None,
-        panels=PanelState(),
         missing=[],
         submit_speech=lambda _text: None,
     )

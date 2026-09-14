@@ -2,9 +2,12 @@
 
 Deterministic, no browser/mic/network/robot: the agent runs against WICA's `fake` provider (a scripted
 model), the robot is an injected fake `ReachyMiniApi`, the ASR engine is an injected fake, and only the
-wiring `main` does — minus `.launch()` — is exercised. Covers the two input paths (typed text and a
-closed ASR segment) reaching the agent and its `say` reaching the robot speaker, plus the degrade paths
-at the robot and ASR build seams.
+wiring `main` does — minus the Gradio page — is exercised: `build_system`, then `wire` with a
+`TranscriptLog` (and a `PromptLog`) the test builds itself, playing the UI's role exactly as
+`build_ui` would, then `_start`. Covers the two input paths (typed text and a closed ASR segment)
+reaching the agent and its `say` reaching the robot speaker (proving the output Command is set), the
+model's free text reaching the transcript (proving the sink is set), a robot action reaching the robot
+(proving `wire` registers the Commands), plus the degrade paths at the robot and ASR build seams.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Self, cast
 
+import gradio as gr
 import pytest
 from asr_engine.config import ASREngineConfig
 from asr_engine.engine import ASREngine
@@ -22,15 +26,19 @@ from asr_engine.segmenter import SpeechSegment
 from reachy_mini_bridge.api import ReachyMiniApi
 from tts_engine.config import TTSEngineConfig
 from wica.config import WicaConfig
+from wica.contrib.gradio import PromptLog, TranscriptLog
 
 from reachy_mini_interaction_wica import app
 from reachy_mini_interaction_wica.app import (
     AppSystem,
+    _degraded_system,
     _serve,
     _shutdown,
     _start,
     build_system,
+    wire,
 )
+from reachy_mini_interaction_wica.app_ui import display_entry
 from reachy_mini_interaction_wica.config import AppConfig, Backend, ReachyConfig
 
 
@@ -157,11 +165,24 @@ def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
     return predicate()
 
 
-def _prompt_captured(system: AppSystem) -> bool:
-    """Whether a reasoning step sent a prompt, read off the public Prompt-selector view the UI polls
-    (`tick_conversation` pushes the selector's choices only when a new step's prompt arrived)."""
-    _, selector, _ = system.panels.tick_conversation()
-    return bool(selector.get("choices"))
+def _wire(system: AppSystem) -> tuple[TranscriptLog, PromptLog]:
+    """Play the UI's role: build the two contrib presenters over the agent (exactly what `build_ui`
+    creates) and wire the transcript's sink + the Commands, as `main` does before starting."""
+    transcript = TranscriptLog(system.wica, display_entry)
+    prompts = PromptLog(system.wica, display_entry)
+    wire(system, transcript)
+    return transcript, prompts
+
+
+def _prompt_captured(prompts: PromptLog) -> bool:
+    """Whether a reasoning step sent a prompt, read off the prompt history the UI's panel polls."""
+    return prompts.snapshot().count > 0
+
+
+def _user_items(transcript: TranscriptLog) -> list[str]:
+    return [
+        m["content"] for m in transcript.snapshot().conversation if m["role"] == "user"
+    ]
 
 
 def test_typed_text_drives_agent_and_speaks_through_robot() -> None:
@@ -177,6 +198,9 @@ def test_typed_text_drives_agent_and_speaks_through_robot() -> None:
             fake_api.entered
         )  # build_system opened the robot's media session on the loop
         assert system.voice is not None and system.bridge is not None
+        _wire(
+            system
+        )  # sets `say` as the output Command — without it the model could not speak
         _start(system)
         # The typed-text box writes the same World update a closed ASR segment makes.
         system.submit_speech("hi")
@@ -185,8 +209,46 @@ def test_typed_text_drives_agent_and_speaks_through_robot() -> None:
         _shutdown(system)
 
 
+def test_free_text_lands_in_the_transcript_sink() -> None:
+    """The model's free text for a step reaches the transcript's output sink as the 💭 item — the
+    one observable proof that `wire` set the sink on the agent."""
+    fake_api = FakeReachyMiniApi()
+    script = [
+        {"text": "thinking out loud"},
+        {"tool_calls": [{"name": "noop", "args": {}}]},
+    ]
+    system = build_system(
+        _config(script=script),
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+    )
+    try:
+        transcript, _ = _wire(system)
+        _start(system)
+        system.submit_speech("what are you thinking")
+
+        def sink_item_shown() -> bool:
+            return any(
+                m.get("metadata", {}).get("title") == "💭 output sink"
+                and m["content"] == "thinking out loud"
+                for m in transcript.snapshot().conversation
+            )
+
+        assert _wait_until(sink_item_shown)
+    finally:
+        _shutdown(system)
+
+
+def test_wire_without_agent_is_a_noop() -> None:
+    """With no agent there is nothing to wire into: `wire` returns quietly (the banner already says
+    why), so `main` stays linear in degraded mode."""
+    system = _degraded_system("config unreadable")
+    wire(system, TranscriptLog(None, display_entry))  # must not raise
+    assert system.wica is None
+
+
 def test_robot_action_command_is_registered_and_routes_to_the_robot() -> None:
-    """A turn where the agent issues a robot action command reaches the robot — proving build_system
+    """A turn where the agent issues a robot action command reaches the robot — proving `wire`
     registered the RobotControl commands and routes them through the shared api."""
     fake_api = FakeReachyMiniApi()
     script = [
@@ -199,6 +261,7 @@ def test_robot_action_command_is_registered_and_routes_to_the_robot() -> None:
         asr_engine=cast(ASREngine, FakeASREngine()),
     )
     try:
+        _wire(system)
         _start(system)
         system.submit_speech("show me happy")
         assert _wait_until(lambda: fake_api.played == ["happy"])
@@ -217,6 +280,7 @@ def test_empty_typed_text_is_ignored() -> None:
         asr_engine=cast(ASREngine, FakeASREngine()),
     )
     try:
+        transcript, _ = _wire(system)
         _start(system)
         system.submit_speech("   ")
         system.submit_speech("")
@@ -224,11 +288,7 @@ def test_empty_typed_text_is_ignored() -> None:
         assert _wait_until(lambda: fake_api.said == ["real reply"])
         # Any trigger (an erroneous empty one included) is recorded before its step's reply, so the
         # transcript is complete for inputs by now.
-        chatbot, _, _ = system.panels.tick_conversation()
-        assert isinstance(chatbot, list)
-        assert [m["content"] for m in chatbot if m["role"] == "user"] == [
-            '🗣️ "a real turn"'
-        ]
+        assert _user_items(transcript) == ['🗣️ "a real turn"']
     finally:
         _shutdown(system)
 
@@ -264,6 +324,7 @@ def test_closed_segment_reaches_agent_like_typed_text() -> None:
         asr_engine=cast(ASREngine, fake_asr),
     )
     try:
+        _wire(system)
         _start(system)
         _emit_segment(system, fake_asr, _final_segment("please reply"))
         assert _wait_until(lambda: fake_api.said == ["segment reply"])
@@ -282,6 +343,7 @@ def test_empty_final_segment_wakes_agent() -> None:
         asr_engine=cast(ASREngine, fake_asr),
     )
     try:
+        _wire(system)
         _start(system)
         _emit_segment(system, fake_asr, _final_segment(""))
         assert _wait_until(lambda: fake_api.said == ["you went quiet"])
@@ -305,9 +367,10 @@ def test_robot_connect_failure_degrades_but_agent_still_reasons() -> None:
         # The fake agent built fine, and still reasons over typed input: a step runs (a prompt is
         # captured).
         assert system.wica is not None
+        _, prompts = _wire(system)
         _start(system)
         system.submit_speech("are you there")
-        assert _wait_until(lambda: _prompt_captured(system))
+        assert _wait_until(lambda: _prompt_captured(prompts))
     finally:
         _shutdown(system)
 
@@ -341,9 +404,10 @@ def test_missing_asr_key_degrades_but_robot_voice_survive(monkeypatch: Any) -> N
         assert system.bridge is None  # ASR could not build
         assert any("WICA_TEST_UNSET_ASR_KEY" in m for m in system.missing)
         assert system.wica is not None
+        _, prompts = _wire(system)
         _start(system)
         system.submit_speech("still works")  # typed text still drives the agent
-        assert _wait_until(lambda: _prompt_captured(system))
+        assert _wait_until(lambda: _prompt_captured(prompts))
     finally:
         _shutdown(system)
 
@@ -390,9 +454,10 @@ def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
         assert result.startswith("TTS error:")
         # And the agent still reasons over typed input despite the voice being degraded.
         assert system.wica is not None
+        _, prompts = _wire(system)
         _start(system)
         system.submit_speech("are you there")
-        assert _wait_until(lambda: _prompt_captured(system))
+        assert _wait_until(lambda: _prompt_captured(prompts))
     finally:
         _shutdown(system)
 
@@ -419,6 +484,13 @@ def test_shutdown_stops_asr_before_the_robot_exits() -> None:
     assert system.wica is not None and not system.wica.is_running
 
 
+class _NeverLaunched:
+    """Stands in for the built page in `_serve`: `_start` raises first, so `launch` must never run."""
+
+    def launch(self) -> None:
+        raise AssertionError("launch() must not be reached when _start raises")
+
+
 def _loop_stopped(system: AppSystem) -> bool:
     """Wait for the app loop's thread to leave run_forever (loop.stop is scheduled, not immediate)."""
     loop = system.loop
@@ -438,7 +510,7 @@ def test_start_failure_still_tears_down_robot() -> None:
     assert fake_api.entered
 
     with pytest.raises(RuntimeError, match="mic unavailable"):
-        _serve(system)
+        _serve(system, cast(gr.Blocks, _NeverLaunched()))
 
     assert fake_api.exited
     assert _loop_stopped(system)

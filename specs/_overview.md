@@ -10,7 +10,7 @@ An **interaction application for the [Reachy Mini](https://github.com/pollen-rob
 - **[WICA](../../wica-framework/INTEGRATING.md)** — the agent: serializes state into a prompt, reasons, and acts (the brain).
 - **[`reachy-mini-bridge`](../../reachy-mini-bridge/specs/_overview.md)** — the robot. Its `ReachyMiniApi` owns the robot: it **speaks** (`say`, synthesized speech routed to the robot speaker), exposes the **echo-cancelled microphone** as a stream, and offers action verbs (`play_emotion`, `start_head_tracking`, `set_motors_state`, …). The bridge, in turn, wraps the first-party [`tts-engine`](../../tts-engine) for its voice.
 
-`asr-engine`, `wica`, and `reachy-mini-bridge` are **sibling path dependencies** (`../asr-engine`, `../wica-framework`, `../reachy-mini-bridge`) consumed **in-process** as libraries — this app runs no MCP servers. (`tts-engine` is a direct dependency too, but only for the `TTSEngineConfig` the app builds and hands to the bridge's synthesizer — see [configuration.md](configuration.md).) Compared with WICA's [conversation demo](../../wica-framework/specs/conversation-demo.md) (a text box faking speech), here speech in is a live robot mic, speech out is real audio on the robot, and the agent can move the robot — while the same observability panels let you watch the framework work.
+`asr-engine`, `wica`, and `reachy-mini-bridge` are **sibling path dependencies** (`../asr-engine`, `../wica-framework`, `../reachy-mini-bridge`) consumed **in-process** as libraries — this app runs no MCP servers. (`tts-engine` is a direct dependency too, but only for the `TTSEngineConfig` the app builds and hands to the bridge's synthesizer — see [configuration.md](configuration.md).) Compared with WICA's [conversation demo](../../wica-framework/specs/conversation-demo.md) (a text box faking speech), here speech in is a live robot mic, speech out is real audio on the robot, and the agent can move the robot — while the same observability panels (WICA's reusable `wica.contrib.gradio` components, behind the `wica[gradio]` extra) let you watch the framework work.
 
 ## Why the robot, not local audio
 
@@ -28,7 +28,7 @@ WICA's model is that you don't thread a conversation — you maintain **World st
                         └─ final segment ───▶ world.update("speech_input") ──▶ WICA Agent
                                                                                 ├─ say(text) ─▶ bridge ─▶ robot speaker
                                                                                 ├─ play_emotion / head-tracking / motors ─▶ bridge ─▶ robot
-                                                                                └─ free text ─▶ output_sink (💭 thought)
+                                                                                └─ free text ─▶ output sink (💭 thought, in the transcript)
 ```
 
 The load-bearing rule: **partial speech is visible but inert; only a *closed* segment reaches the agent**, exactly once, as one complete utterance. So a burst of interim ASR updates streams into the ASR panel without ever waking the agent mid-sentence.
@@ -53,7 +53,7 @@ Each core concept is one module in `src/reachy_mini_interaction_wica/`, governed
 | `tts_output.py` | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | [tts-output.md](tts-output.md) |
 | `robot_control.py` | Robot actions: WICA commands wrapping the bridge's `play_emotion` / `list_emotions` / head-tracking / motor-state verbs | [robot-control.md](robot-control.md) |
 | `app.py` | App wiring + lifecycle: builds ASR + the robot (via `ReachyMiniApi`) behind WICA on one event loop, registers commands, `main()` | [app.md](app.md) |
-| `app_ui.py` | The Gradio presentation layer: the instrumentation `PanelState`, the observability + ASR panel layout (`build_ui`), the live views the timers poll | [app.md](app.md) |
+| `app_ui.py` | The Gradio presentation layer: the `display_entry` hook, the page layout (`build_ui` — placing WICA's `wica.contrib.gradio` observability panels next to the app's own ASR panel) and the ASR live view its timer polls | [app.md](app.md) |
 
 Plus two cross-cutting specs: [project.md](project.md) (tooling/layout) and [testing.md](testing.md) (the two-tier test strategy).
 

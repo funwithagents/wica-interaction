@@ -27,7 +27,7 @@ Where things live. This is a coarse, module-level map — for the full file inve
 | [tts_output.py](src/reachy_mini_interaction_wica/tts_output.py) | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | [tts-output.md](specs/tts-output.md) |
 | [robot_control.py](src/reachy_mini_interaction_wica/robot_control.py) | Robot commands: non-raising WICA commands wrapping `reachy-mini-bridge` verbs — play/list emotions, start/stop head tracking, get/set motor state | [robot-control.md](specs/robot-control.md) |
 | [app.py](src/reachy_mini_interaction_wica/app.py) | App wiring + lifecycle: builds the engines + robot behind WICA on one event loop, registers commands, `main()` entry | [app.md](specs/app.md) |
-| [app_ui.py](src/reachy_mini_interaction_wica/app_ui.py) | The Gradio presentation layer: the instrumentation `PanelState`, the observability + ASR panel layout (`build_ui`), the live views the timers poll | [app.md](specs/app.md) |
+| [app_ui.py](src/reachy_mini_interaction_wica/app_ui.py) | The Gradio presentation layer: the `display_entry` hook, the page layout (`build_ui` — WICA's `wica.contrib.gradio` observability panels next to the app's own ASR panel), the ASR live view its timer polls | [app.md](specs/app.md) |
 
 **Keep this map current:** when you add, rename, or remove a top-level `src/reachy_mini_interaction_wica/` module or a root directory, update the map in the same change — same discipline as keeping spec/plan statuses honest (below). A test (`tests/test_project_map.py`) enforces that every `src/reachy_mini_interaction_wica/*.py` module appears here and vice-versa — and that the spec frontmatter (see below) stays honest too.
 

@@ -22,6 +22,7 @@ Implementation plans for Reachy Mini Interaction WICA — each plan turns a sett
 | [202609111631_empty-final-asr-path.md](202609111631_empty-final-asr-path.md) | Honor empty finals: split the ASR delivery path from the typed-text empty guard; drive the real bridge path in tests | Done |
 | [202609111632_ui-rendering-efficiency.md](202609111632_ui-rendering-efficiency.md) | UI efficiency: World change detection, O(1) conversation change check, pause debug timers when hidden, guard `PanelState` bookkeeping | Done |
 | [202609111633_test-hygiene-and-config-nits.md](202609111633_test-hygiene-and-config-nits.md) | Test hygiene + nits: tests tear down via `_shutdown`, positive-control empty-input test, `Literal` backend, require `--config`, honest e2e note, + sibling parity (declare `langchain-core`, drop `hello()` scaffold) | Done |
+| [202609141500_wica-setters-and-gradio-contrib.md](202609141500_wica-setters-and-gradio-contrib.md) | Catch up with merged WICA: wire the output sink / `say` through `wica.set_output_sink` / `set_output_command` (no longer `Wica.init` kwargs), replace the app's `PanelState` panels with `wica.contrib.gradio` presenters + panels (`wica[gradio]`), recompose `main()` as build → UI → wire → start | Done |
 | _(add plans here — see [_plan-template.md](_plan-template.md))_ | | |
 
 ## Status legend

@@ -17,7 +17,7 @@ Playing through the robot is not a style choice: on Reachy Mini, audio reaches t
 
 ## Why an output Command, not the output sink
 
-WICA delivers each reasoning step two ways: the model's free text goes to the `output_sink`, and an **output Command** (configured via `Wica.init(output_command=say)`) becomes the actual voice. Wiring `say` to the robot's speech makes speaking a first-class, observable, cancellable action:
+WICA delivers each reasoning step two ways: the model's free text goes to the `output_sink`, and an **output Command** (wired after construction via `wica.set_output_command(say)` — `Wica.init` takes no application callables) becomes the actual voice. Wiring `say` to the robot's speech makes speaking a first-class, observable, cancellable action:
 
 - The words the user *hears* are precisely the `say` calls, not incidental free text.
 - Because `say` is a Command, it is tracked as a World entry (`running` while it speaks, terminal when done) and can be cancelled — so the World/Conversation view shows a `say` in flight, and the agent could `cancel_command` it. (Cancelling the `say` task is also how the bridge stops speech in v1 — see [reachy-mini-bridge api.md](../../reachy-mini-bridge/specs/api.md).)
@@ -41,7 +41,7 @@ class VoiceOutput:
 - `say` **must be non-raising**, the contract WICA Commands want: the agent always gets a readable string back, never an exception. `api.say` returns `None` and *raises* on failure (empty text, a synthesis error, a media error), so `VoiceOutput.say` guards it — an empty/whitespace string returns `"TTS error: text must not be empty"` without calling the robot, and any exception from `api.say` is mapped to `"TTS error: <message>"`. Success returns `"OK"`.
 - `say` **awaits** `api.say`, which completes when the utterance has finished playing on the robot, so the Command stays `running` in the World for the real duration of the speech.
 
-`VoiceOutput.say` is a **bound method**, so registering it as the output Command preserves its name, signature, and docstring — the docstring above is what the model sees as the voice's description.
+`VoiceOutput.say` is a **bound method**, so setting it as the output Command preserves its name, signature, and docstring — the docstring above is what the model sees as the voice's description.
 
 ## Testing
 
