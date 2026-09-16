@@ -19,7 +19,7 @@
     }
   },
   "reachy": {
-    "backend": "sim",
+    "backend": "real",
     "robot": {},
     "daemon": { "spawn": "auto", "headless": false },
     "tts": {
@@ -30,6 +30,7 @@
         "model": "eleven_flash_v2_5"
       }
     },
-    "audio": { "xvf3800": null }
+    "audio": { "xvf3800": null },
+    "motion": { "presence": true, "breathing": true, "wobbling": true, "tracking": true }
   }
 }

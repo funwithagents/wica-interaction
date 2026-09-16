@@ -12,8 +12,13 @@ The verbs use ``asyncio.to_thread`` internally, so each coroutine is driven with
 provide a running loop (no async-test plugin required). ``api.robot`` is only available while entered
 (``reachy-mini-bridge``'s entered-only lifecycle — construction never connects), so each test enters
 the ``fake`` api itself and exits it in a ``finally``; the ``fake`` backend needs no daemon, so this
-stays offline and fast. The verbs exercised here (motors, emotions, head tracking) touch no media, so
-entering is enough — no media session is required.
+stays offline and fast. ``play_emotion`` plays through the bridge's motion loop and awaits until the
+trajectory ends (see reachy-mini-bridge specs/motion.md, "Emotions through the loop"), so a successful
+play is observed here as its sidecar sound reaching the fake's media layer (``media.play_sound``), not
+as a discrete "move" command.
+
+Head tracking is deliberately not exercised here: it is no longer an agent-facing command (the
+bridge's motion loop drives it automatically, like presence and breathing) — see specs/robot-control.md.
 """
 
 from __future__ import annotations
@@ -68,11 +73,9 @@ def test_play_known_emotion_succeeds_and_moves_the_robot_once_enabled() -> None:
 
         assert "happy" in result
         assert "failed" not in result
-        plays = _recorded(robot, "async_play_move")
-        assert len(plays) == 1
-        # The fake library resolves the name to a recorded move (with a sidecar sound); the
-        # verb hands that move — not the bare name — to the robot.
-        assert plays[0]["move"].name == "happy"
+        # The fake library resolves the name to a recorded move with a sidecar sound
+        # ("happy.ogg"); the loop starts it as the trajectory plays.
+        assert _recorded(robot, "media.play_sound") == [{"sound_file": "happy.ogg"}]
 
 
 def test_play_unknown_emotion_is_reported_not_raised() -> None:
@@ -82,40 +85,16 @@ def test_play_unknown_emotion_is_reported_not_raised() -> None:
         result = run(control.play_emotion("nonexistent"))
 
         assert "failed" in result  # a readable failure string, no exception
-        assert _recorded(robot, "async_play_move") == []  # nothing was played
+        assert _recorded(robot, "media.play_sound") == []  # nothing was played
 
 
 def test_movement_needs_motors_enabled_and_does_not_move_while_off() -> None:
     with _control() as (control, robot):  # the fake starts with motors "disabled"
         play = run(control.play_emotion("happy"))
-        track = run(control.start_head_tracking())
 
-        # Both return the motor-precondition message (naming the fix) and neither raises nor moves.
+        # Returns the motor-precondition message (naming the fix) and neither raises nor moves.
         assert "set_motors_state('enabled')" in play
-        assert "set_motors_state('enabled')" in track
-        assert _recorded(robot, "async_play_move") == []
-        assert _recorded(robot, "start_head_tracking") == []
-
-
-def test_movement_succeeds_after_enabling_motors() -> None:
-    with _control() as (control, robot):
-        assert "set_motors_state('enabled')" in run(
-            control.start_head_tracking()
-        )  # off ⇒ refused
-
-        run(control.set_motors_state("enabled"))
-        result = run(control.start_head_tracking())
-
-        assert "failed" not in result
-        assert len(_recorded(robot, "start_head_tracking")) == 1
-
-
-def test_stop_head_tracking_works_without_motors() -> None:
-    with _control() as (control, robot):  # motors off — stopping is not a movement
-        result = run(control.stop_head_tracking())
-
-        assert "failed" not in result
-        assert len(_recorded(robot, "stop_head_tracking")) == 1
+        assert _recorded(robot, "media.play_sound") == []
 
 
 def test_get_motors_state_reflects_set_motors_state() -> None:

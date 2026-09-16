@@ -3828,6 +3828,7 @@ source = { editable = "../wica-framework" }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
+    { name = "opentelemetry-api" },
 ]
 
 [package.optional-dependencies]
@@ -3846,6 +3847,7 @@ requires-dist = [
     { name = "langchain-core", specifier = ">=1.0" },
     { name = "langchain-huggingface", marker = "extra == 'huggingface-hub'", specifier = ">=1.2" },
     { name = "langchain-openai", marker = "extra == 'openai'", specifier = ">=1.0" },
+    { name = "opentelemetry-api", specifier = ">=1.20" },
 ]
 provides-extras = ["anthropic", "openai", "huggingface-hub", "gradio"]
 
@@ -3855,12 +3857,14 @@ demo = [
     { name = "langchain-anthropic", specifier = ">=1.0" },
     { name = "langchain-huggingface", specifier = ">=1.2" },
     { name = "langchain-openai", specifier = ">=1.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.20" },
 ]
 dev = [
     { name = "gradio", specifier = ">=5.0.0" },
     { name = "langchain-anthropic", specifier = ">=1.0" },
     { name = "langchain-huggingface", specifier = ">=1.2" },
     { name = "langchain-openai", specifier = ">=1.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.20" },
     { name = "pyright", specifier = ">=1.1.411" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "ruff", specifier = ">=0.8.0" },

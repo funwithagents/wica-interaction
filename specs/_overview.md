@@ -27,7 +27,7 @@ WICA's model is that you don't thread a conversation — you maintain **World st
                         │  interim segment ─▶ ASR panel (live partial text)   [agent NOT triggered]
                         └─ final segment ───▶ world.update("speech_input") ──▶ WICA Agent
                                                                                 ├─ say(text) ─▶ bridge ─▶ robot speaker
-                                                                                ├─ play_emotion / head-tracking / motors ─▶ bridge ─▶ robot
+                                                                                ├─ play_emotion / motors ─▶ bridge ─▶ robot
                                                                                 └─ free text ─▶ output sink (💭 thought, in the transcript)
 ```
 
@@ -51,7 +51,7 @@ Each core concept is one module in `src/reachy_mini_interaction_wica/`, governed
 | `config.py` | One composed JSON (`wica`/`asr` engine sections + a `reachy` robot-backend section, voice included), each section delegated to its own loader | [configuration.md](configuration.md) |
 | `asr_bridge.py` | Speech-in: owns the `ASREngine` fed the robot's echo-cancelled mic stream, maps segments to `speech_input` (final only) + the live view, hosts the dictation command | [asr-bridge.md](asr-bridge.md) |
 | `tts_output.py` | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | [tts-output.md](tts-output.md) |
-| `robot_control.py` | Robot actions: WICA commands wrapping the bridge's `play_emotion` / `list_emotions` / head-tracking / motor-state verbs | [robot-control.md](robot-control.md) |
+| `robot_control.py` | Robot actions: WICA commands wrapping the bridge's `play_emotion` / `list_emotions` / motor-state verbs (head tracking is bridge-managed, not agent-facing) | [robot-control.md](robot-control.md) |
 | `app.py` | App wiring + lifecycle: builds ASR + the robot (via `ReachyMiniApi`) behind WICA on one event loop, registers commands, `main()` | [app.md](app.md) |
 | `app_ui.py` | The Gradio presentation layer: the `display_entry` hook, the page layout (`build_ui` — placing WICA's `wica.contrib.gradio` observability panels next to the app's own ASR panel) and the ASR live view its timer polls | [app.md](app.md) |
 
@@ -63,10 +63,10 @@ The whole app is stood up from a single JSON file with sections `wica`, `asr`, a
 
 ## What it is (and isn't) — v1
 
-- **It *is* a robot, not a plain voice assistant.** The agent can express emotions, turn on face-following, and manage the motors, in addition to talking (see [robot-control.md](robot-control.md)).
+- **It *is* a robot, not a plain voice assistant.** The agent can express emotions and manage the motors, in addition to talking (see [robot-control.md](robot-control.md)); it also looks at you and stays visibly alive on its own, automatically, with no agent action needed.
 - **Echo handling: yes (on the robot); barge-in: no.** The robot's XVF3800 cancels the app's own TTS from the mic, so the agent doesn't hear itself — the app adds no echo processing of its own. But *talking over* the agent still isn't supported: WICA is one reasoning call at a time, and inputs arriving mid-step are dropped.
 - **No camera / vision in v1.** The bridge can read a camera frame, but this app does not wire it — the agent hears and acts, it does not see (a natural post-v1 addition).
-- **No manual movement/gaze in v1.** Only the autonomous head-tracking verb; explicit pose/gaze verbs are deferred in the bridge itself.
+- **No manual movement/gaze in v1.** Only the autonomous head-tracking behavior, driven automatically by the bridge (not an agent verb); explicit pose/gaze verbs are deferred in the bridge itself.
 - **No streamed speech, no persistence** — `say` plays a complete utterance; the World starts empty each run.
 
 ## Where to start reading

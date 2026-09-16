@@ -16,7 +16,7 @@ application callables; the sink and the output Command are set afterwards):
   ``Wica.init``s the agent and registers the ``speech_input`` entry, builds the ASR bridge. Its
   ``api=`` / ``asr_engine=`` kwargs are test seams for injecting fakes.
 - ``build_ui(system)`` — the Gradio page (in [app_ui.py](app_ui.py)); it owns the contrib presenters
-  (``TranscriptLog`` / ``PromptLog``, subscribed to the agent's Events in their constructors) and hands
+  (``TranscriptLog`` / ``ReactionLog``, subscribed to the agent's Events in their constructors) and hands
   the transcript back on an ``AppUi`` handle.
 - ``wire(system, transcript)`` — Gradio-free: sets the transcript's ``output_sink`` and the voice's
   ``say`` as the output Command on the agent, registers the dictation + robot Commands. Tests call it
@@ -246,15 +246,14 @@ def wire(system: AppSystem, transcript: TranscriptLog) -> None:
     if system.bridge is not None:
         wica.register_command(system.bridge.start_dictation)
         wica.register_command(system.bridge.stop_dictation)
-    # Robot action commands, over the same api as the voice: emotions, head tracking, motors. Only
-    # when the robot is up (no api ⇒ nothing to act through); the agent still speaks/reasons without.
+    # Robot action commands, over the same api as the voice: emotions, motors. Head tracking is not
+    # agent-facing — the bridge's motion loop drives it automatically. Only when the robot is up (no
+    # api ⇒ nothing to act through); the agent still speaks/reasons without.
     if system.api is not None:
         controls = RobotControl(system.api)
         for command in (
             controls.list_emotions,
             controls.play_emotion,
-            controls.start_head_tracking,
-            controls.stop_head_tracking,
             controls.get_motors_state,
             controls.set_motors_state,
         ):

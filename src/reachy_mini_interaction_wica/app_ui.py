@@ -1,20 +1,20 @@
 """The Gradio UI: the page layout, the presenters it owns, and the app's own ASR live view.
 
 This is the *presentation* half of the app, split from the wiring in [app.py](app.py). The three
-framework-observability panels — Conversation, World state, Prompt — are **not** implemented here:
-they are WICA's reusable ``wica.contrib.gradio`` components (the ``wica[gradio]`` extra), each a
-presenter built over the ``Wica`` plus a panel function that creates the components and owns the
-timer keeping them live. What this module holds:
+framework-observability panels — Conversation, World state, Reaction (prompt + instrumentation) —
+are **not** implemented here: they are WICA's reusable ``wica.contrib.gradio`` components (the
+``wica[gradio]`` extra), each a presenter built over the ``Wica`` plus a panel function that creates
+the components and owns the timer keeping them live. What this module holds:
 
 - ``display_entry`` — the one hook through which the app injects persona knowledge into those generic
   panels: how a World entry reads to a *person* (`speech_input` → `🗣️ "…"`, a `say` execution →
   the spoken text). The person-facing counterpart of the ``speech_input`` ``serialize_fn`` in
   [app.py](app.py).
-- ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``PromptLog``, subscribed to the
-  agent's Events in their constructors, both given ``display_entry``), lays out the page (the three
-  contrib panels, the app's ASR panel, the typed-text hatch, a banner for anything missing, the
-  debug toggle), and returns the page plus the transcript on an ``AppUi`` handle so the app can wire
-  the transcript's sink (``wire`` in [app.py](app.py)). The UI wires nothing itself.
+- ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
+  the agent's Events in their constructors, both given ``display_entry``), lays out the page (the
+  three contrib panels, the app's ASR panel, the typed-text hatch, a banner for anything missing,
+  the debug toggle), and returns the page plus the transcript on an ``AppUi`` handle so the app can
+  wire the transcript's sink (``wire`` in [app.py](app.py)). The UI wires nothing itself.
 - ``tick_asr`` — the live view the ASR panel's timer polls (the only timer the app owns).
 
 The only dependency on ``app`` is the ``AppSystem`` *type* (for annotations), imported under
@@ -33,10 +33,10 @@ import gradio as gr
 from wica import CommandExecution, WorldEntry
 from wica.contrib.gradio import (
     EntryDisplay,
-    PromptLog,
+    ReactionLog,
     TranscriptLog,
     conversation_panel,
-    prompt_panel,
+    reaction_panel,
     world_state_panel,
 )
 
@@ -51,7 +51,7 @@ _NO_LIVE_SPEECH = "(no speech yet)"
 
 
 def display_entry(entry: WorldEntry) -> EntryDisplay | None:
-    """How the app's entries show in the transcript and the prompt labels — the person-facing
+    """How the app's entries show in the transcript and the reaction labels — the person-facing
     counterpart of the `speech_input` serialize_fn. Anything it doesn't recognise returns None and
     gets the contrib's generic default (`⚡ key = value`, `🦾 name(args)` for a Command)."""
     value = entry.current.value
@@ -99,7 +99,7 @@ def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
 
 def build_ui(system: AppSystem) -> AppUi:
     """Assemble the page over an already-built (not yet wired, not yet started) system: Conversation
-    + ASR as the main surface, World + Prompt behind a debug toggle, a banner for any missing
+    + ASR as the main surface, World + Reaction behind a debug toggle, a banner for any missing
     credentials, and the typed-text hatch into `speech_input`. Input widgets only touch
     `system.submit_speech` / the bridge; the panels refresh on their own timers. With no agent
     (`system.wica is None`) the presenters are built over `None` — the contrib's explore-only mode:
@@ -107,10 +107,10 @@ def build_ui(system: AppSystem) -> AppUi:
     loop = system.loop
     wica = system.wica
     # The presenters subscribe to the agent's Events in their constructors, so the Wica must already
-    # exist (it does: build_system ran first). One hook for both, so transcript items and prompt
+    # exist (it does: build_system ran first). One hook for both, so transcript items and reaction
     # labels read alike.
     transcript = TranscriptLog(wica, display_entry)
-    prompts = PromptLog(wica, display_entry)
+    reactions = ReactionLog(wica, display_entry)
 
     def on_send(user_text: str) -> str:
         system.submit_speech(user_text)  # empty/whitespace is ignored inside
@@ -177,7 +177,8 @@ def build_ui(system: AppSystem) -> AppUi:
                         world_state_panel(wica.world)
                     else:
                         gr.Markdown("_No agent — there is no World to show._")
-                    prompt_panel(prompts)
+                    gr.Markdown("### Reaction (prompt + instrumentation)")
+                    reaction_panel(reactions)
 
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]

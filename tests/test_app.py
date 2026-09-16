@@ -3,7 +3,7 @@
 Deterministic, no browser/mic/network/robot: the agent runs against WICA's `fake` provider (a scripted
 model), the robot is an injected fake `ReachyMiniApi`, the ASR engine is an injected fake, and only the
 wiring `main` does — minus the Gradio page — is exercised: `build_system`, then `wire` with a
-`TranscriptLog` (and a `PromptLog`) the test builds itself, playing the UI's role exactly as
+`TranscriptLog` (and a `ReactionLog`) the test builds itself, playing the UI's role exactly as
 `build_ui` would, then `_start`. Covers the two input paths (typed text and a closed ASR segment)
 reaching the agent and its `say` reaching the robot speaker (proving the output Command is set), the
 model's free text reaching the transcript (proving the sink is set), a robot action reaching the robot
@@ -26,7 +26,7 @@ from asr_engine.segmenter import SpeechSegment
 from reachy_mini_bridge.api import ReachyMiniApi
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica.config import WicaConfig
-from wica.contrib.gradio import PromptLog, TranscriptLog
+from wica.contrib.gradio import ReactionLog, TranscriptLog
 
 from reachy_mini_interaction_wica import app
 from reachy_mini_interaction_wica.app import (
@@ -164,18 +164,18 @@ def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
     return predicate()
 
 
-def _wire(system: AppSystem) -> tuple[TranscriptLog, PromptLog]:
+def _wire(system: AppSystem) -> tuple[TranscriptLog, ReactionLog]:
     """Play the UI's role: build the two contrib presenters over the agent (exactly what `build_ui`
     creates) and wire the transcript's sink + the Commands, as `main` does before starting."""
     transcript = TranscriptLog(system.wica, display_entry)
-    prompts = PromptLog(system.wica, display_entry)
+    reactions = ReactionLog(system.wica, display_entry)
     wire(system, transcript)
-    return transcript, prompts
+    return transcript, reactions
 
 
-def _prompt_captured(prompts: PromptLog) -> bool:
-    """Whether a reasoning step sent a prompt, read off the prompt history the UI's panel polls."""
-    return prompts.snapshot().count > 0
+def _reaction_captured(reactions: ReactionLog) -> bool:
+    """Whether a reasoning step sent a prompt, read off the reaction history the UI's panel polls."""
+    return reactions.snapshot().count > 0
 
 
 def _user_items(transcript: TranscriptLog) -> list[str]:
@@ -366,10 +366,10 @@ def test_robot_connect_failure_degrades_but_agent_still_reasons() -> None:
         # The fake agent built fine, and still reasons over typed input: a step runs (a prompt is
         # captured).
         assert system.wica is not None
-        _, prompts = _wire(system)
+        _, reactions = _wire(system)
         _start(system)
         system.submit_speech("are you there")
-        assert _wait_until(lambda: _prompt_captured(prompts))
+        assert _wait_until(lambda: _reaction_captured(reactions))
     finally:
         _shutdown(system)
 
@@ -402,10 +402,10 @@ def test_missing_asr_key_degrades_but_robot_voice_survive(monkeypatch: Any) -> N
         assert system.bridge is None  # ASR could not build
         assert any("WICA_TEST_UNSET_ASR_KEY" in m for m in system.missing)
         assert system.wica is not None
-        _, prompts = _wire(system)
+        _, reactions = _wire(system)
         _start(system)
         system.submit_speech("still works")  # typed text still drives the agent
-        assert _wait_until(lambda: _prompt_captured(prompts))
+        assert _wait_until(lambda: _reaction_captured(reactions))
     finally:
         _shutdown(system)
 
@@ -456,10 +456,10 @@ def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
         assert result.startswith("TTS error:")
         # And the agent still reasons over typed input despite the voice being degraded.
         assert system.wica is not None
-        _, prompts = _wire(system)
+        _, reactions = _wire(system)
         _start(system)
         system.submit_speech("are you there")
-        assert _wait_until(lambda: _prompt_captured(prompts))
+        assert _wait_until(lambda: _reaction_captured(reactions))
     finally:
         _shutdown(system)
 
