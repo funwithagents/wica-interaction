@@ -67,11 +67,11 @@ The whole section is handed, verbatim, to `ReachyMiniConfig.from_dict` — every
 
 - `backend` — `"real"` (default), `"sim"` (upstream MuJoCo mockup), or `"fake"` (the bridge's in-package stand-in — no daemon, no hardware; the offline/dev/test path).
 - `robot` — upstream `ReachyMini(...)` kwargs, forwarded verbatim (validated against upstream's own signature).
-- `daemon` — how the bridge brings up the daemon it talks to: `spawn` (`never` / `auto` / `always`), `headless`, `scene`, `preload_datasets`, `startup_timeout`. `spawn: "auto"` on a `sim` backend spawns (or borrows) a local headless MuJoCo daemon — the offline/dev path gains this lifecycle for free.
+- `daemon` — how the bridge brings up the daemon it talks to: `spawn` (`never` / `auto` / `always`), `headless`, `scene`, `preload_datasets`, `startup_timeout`. `spawn: "auto"` on a `sim` backend spawns (or borrows) a local headless MuJoCo daemon — the offline/dev path gains this lifecycle for free; on `real` it spawns the hardware daemon of a robot attached over USB (a wireless robot runs its own daemon, so its config leaves `spawn` at `"never"`). Only `fake` has no daemon, so `spawn` other than `"never"` is rejected there.
 - `tts` — the voice: a tts-engine `engine` block (`module` matters; a `player` block is accepted but ignored, since playback is the robot's, not a local device). Absent ⇒ no voice (`say` unavailable, everything else unaffected — see [app.md](app.md), "No credentials, no robot").
 - `audio.xvf3800` — the tuned XVF3800 profile applied on media-session start; `null`/absent keeps the firmware defaults.
 
-Absent `reachy` section ⇒ `ReachyMiniConfig()` (the `real` backend, upstream defaults, no voice). Validation errors (an unknown backend, an unknown key, `daemon.spawn` set on a non-`sim` backend, a malformed block) raise the bridge's `ConfigError`, a `ValueError` subclass — so the documented "`load_config` raises `ValueError`" error surface holds without wrapping.
+Absent `reachy` section ⇒ `ReachyMiniConfig()` (the `real` backend, upstream defaults, no voice). Validation errors (an unknown backend, an unknown key, `daemon.spawn` set on the `fake` backend, a malformed block) raise the bridge's `ConfigError`, a `ValueError` subclass — so the documented "`load_config` raises `ValueError`" error surface holds without wrapping.
 
 ## Loading: `load_config`
 

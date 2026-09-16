@@ -197,12 +197,23 @@ def test_unknown_reachy_key_raises(tmp_path: Path) -> None:
         load_config(_write(tmp_path, config))
 
 
-def test_daemon_spawn_on_non_sim_backend_raises(tmp_path: Path) -> None:
+def test_daemon_spawn_on_fake_backend_raises(tmp_path: Path) -> None:
+    # The bridge spawns a daemon for `sim` (MuJoCo) and `real` (a USB-attached robot); only the
+    # in-package `fake` has none, so that is the combination its loader rejects.
+    config = _composed()
+    config["reachy"]["backend"] = "fake"
+    config["reachy"]["daemon"] = {"spawn": "auto"}
+    with pytest.raises(ValueError, match="requires backend 'sim' or 'real'"):
+        load_config(_write(tmp_path, config))
+
+
+def test_daemon_spawn_on_real_backend_is_accepted(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"]["backend"] = "real"
     config["reachy"]["daemon"] = {"spawn": "auto"}
-    with pytest.raises(ValueError, match="requires backend 'sim'"):
-        load_config(_write(tmp_path, config))
+    loaded = load_config(_write(tmp_path, config))
+    assert loaded.reachy.backend == "real"
+    assert loaded.reachy.daemon.spawn == "auto"
 
 
 def test_reachy_not_an_object_raises(tmp_path: Path) -> None:

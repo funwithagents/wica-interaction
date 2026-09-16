@@ -70,8 +70,9 @@ def test_play_known_emotion_succeeds_and_moves_the_robot_once_enabled() -> None:
         assert "failed" not in result
         plays = _recorded(robot, "async_play_move")
         assert len(plays) == 1
-        # The fake library returns the name as the move.
-        assert plays[0]["move"] == "happy"
+        # The fake library resolves the name to a recorded move (with a sidecar sound); the
+        # verb hands that move — not the bare name — to the robot.
+        assert plays[0]["move"].name == "happy"
 
 
 def test_play_unknown_emotion_is_reported_not_raised() -> None:
