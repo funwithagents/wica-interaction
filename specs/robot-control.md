@@ -48,6 +48,8 @@ class RobotControl:
 - **One shared `ReachyMiniApi`.** `RobotControl` holds the *same* api instance that backs `say` (see [tts-output.md](tts-output.md)) and the mic stream (see [asr-bridge.md](asr-bridge.md)), so there is a single robot connection and one media session. The app builds the api once and injects it into `VoiceOutput`, the `RobotMicSource`, and `RobotControl`.
 - **Registered as Commands.** The app calls `wica.register_command(...)` for each bound method; the method name/signature/docstring become what the model sees (the docstrings above are the descriptions), exactly as for `say` and the dictation commands.
 
+- **Not independent of `say`.** `play_emotion` plays a sidecar sound and moves the head, so it collides with a `say` in flight; WICA runs a response's Commands concurrently, so the persona forbids issuing the two in one turn and sequences them across steps instead (see [app.md](app.md), "The persona's action rules"). This module adds no lock of its own in v1.
+
 ## Non-raising, like every Command
 
 Each command maps the bridge's typed failures onto a readable string rather than raising, so the agent always gets feedback it can reason over:

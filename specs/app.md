@@ -2,6 +2,7 @@
 code:
   - src/reachy_mini_interaction_wica/app.py
   - src/reachy_mini_interaction_wica/app_ui.py
+  - prompts/assistant.md
 tests:
   - tests/test_app.py
   - tests/test_app_ui.py
@@ -42,7 +43,17 @@ Unlike the plain-assistant framing of the earlier vocal app, this app **is** the
 
 - **World entries:** `speech_input` (the triggering input) and the automatic `agent:command:*` entries WICA tracks for in-flight Commands (e.g. a running `say` or `play_emotion`). No mirrored robot state in v1 (motor state is read on demand via the command, not kept in the World).
 - **Commands:** `say` (the TTS output Command — the voice, [tts-output.md](tts-output.md)), `start_dictation` / `stop_dictation` ([asr-bridge.md](asr-bridge.md)), the robot actions `play_emotion` / `list_emotions` / `start_head_tracking` / `stop_head_tracking` / `set_motors_state` / `get_motors_state` ([robot-control.md](robot-control.md)), plus WICA's auto-registered `noop` / `cancel_command`.
-- **Persona:** whatever the config's `system_prompt_file` says — a robot that knows it speaks via `say`, can express emotions and follow a face, and can switch to dictation when asked.
+- **Persona:** whatever the config's `system_prompt_file` says — a robot that knows it speaks via `say`, can express emotions and follow a face, and can switch to dictation when asked. The committed persona, [prompts/assistant.md](../prompts/assistant.md), must also carry the three action rules below.
+
+### The persona's action rules
+
+WICA dispatches every Command of one response at once and lets them run concurrently, with no ordering and no exclusivity between them (see [agent.md](../../wica-framework/specs/agent.md), "Concurrency and long-running Commands in v1"); its runtime primer tells the model that much, generically. This app exposes Commands that are **not** independent — they share one robot body and one speaker — and only the persona can teach that, so [prompts/assistant.md](../prompts/assistant.md) states:
+
+1. **No colliding Commands in one turn.** Two Commands that would collide on the robot must not be issued in the same response: `say` with `play_emotion` (the emotion's own sidecar sound plays over the speech and its motion fights the talking head — the case that motivated the rule, but not the only one), two emotions, a move with a motor-state change, a `cancel_command` with the action replacing what it cancels. The persona tells the model to issue the first, then the next in a later step once the first is observed complete, and that Commands touching different things (motors on + head tracking) may go together. This is a prompt rule, not a guard: the app does not serialize `say` and `play_emotion` (the bridge deliberately lets verbs compose — see [reachy-mini-bridge api.md](../../reachy-mini-bridge/specs/api.md), "Cancellation"), so a model that ignores the rule still gets the overlap. A lock inside `VoiceOutput`/`RobotControl` is the deferred enforcement (open question 4).
+2. **Order matters.** Dependent actions (enable motors → move; stop one thing → start the next; speak → then the emotion that goes with it) are issued in that order across turns, never all at once.
+3. **Spoken feedback for every request.** Acting is not answering: when the person asks the robot to start, stop, change, or cancel something, the agent does it and then says out loud what it did once it observes it done — a request never ends in a silent action (cancelling a running `say` on request, then confirming in the next step, is the canonical example). This rides WICA's completion re-trigger: the Command's terminal entry wakes a step in which the confirmation is spoken.
+
+These rules are persona text, verified by reading, not by a test: the app's tests drive the scripted `fake` provider and never exercise the model's compliance.
 
 ## What the user sees
 
@@ -127,3 +138,4 @@ Fast, deterministic, no browser/mic/network/robot (see [testing.md](testing.md))
 1. **Robot state in the UI.** Whether to surface the robot's connection / motor state in the ASR (or a new) panel — the app holds the `ReachyMiniApi` handle, so it is easy — is a nice-to-have, not wired.
 2. **Seeding emotion names into the prompt.** Whether `main()` calls `api.list_emotions()` at startup to fold the names into the system prompt — deferred; v1 relies on the `list_emotions` command (see [robot-control.md](robot-control.md) open question 1).
 3. **Pausing the hidden World panel.** Adopting `world_state_panel` gave up the app's earlier pause-while-hidden / change-gated World timer. If three always-on timers ever prove costly, the fix is the contrib's deferred injectable `timer=` (or an `active` flag), not a local reimplementation over `world_html`. Deferred until measured.
+4. **Enforcing the no-collision rule.** The persona rule above is advisory. If the model keeps issuing `say` + `play_emotion` together, the enforcement is a shared `asyncio.Lock` held by `VoiceOutput.say` and `RobotControl.play_emotion` (the two speaker/head-spanning verbs), so the second waits for the first in issue order, both still showing `running` in the World. Deferred until observed to be needed.
