@@ -7,7 +7,10 @@ tests:
 
 # Robot control
 
-**Status:** Implemented
+**Status:** Updated
+
+> **Superseded (2026-09-17).** The robot action commands are now part of the [Reachy Mini embodiment](reachy-embodiment.md) (`RobotControl`, registered through `embodiment.commands()`; the emotion names seeded through `embodiment.prompt_addendum`). This spec still describes the code as it is today (`robot_control.py`); the [merge plan](../plans/202609172311_wica-interaction-merge.md) moves that code to `reachy/robot_control.py` and deletes this file.
+
 
 ## Purpose
 

@@ -7,16 +7,18 @@ tests:
 
 # ASR bridge
 
-**Status:** Implemented
+**Status:** Updated
+
+> **Updated (2026-09-17):** the bridge no longer knows the robot. `RobotMicSource` moves to the [Reachy Mini embodiment](reachy-embodiment.md); the engine's source comes from `embodiment.mic` ([embodiment.md](embodiment.md)) and the bridge takes a `mic_error` callable for its status line. The segment → World rule and dictation are unchanged. Code catches up in the [merge plan](../plans/202609172311_wica-interaction-merge.md).
 
 ## Purpose
 
-The **speech-in** half of the app: it owns the live [`ASREngine`](../../asr-engine/specs/engine.md) — fed the **robot's echo-cancelled microphone** rather than a local device — turns its stream of speech *segments* into WICA World updates, and exposes the **dictation** control the agent can invoke. It is the one place that knows how ASR segmentation maps onto "a thing the user said", so the rest of the app (the WICA agent, the UI) never touches the ASR engine directly.
+The **speech-in** half of the app: it owns the live [`ASREngine`](../../asr-engine/specs/engine.md) — fed whatever audio source the embodiment provides (the robot's echo-cancelled stream, the computer's processed or raw mic) — turns its stream of speech *segments* into WICA World updates, and exposes the **dictation** control the agent can invoke. It is the one place that knows how ASR segmentation maps onto "a thing the user said", so the rest of the app (the WICA agent, the UI) never touches the ASR engine directly.
 
 Two consumers read from it:
 
 - **The WICA World** — a *final* segment becomes the `speech_input` the agent reasons over.
-- **The Gradio UI** — the *live, growing* segment text and the current ASR status are displayed as they change (see [app.md](app.md), "ASR panel").
+- **The Gradio UI** — the *live, growing* segment text and the current ASR status are displayed as they change ([app.md](app.md), "ASR panel").
 
 ## The segment → world rule (the core decision)
 
@@ -27,49 +29,26 @@ The ASR engine emits a `SpeechSegment` on **every** change: interim updates whil
 | **Interim** (`is_final=False`) | Updates its **live display text** to `segment.transcript`. Does **not** touch the World — the agent is not triggered. |
 | **Final** (`is_final=True`) | Calls the injected **`on_final_segment(transcript)`** callback (the app wires this to `world.update("speech_input", transcript)`, which triggers one reasoning step) and then **clears the live display text** back to `""`. |
 
-So partial speech is *visible but inert* — it streams into the ASR panel character by character — and only a closed segment reaches the agent, exactly once, as one complete utterance. The World's `speech_input` entry changes once per closed segment, never on interims, so a burst of interim updates can't wake the agent mid-utterance.
+So partial speech is *visible but inert* — it streams into the ASR panel character by character — and only a closed segment reaches the agent, exactly once, as one complete utterance. The World's `speech_input` entry changes once per closed segment, never on interims, so a burst of interim updates cannot wake the agent mid-utterance.
 
-**Every** final fires the callback — including one whose transcript is empty or whitespace (e.g. a `timeout`-mode segment that closes on `initial_silence_timeout` with no speech). The bridge does not filter these: a closed-on-silence segment writes an empty `speech_input`, so the agent can react to the user saying *nothing* after dictation starts. There is no special-casing of the empty transcript.
+**Every** final fires the callback — including one whose transcript is empty or whitespace (e.g. a `timeout`-mode segment that closes on `initial_silence_timeout` with no speech). The bridge does not filter these: a closed-on-silence segment writes an empty `speech_input`, so the agent can react to the user saying *nothing* after dictation starts. What an empty utterance *means* is the consumer's decision ([app.md](app.md), "The input funnel"), and both personas tell the model.
 
 The `on_final_segment` callback is **injected**, not the World itself, so the bridge is decoupled from WICA and can be unit-tested with a recording callback and a fake engine (no `Wica`, no model).
 
-## Mic source: the robot's echo-cancelled stream
+## The mic is the embodiment's
 
-The `ASREngine` reads from an injected **`audio_source`** (`source.start()` returns the `asyncio.Queue[bytes]` the engine drains). Instead of opening a local device, the app builds a small **`RobotMicSource`** adapter over the bridge's mic tap:
+The `ASREngine` reads from an injected **`audio_source`** ([`AudioSource`](../../asr-engine/specs/audio-source.md): a synchronous `start() -> asyncio.Queue[bytes]` / `stop()` the engine drives). Which source — and whether there is one at all — is the embodiment's choice, not this module's ([embodiment.md](embodiment.md), `mic`):
 
-```python
-class RobotMicSource:
-    """Pumps ReachyMiniApi.audio_input() into the asyncio.Queue[bytes] the ASREngine drains."""
+- the Reachy Mini embodiment supplies a `RobotMicSource` pumping the robot's echo-cancelled 16 kHz stream ([reachy-embodiment.md](reachy-embodiment.md));
+- the computer embodiment supplies the audio-processing coordinator's `source` when a feature is on ([audio-processing.md](audio-processing.md)), or `None`, in which case the engine opens its own `AudioCapture` on the ASR config's `audio.device`.
 
-    def __init__(
-        self, api: ReachyMiniApi, *, maxsize: int = _MIC_QUEUE_MAXSIZE
-    ) -> None: ...
-    def start(
-        self,
-    ) -> asyncio.Queue[
-        bytes
-    ]: ...  # cancel any live pump, spawn a fresh one, return its queue
-    def stop(self) -> None: ...  # cancel the pump task
-    @property
-    def capture_error(
-        self,
-    ) -> str | None: ...  # why capture stopped on its own; None while healthy
-```
-
-`start()`/`stop()` are **synchronous** — that is the [`AudioSource`](../../asr-engine/specs/audio-source.md) protocol the `ASREngine` drives its injected source through: the engine calls `audio_source.start()` (not awaited) to obtain the queue and `audio_source.stop()` on teardown, exactly as the bundled `AudioCapture` is called. `start()` runs on the engine's loop (the engine calls it from within its start coroutine), so it grabs `asyncio.get_running_loop()` and `loop.create_task(pump)` to spawn the pump task, then returns the queue immediately; the `async for chunk in api.audio_input()` loop lives in that pump task, not in `start`. `stop()` cancels the task. The source must be **restartable** (the engine may `start()` again after a `stop()`), so `start()` resets its queue, task, and `capture_error` each call — and first cancels any pump still live from a `start()` with no intervening `stop()`, so a pump task is never orphaned. No `await`-able work happens in `start`/`stop` themselves, so an async signature would buy nothing and would break the sync protocol the engine expects.
-
-- `api.audio_input()` is an **async iterator** yielding **int16 LE mono PCM `bytes`** at `api.mic_sample_rate` (**16 kHz**) — already the streaming-ASR contract (linear16 mono 16 kHz), so the pump is "iterate and enqueue", no resampling or reformatting (see [reachy-mini-bridge audio.md](../../reachy-mini-bridge/specs/audio.md), which explicitly frames the queue adapter as a few caller-side lines). This is the whole point of routing through the robot: the audio is already echo-cancelled and noise-suppressed by the XVF3800, so the app needs no processing.
-- The ASR config's `audio.device` is therefore **irrelevant** (no local device is opened); the ASR module must be configured for **16 kHz mono linear16** to match `mic_sample_rate`.
-- **Bounded, drop-oldest queue.** The queue holds at most `_MIC_QUEUE_MAXSIZE` chunks (200 — about 2 s of the robot's 10 ms capture blocks). If the engine falls behind, the pump discards the *oldest* chunk to make room for the newest — real-time audio semantics: stale speech is useless, and memory stays bounded instead of growing at ~32 KB/s behind a stalled consumer.
-- **A dead stream is visible, not silent.** If `audio_input()` raises, or ends on its own (the media session closed under it), the pump logs it and records the reason as `capture_error` (`"mic stream failed: …"` / `"mic stream ended"`). The engine would otherwise keep reporting `running` while hearing nothing; `AsrBridge.status()` carries `capture_error` so the ASR panel shows the stall. A deliberate `stop()` (cancellation) is not a failure and records nothing.
-- `RobotMicSource` shares the **one `ReachyMiniApi`** the app builds (the same instance behind `say` and the robot commands), so there is a single robot connection and one media session.
-
-`RobotMicSource` lives in this speech-in module; the app builds one `mic = RobotMicSource(api)`, injects it as `ASREngine(cfg.asr_engine, audio_source=mic)`, and hands both the engine and the same `mic` to `AsrBridge` (the engine keeps its source private, so the bridge gets its own reference for `status()` rather than reaching into the engine).
+The app builds `ASREngine(cfg.asr_engine, audio_source=embodiment.mic)` and hands the engine to `AsrBridge`. The bridge never sees the source; what it gets is a way to report the source's **capture health** — `mic_error`, a callable returning the embodiment's `mic_error` (`None` while healthy) — because the engine can keep reporting `running` while its stream has died, and the ASR panel must show that.
 
 ## `AsrBridge`
 
 ```python
 OnFinalSegment = Callable[[str], None]
+MicError = Callable[[], str | None]
 
 
 class AsrBridge:
@@ -78,32 +57,35 @@ class AsrBridge:
         engine: ASREngine,
         *,
         on_final_segment: OnFinalSegment,
-        mic: RobotMicSource | None = None,  # the engine's source, for capture health in status()
+        mic_error: MicError
+        | None = None,  # the embodiment's capture health, for status()
     ) -> None: ...
 
-    async def start(self) -> None:   # engine.start() in utterance mode
-    async def stop(self) -> None:    # engine.stop()
+    async def start(self) -> None: ...  # engine.start() in utterance mode
+    async def stop(self) -> None: ...  # engine.stop()
 
     # Set as engine.on_speech_segment.
     async def _on_segment(self, segment: SpeechSegment) -> None: ...
 
     # Live view for the UI.
     @property
-    def display_text(self) -> str: ...   # current interim transcript, "" after a final
-    def status(self) -> dict: ...        # {"running", "dictating", "segmentation_mode", "capture_error"}
+    def display_text(self) -> str: ...  # current interim transcript, "" after a final
+    def status(
+        self,
+    ) -> dict: ...  # {"running", "dictating", "segmentation_mode", "capture_error"}
 
     # Dictation controls.
     async def start_dictation(self, segmentation_mode: str | None = None) -> str: ...
     async def stop_dictation(self) -> str: ...
 ```
 
-- The constructor wires `engine.on_speech_segment = self._on_segment`. The engine is built from `AppConfig.asr_engine` and the `RobotMicSource` (see above) by the app and injected here.
-- `start()` starts the engine in its default **`utterance`** mode (the engine always begins there; the app does **not** auto-start dictation — normal conversation is one segment per utterance). The ASR config's `auto_start` / `auto_start_dictation` signals are not honored: this app always starts the engine itself and stays in conversation (utterance) mode until the agent asks otherwise.
+- The constructor wires `engine.on_speech_segment = self._on_segment`. The engine is built from `AppConfig.asr_engine` and the embodiment's mic by the app and injected here.
+- `start()` starts the engine in its default **`utterance`** mode (the engine always begins there; the app does **not** auto-start dictation — normal conversation is one segment per utterance). The ASR config's `auto_start` / `auto_start_dictation` signals are not honored: this app always starts the engine itself and stays in conversation mode until the agent asks otherwise.
 - `display_text` and `status()` are cheap reads the Gradio timer polls; `_on_segment` only mutates in-memory state and calls the callback, so it never blocks the ASR loop.
 
 ## Dictation — the agent's command
 
-Dictation lets the user speak a **longer, free-form passage** that shouldn't be chopped into a turn per sentence. It is entered by the agent, on request (e.g. the user says "let me dictate something"), via a WICA Command the app registers:
+Dictation lets the user speak a **longer, free-form passage** that shouldn't be chopped into a turn per sentence. It is entered by the agent, on request (e.g. "let me dictate something"), via a WICA Command the app registers:
 
 ```python
 async def start_dictation(segmentation_mode: str | None = None) -> str:
@@ -116,33 +98,32 @@ async def start_dictation(segmentation_mode: str | None = None) -> str:
     """
 ```
 
-Semantics (a thin wrapper over the ASR engine's dictation — see [asr-engine engine.md](../../asr-engine/specs/engine.md), "Dictation"):
+Semantics (a thin wrapper over the ASR engine's dictation — [asr-engine engine.md](../../asr-engine/specs/engine.md), "Dictation"):
 
 - Calls `engine.start_dictation(end_on_final_segment=True, segmentation_mode=segmentation_mode)`. The hard-wired **`end_on_final_segment=True`** is the "reset on segment end" behaviour: the mode swaps to `dictation_default_segmentation_mode` (typically `timeout` or `trigger_word`) for exactly one passage, then the engine reverts to `utterance` once that passage's final segment closes. The agent need not remember to turn it off.
-- **Dictation does not change where speech goes.** Segments still flow through `_on_segment`: interims still stream into the ASR panel, and the closed segment still becomes `speech_input` for the agent. The *only* difference is segmentation — how long the app waits before closing a segment — so a dictated passage arrives as one big `speech_input` instead of several small ones. The agent is still fed and still replies (this is not a "capture verbatim, stay silent" mode).
-- Returns a short status string the model can read back — `"Dictation started (<mode> mode)."`, where `<mode>` is read back from `engine.segmentation_mode` after the call (so it reflects the resolved default, not a guess).
-- **Never raises.** The engine raises `ValueError` on misuse (not running, already dictating, unknown mode); the command catches it and returns a readable string (`"Could not start dictation: <msg>"`) instead. This is the same non-raising Command contract `say` follows (see [tts-output.md](tts-output.md)): the agent — and the UI stop button below — always get a string back, never an exception.
+- **Dictation does not change where speech goes.** Segments still flow through `_on_segment`: interims still stream into the ASR panel, and the closed segment still becomes `speech_input`. The *only* difference is segmentation — how long the app waits before closing a segment — so a dictated passage arrives as one big `speech_input`. The agent is still fed and still replies.
+- Returns a short status string the model can read back — `"Dictation started (<mode> mode)."`, `<mode>` read back from `engine.segmentation_mode` after the call.
+- **Never raises.** The engine raises `ValueError` on misuse (not running, already dictating, unknown mode); the command catches it and returns `"Could not start dictation: <msg>"`. The same non-raising Command contract `say` follows ([embodiment.md](embodiment.md)).
 
-`stop_dictation()` (`engine.stop_dictation()`, revert to `utterance`) is exposed for the **UI stop button** — a manual hatch to leave dictation without waiting for the passage to close. It is a valid agent command too, but with `end_on_final_segment=True` the common path needs no explicit stop. Like `start_dictation`, it catches the engine's `ValueError` (no dictation in progress) and returns a readable string rather than raising.
+`stop_dictation()` (`engine.stop_dictation()`, revert to `utterance`) backs the **UI stop button** — a manual hatch to leave dictation without waiting for the passage to close. It is a valid agent command too, but with `end_on_final_segment=True` the common path needs no explicit stop. It catches the engine's `ValueError` (no dictation in progress) and returns a readable string.
 
 ## Status for the UI
 
-`status()` composes the engine's own accessors — `engine.status()["running"]`, `engine.dictating`, `engine.segmentation_mode` — plus the mic source's `capture_error` (`None` when healthy, or when the bridge was given no `mic`) into one dict the ASR panel renders, so a user can see at a glance whether ASR is live, whether it is currently in dictation mode, and whether capture has stalled even though the engine still says `running` (see [app.md](app.md)).
+`status()` composes the engine's own accessors — `engine.status()["running"]`, `engine.dictating`, `engine.segmentation_mode` — plus `capture_error` (the `mic_error()` result, or `None` when the bridge was given no callable) into one dict the ASR panel renders, so a user sees at a glance whether ASR is live, whether it is in dictation mode, and whether capture has stalled even though the engine still says `running` ([app.md](app.md)).
 
 ## Testing
 
-Drive `AsrBridge` against a fake `ASREngine` (no audio, no network) that lets a test push `SpeechSegment`s through `_on_segment`, and `RobotMicSource` against a fake `ReachyMiniApi` whose `audio_input()` yields a few PCM chunks:
+Drive `AsrBridge` against a fake `ASREngine` (no audio, no network) that lets a test push `SpeechSegment`s through `_on_segment`:
 
 - An interim segment updates `display_text` and does **not** call `on_final_segment`.
-- A final segment calls `on_final_segment` once with its `transcript`, then `display_text` is `""`.
+- A final segment calls `on_final_segment` once with its `transcript`, then `display_text` is `""`; an empty final still fires.
 - A sequence interim→interim→final yields exactly one `on_final_segment` call, with the final text.
 - `start_dictation()` calls the engine with `end_on_final_segment=True` and the resolved mode; `status()` reflects `dictating` / `segmentation_mode` from the (fake) engine.
-- `RobotMicSource.start()` returns a queue that receives the api's mic chunks in order; `stop()` cancels the pump.
-- A mic stream that raises (or ends) sets `capture_error`, which `AsrBridge.status()` reports; a restart clears it.
-- Undrained, the queue keeps only the newest `maxsize` chunks (oldest dropped, no error).
-- A second `start()` without `stop()` cancels the first pump — only one stream stays open.
+- `status()["capture_error"]` is whatever the injected `mic_error` returns at that moment, and `None` without one.
+
+The mic sources themselves are tested with their embodiments ([reachy-embodiment.md](reachy-embodiment.md), [audio-processing.md](audio-processing.md)).
 
 ## Open questions
 
-1. **Barge-in while the robot is speaking.** *Echo* is handled on the robot — the XVF3800 keeps ASR from hearing the app's own TTS (see [reachy-mini-bridge audio.md](../../reachy-mini-bridge/specs/audio.md)), so this app adds none of its own. What remains deferred is *barge-in*: acting on speech that arrives mid-`say`, which the agent's one-call-at-a-time model drops (see [app.md](app.md)).
+1. **Barge-in while the agent is speaking.** *Echo* is handled per embodiment — the XVF3800 on the robot, the audio-processing coordinator on the computer — so this module adds none. What remains deferred is *barge-in*: acting on speech that arrives mid-`say`, which the agent's one-call-at-a-time model drops ([app.md](app.md)).
 2. **Choosing the dictation segmentation mode.** Whether the agent should be able to pass `segmentation_mode` (e.g. pick `trigger_word` vs `timeout`) or always use the configured default is left open; the signature allows it, the system prompt can constrain it.

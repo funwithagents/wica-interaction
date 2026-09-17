@@ -7,7 +7,10 @@ tests:
 
 # TTS output
 
-**Status:** Implemented
+**Status:** Updated
+
+> **Superseded (2026-09-17).** The `say` output Command is now a member of the [Embodiment](embodiment.md) protocol, specified per body — [computer-embodiment.md](computer-embodiment.md) (`TTSEngine` through the speakers) and [reachy-embodiment.md](reachy-embodiment.md) (`api.say` through the robot). This spec still describes the code as it is today (`tts_output.py`); the [merge plan](../plans/202609172311_wica-interaction-merge.md) moves that code into `reachy/embodiment.py` and deletes this file.
+
 
 ## Purpose
 

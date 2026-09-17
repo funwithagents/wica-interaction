@@ -57,8 +57,9 @@ def test_agents_md_maps_exactly_the_package_modules():
 #     ---
 #
 # The spec-drift checks read this to scope what they diff, so it must stay
-# honest: listed paths must exist, and every concept module must be governed by
-# at least one spec. The mapping is many-to-many.
+# honest: listed paths must exist once the spec claims to be implemented, and
+# every concept module must be governed by at least one spec. The mapping is
+# many-to-many.
 #
 # Parsed with a tiny hand-rolled reader (not PyYAML) — the frontmatter format is
 # authored in this repo and simple.
@@ -66,6 +67,9 @@ def test_agents_md_maps_exactly_the_package_modules():
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _LIST_KEY = re.compile(r"^(code|tests):\s*$")
 _LIST_ITEM = re.compile(r"^\s*-\s+(.+?)\s*$")
+# The `**Status:** <value>` line every spec carries under its title (AGENTS.md, "Keeping statuses
+# current"); the value is one of the lifecycle states.
+_STATUS = re.compile(r"^\*\*Status:\*\*\s*(.+?)\s*$", re.MULTILINE)
 
 
 def _spec_files() -> list[Path]:
@@ -93,6 +97,12 @@ def _parse_frontmatter(path: Path) -> dict[str, list[str]]:
     return result
 
 
+def _status(path: Path) -> str | None:
+    """The spec's `**Status:**` value, or None when the line is missing."""
+    match = _STATUS.search(path.read_text(encoding="utf-8"))
+    return match.group(1) if match is not None else None
+
+
 def test_every_spec_declares_the_code_it_governs():
     missing: list[str] = []
     for spec in _spec_files():
@@ -106,16 +116,31 @@ def test_every_spec_declares_the_code_it_governs():
     )
 
 
-def test_spec_frontmatter_paths_all_exist():
+def test_every_spec_carries_a_status_line():
+    unlabelled = [spec.name for spec in _spec_files() if _status(spec) is None]
+    assert not unlabelled, (
+        f"specs without a `**Status:**` line: {unlabelled}. Every concept spec states its "
+        "lifecycle status just under its title (see AGENTS.md, 'Keeping statuses current')."
+    )
+
+
+def test_implemented_spec_frontmatter_paths_all_exist():
+    """`Implemented` is the one status that asserts design and code are in sync, so an
+    `Implemented` spec must name only files that exist. A spec that is not yet implemented
+    (`Stable`, `Updated`, `Draft`, `Not started`) legitimately names the files it *will* govern —
+    the design gate precedes the code — so its paths are exempt until it flips to `Implemented`."""
     stale: list[str] = []
     for spec in _spec_files():
+        if _status(spec) != "Implemented":
+            continue
         front = _parse_frontmatter(spec)
         for rel in front.get("code", []) + front.get("tests", []):
             if not (_REPO_ROOT / rel).exists():
                 stale.append(f"{spec.name} -> {rel}")
     assert not stale, (
-        f"spec frontmatter points at paths that no longer exist: {sorted(stale)}. "
-        "Update the `code:`/`tests:` lists when files are renamed or removed."
+        f"Implemented specs' frontmatter points at paths that do not exist: {sorted(stale)}. "
+        "Update the `code:`/`tests:` lists when files are renamed or removed, or set the "
+        "spec's status back to `Updated` while the code catches up."
     )
 
 

@@ -11,11 +11,13 @@ tests:
 
 # Gesture input
 
-**Status:** Implemented
+**Status:** Updated
+
+> **Updated (2026-09-17):** frames come from the **embodiment's camera** (a `CameraSource` injected into `GestureInput`), not from the robot api: `RobotCameraSource` moves to [reachy-embodiment.md](reachy-embodiment.md) and the computer gains a `WebcamSource` ([computer-embodiment.md](computer-embodiment.md)); the persona's "Hand signs" section is seeded at startup from this module rather than written in the prompt file. Open question 4 (vision without the robot) is resolved by that. Code catches up in the [merge plan](../plans/202609172311_wica-interaction-merge.md).
 
 ## Purpose
 
-The **vision-in** half of the app — the first perception besides speech. The robot's own camera is run through the [`vision-modules`](../../vision-modules/README.md) hand pipeline (hand detection + HaGRID gesture classification, up to `max_hands` hands per frame), and each hand's gesture is turned into a WICA Input: a small, app-owned **hand-sign vocabulary** — `stop`, `like`, `dislike`, `ok`, `mute`, and the counts `one` … `five` — one World entry **per hand**. Showing a sign wakes the agent, which decides for itself whether (and how) it matters in the current interaction; only `stop` carries an explicit persona rule (stop whatever it is doing). No hand, an unconfident classification, or a HaGRID class outside the vocabulary is "no sign".
+The **vision-in** half of the app — the first perception besides speech. The embodiment's camera — the robot's own, or a webcam on the computer — is run through the [`vision-modules`](../../vision-modules/README.md) hand pipeline (hand detection + HaGRID gesture classification, up to `max_hands` hands per frame), and each hand's gesture is turned into a WICA Input: a small, app-owned **hand-sign vocabulary** — `stop`, `like`, `dislike`, `ok`, `mute`, and the counts `one` … `five` — one World entry **per hand**. Showing a sign wakes the agent, which decides for itself whether (and how) it matters in the current interaction; only `stop` carries an explicit persona rule (stop whatever it is doing). No hand, an unconfident classification, or a HaGRID class outside the vocabulary is "no sign".
 
 `vision-modules` *perceives* and this module *decides*: the library reports a label per frame with a score; this module owns the threshold, the label → sign reduction, the per-hand change detection, and the rule for which changes wake the agent. It is the one place that knows how a stream of per-frame classifications maps onto "the person is showing a sign", so the rest of the app (the WICA agent, the UI) never touches the vision pipeline directly.
 
@@ -26,54 +28,42 @@ Two consumers read from it, as for speech ([asr-bridge.md](asr-bridge.md)):
 
 ## Decided
 
-### Frames come from the robot
+### Frames come from the embodiment
 
-The video source is the robot camera, read through the bridge's one perception verb, `ReachyMiniApi.get_camera_frame()` (a BGR `HxWx3` `uint8` array, or `None` when no frame is buffered yet — see [reachy-mini-bridge api.md](../../reachy-mini-bridge/specs/api.md)). Not the browser webcam the `vision-modules` hand demo uses, and not a local camera index: the robot is what looks at the person. No mirroring (`StreamProvider(..., mirror=False)`): the robot's view is not a selfie.
-
-A small **`RobotCameraSource`** adapter implements the library's `FrameSource` protocol (`open()` on every provider start, `read() -> ndarray | None`, `close()` on every stop — the provider drives that lifecycle — and `fps()`, the nominal rate) over that verb:
+The video source is whatever camera the embodiment looks through ([embodiment.md](embodiment.md), `camera(fps=…)`): the robot's camera through the bridge's `get_camera_frame()` on the Reachy Mini ([reachy-embodiment.md](reachy-embodiment.md), `RobotCameraSource`), a local webcam through `vision-modules`' `OpenCVSource` on the computer ([computer-embodiment.md](computer-embodiment.md), `WebcamSource`). `GestureInput` takes the source, it never builds one. What it requires of a source is the library's `FrameSource` protocol plus one accessor, the module's `CameraSource`:
 
 ```python
-class RobotCameraSource:
-    """Polls ReachyMiniApi.get_camera_frame() on the app loop, paced at `fps`, as a FrameSource."""
+class CameraSource(FrameSource, Protocol):
+    """A FrameSource that paces itself to the configured fps and reports its own health."""
 
-    def __init__(
-        self, api: ReachyMiniApi, loop: asyncio.AbstractEventLoop, *, fps: float
-    ) -> None: ...
-    def open(
-        self,
-    ) -> (
-        None
-    ): ...  # (re)arm; nothing to open robot-side (the media session is the app's)
-    def read(self) -> np.ndarray | None: ...  # next frame; None only once closed
-    def close(self) -> None: ...
-    def fps(
-        self,
-    ) -> float: ...  # nominal rate = the poll rate (the bridge reports no camera rate)
     @property
     def capture_error(
         self,
-    ) -> str | None: ...  # why the last poll failed; None while healthy
+    ) -> str | None: ...  # why the last read failed; None while healthy
 ```
 
-- `read()` runs on the `StreamProvider`'s capture thread and hops to the app loop with `asyncio.run_coroutine_threadsafe(api.get_camera_frame(), loop).result(timeout)` — the verb is async and bound to the loop the api was entered on (see [app.md](app.md), "One event loop"). The bridge already runs the blocking SDK read off the loop (`asyncio.to_thread`), so the loop is not stalled.
-- **It paces itself** to `fps` (sleeping the remainder of `1/fps` after each poll) because the provider's capture loop calls `read()` back-to-back and a camera poll faster than the hand stage consumes would be wasted work. Hand stage and classifier run at the same `fps`, so every polled frame is looked at once.
-- **A `None` frame is not the end of the stream.** The provider ends its loop for good on a `None` from `read()`, so "nothing buffered yet" (the daemon before its first frame; the headless sim, which has no GL context) must *not* be reported as `None`: the source waits one interval and polls again. Only `close()` makes `read()` return `None`. The provider therefore never `ended`s on its own — the camera is live for as long as the app runs.
-- **A failing poll is visible, not fatal.** If the verb raises, the source logs it (once per transition, not per poll), records the reason as `capture_error` (`"camera read failed: …"`), and keeps polling at the same pace; a later success clears it. A robot whose camera is missing therefore shows a warning in the UI rather than killing vision, and a transient failure heals.
+Every embodiment's source obeys the same three rules, so the pipeline behaves the same over any camera:
+
+- **It paces itself** to `fps` (sleeping the remainder of `1/fps` after each read), because the provider's capture loop calls `read()` back-to-back and a camera read faster than the hand stage consumes would be wasted work. Hand stage and classifier run at the same `fps`, so every read frame is looked at once.
+- **A missing frame is not the end of the stream.** The provider ends its loop for good on a `None` from `read()`, so "nothing yet" (a daemon before its first frame, a webcam not opened yet) must *not* be reported as `None`: the source waits one interval and tries again. Only `close()` makes `read()` return `None`. The provider therefore never `ended`s on its own — the camera is live for as long as the app runs.
+- **A failing read is visible, not fatal.** A raise is logged once per transition, recorded as `capture_error`, and the source keeps trying at the same pace; a later success clears it. A missing camera therefore shows on the Vision line rather than killing vision, and a transient failure heals.
+
+No mirroring (`StreamProvider(source, mirror=False)`): the classifier sees the frame as captured.
 
 ### The pipeline
 
 Exactly the hand demo's graph, with the robot as source and one consumer:
 
 ```
-RobotCameraSource ─▶ StreamProvider ─▶ HandStage ─▶ GestureClassifier ─▶ watcher ─▶ on_gesture(hand, sign)
-   (poll at fps)      (no mirror)       (fps)          (fps, threshold)     (fps)
+CameraSource ─▶ StreamProvider ─▶ HandStage ─▶ GestureClassifier ─▶ watcher ─▶ on_gesture(hand, sign)
+ (paced at fps)   (no mirror)       (fps)          (fps, threshold)     (fps)
 ```
 
 - `HandStage(provider, target_fps=fps, max_hands=max_hands, detector=…)` — `max_hands` from the config ([configuration.md](configuration.md), `vision.max_hands`, default **2**, the library's own default), default padding, rank (`"area"`) and hysteresis; the shipped MediaPipe detector unless one is injected. The app always passes `max_hands` explicitly, so a change of the library's default never silently changes what the robot looks at.
   - **Why 2 by default.** `max_hands` is also MediaPipe's tracking capacity ([vision-modules hand.md](../../vision-modules/specs/hand.md), "One count"): with 1, the detector locks onto the first hand it sees and a second hand is not even considered until the first is lost — so a person whose relaxed hand was tracked first could sign with the other and never be seen. With 2, both hands of the person are detected, published and classified — and each gets its own World entry (below), so `max_hands` is also the number of `hand_gesture_<n>` entries. The price is up to one more ViT pass per frame while two hands are in view; if that starves the classifier on a slow machine (the Vision line's achieved rate shows it), `max_hands: 1` is the fallback.
 - `GestureClassifier(hands, target_fps=fps, threshold=threshold, device=device, classifier=…)` — the shipped HaGRID ViT unless one is injected. `threshold` is the library's own validation rule: a hand's `label` is its top class **only when its score reaches the threshold**, else `None`. The app's default is **0.55** ([configuration.md](configuration.md), `vision.threshold`), and the module adds no second threshold of its own.
 - **Models load lazily**, on each stage's worker thread, at the first frame (that is the library's rule — see [vision-modules pipeline.md](../../vision-modules/specs/pipeline.md)). The first run downloads the MediaPipe bundle and the ~340 MB ViT; until they are ready the classifier publishes nothing and the status shows no label. A load failure (no network on first run, a missing extra) is recorded by the library in the stage's `last_error` and the graph keeps running; this module surfaces it in `status()["error"]` — vision never crashes the app.
-- **Nothing here touches the World or WICA.** The `on_gesture` callback is injected, like `AsrBridge`'s `on_final_segment`, so the module is unit-testable with a recording callback, a fake api, and scripted detector/classifier seams (no camera, no model).
+- **Nothing here touches the World or WICA.** The `on_gesture` callback is injected, like `AsrBridge`'s `on_final_segment`, so the module is unit-testable with a recording callback, a scripted `CameraSource`, and scripted detector/classifier seams (no camera, no model).
 
 ### The reduction: label → sign, per hand
 
@@ -144,11 +134,13 @@ Every `hand_gesture_<n>` entry is rendered in **every** prompt (`include_in_prom
 
 The `None` rendering is what an entry reads once the hand drops or relaxes (rule 1 delivers that change), so the agent is never left believing a sign is still up. The person-facing counterpart (`display_entry` in [app.md](app.md)) shows `✋ hand {n}: {sign}` / `✋ hand {n}: no sign`.
 
-### What the agent does with it — the persona
+### What the agent does with it — the persona, seeded at startup
 
-The persona ([prompts/assistant.md](../prompts/assistant.md)) **describes the perception, not the reactions**. A "Hand signs" section says: you can see the person's hands; each `hand_gesture_<n>` state says which sign hand `n` shows — one of `stop`, `like`, `dislike`, `ok`, `mute`, `one`, `two`, `three`, `four`, `five` — or none; hand numbers follow the hands in view in the order they appeared and are not left/right. It does **not** say what `like`, `ok`, a count, or two hands at once mean, nor whether to respond: the agent decides from the interaction context whether a sign is meant for it and what to make of it (acknowledge it, use it as an answer, ignore it). That is deliberate — the point is to see how the agent interprets the signs unprompted, including whether it sums counts across hands when that makes sense.
+The "Hand signs" section of the persona is **not** written in either prompt file: this module owns it as `hand_signs_prompt_section()`, and the app appends it to the resolved persona when — and only when — vision is enabled ([app.md](app.md), build step 3), the same seam the embodiment's `prompt_addendum` uses. A persona never describes hands the agent cannot see, and the vocabulary lives in one place next to the `SIGNS` table it must match.
 
-**`stop` is the one exception**, keeping the explicit rule from the fist-only version: when any hand shows `stop`, stop what you are doing — cancel every running Command (`cancel_command` on each running `say` / `play_emotion` / whatever is in flight) and start nothing new; then, per the existing "always answer out loud" rule, **say a short confirmation in the next turn** once the cancellation is observed done; and if nothing was running, just acknowledge briefly. It also says not to issue the cancel and the confirmation in the same turn (the no-collision rule, [app.md](app.md)) and that a `stop` going away is not a request for anything.
+The section **describes the perception, not the reactions**: you can see the person's hands; each `hand_gesture_<n>` state says which sign hand `n` shows — one of `stop`, `like`, `dislike`, `ok`, `mute`, `one`, `two`, `three`, `four`, `five` — or none; hand numbers follow the hands in view in the order they appeared and are not left/right. It does **not** say what `like`, `ok`, a count, or two hands at once mean, nor whether to respond: the agent decides from the interaction context whether a sign is meant for it and what to make of it. That is deliberate — the point is to see how the agent interprets the signs unprompted.
+
+**`stop` is the one exception**: when any hand shows `stop`, stop what you are doing — cancel every running Command (`cancel_command` on each in-flight `say` / action / whatever runs) and start nothing new; then, in the next turn, once the cancellation is observed done, `say` a short confirmation (a stop is a request like any other and gets a spoken reply); if nothing was running, just acknowledge briefly. Do not issue the cancel and the confirmation in the same turn (the robot persona's no-collision rule — [reachy-embodiment.md](reachy-embodiment.md); harmless on the computer). A `stop` going away is not a request for anything.
 
 **A known limit** (WICA's, not this module's): the agent handles one reasoning step at a time and a trigger arriving mid-step is dropped, not queued. A running `say` is a Command, not a step, so a sign shown *while the robot speaks* does wake the agent — the common case. A sign shown while the model is still reasoning is lost; the person lowers and shows it again (or shows another), and the next change triggers. With a whole vocabulary this happens more often than with the fist alone; barge-in proper is deferred in WICA.
 
@@ -166,11 +158,15 @@ class GestureModels:
     classifier: ImageClassifier | None = None
 
 
+def hand_signs_prompt_section() -> (
+    str
+): ...  # the "## Hand signs" persona section (above)
+
+
 class GestureInput:
     def __init__(
         self,
-        api: ReachyMiniApi,
-        loop: asyncio.AbstractEventLoop,
+        source: CameraSource,
         *,
         on_gesture: OnGesture,
         threshold: float = 0.55,
@@ -199,9 +195,9 @@ class GestureInput:
     ) -> dict: ...  # {"running", "signs", "hands", "max_hands", "target_fps", "stream_fps", "hand_fps", "classifier_fps", "capture_error", "error"}
 ```
 
-- `start()` / `stop()` are **synchronous** (threads, like the library's `Pipeline`), called from the app's main/Gradio thread, never from the loop. `stop()` joins every thread; `close()` hooks release the models. Both are idempotent.
+- `start()` / `stop()` are **synchronous** (threads, like the library's `Pipeline`), called from the app's main/Gradio thread, never from the loop. The source is opened by the provider on `start()` and closed on `stop()`. `stop()` joins every thread; `close()` hooks release the models. Both are idempotent.
 - `status()` is a cheap read the UI timer polls: `signs` is the last *delivered* value of every hand, a list of length `max_hands` (`["two", None]`), `hands` one `{"label", "confidence"}` per hand in the latest classifier result, **in the library's slot order** (so entry *i* stays the same physical hand while it is in view) — each hand's validated top class (`None` below threshold or with no crop) and raw top score (`0.0` with no crop); an empty list with no hand or no result yet — `max_hands` the configured cap, `target_fps` the configured rate, `stream_fps` / `hand_fps` / `classifier_fps` each node's **achieved** rate (below), `capture_error` the camera source's, and `error` the message of the last exception a stage recorded (`hands.last_error` or `gestures.last_error`, the classifier's first), `None` when healthy.
-- **Achieved rates, the hand demo's way.** A stage's real rate is capped by its upstream and by the model's speed, so `target_fps` is a ceiling, not a fact. Every node's `published_count` increments exactly once per publish — the two stages' and the `StreamProvider`'s alike (the library's exact counter for this — `frame_id` would not do, it is inherited from the camera frame) — so the watcher samples the three counters once per window (`fps_window_s`, default 1 s) and keeps (Δcount / Δtime) as that node's rate; `None` until two samples exist. The stream's rate is the rate the robot camera actually delivered frames at (a `None` frame is not a publish), against the configured poll rate — the provider's `source_fps` would only echo `RobotCameraSource.fps()`, the poll rate, since the bridge reports no camera rate. The UI shows each next to its configured rate, so a camera returning nothing, or a classifier starved by a slow model, is visible at a glance.
+- **Achieved rates, the hand demo's way.** A stage's real rate is capped by its upstream and by the model's speed, so `target_fps` is a ceiling, not a fact. Every node's `published_count` increments exactly once per publish — the two stages' and the `StreamProvider`'s alike (the library's exact counter for this — `frame_id` would not do, it is inherited from the camera frame) — so the watcher samples the three counters once per window (`fps_window_s`, default 1 s) and keeps (Δcount / Δtime) as that node's rate; `None` until two samples exist. The stream's rate is the rate the camera actually delivered frames at (a `None` frame is not a publish), against the configured rate — the provider's `source_fps` would only echo the source's `fps()`, the pace, since neither the bridge nor a webcam reports a usable rate. The UI shows each next to its configured rate, so a camera returning nothing, or a classifier starved by a slow model, is visible at a glance.
 - `max_hands` must be `>= 1` (the library's `HandStage` raises `ValueError` otherwise; the config validates it first).
 - `device` is forwarded to the classifier: `None` lets the library pick (`mps` → `cuda` → `cpu`).
 - **Snapshots, the hand demo's way.** `save_detector_snapshot(folder)` / `save_classifier_snapshot(folder)` write what the hand stage / the classifier **last consumed** — the full camera frame it detected on, the hand crop(s) it classified — through the library's `save_input(stage, path)` ([vision-modules snapshot.md](../../vision-modules/specs/snapshot.md)), under `<folder>/snapshot_<stage name>_<YYYYMMDDHHMMSS>.jpg` (`snapshot_path`; the classifier's crops get `_<i>` before the suffix, one per hand). They run on the **caller's** thread (the Gradio click handler), as the library requires — never on a worker — and **never raise**: a `ValueError` (nothing consumed yet, an unsupported suffix), `TypeError`, or `OSError` (an unwritable folder) comes back as a `⚠️ <stage>: …` status line, a classifier input with no hand as `⚠️ …: no crop to save`, and a success as `Saved \`<path>\`, …`. The UI shows that line under the buttons (see [app.md](app.md), "Vision line").
@@ -210,13 +206,13 @@ class GestureInput:
 
 See [app.md](app.md) for the composition; the rules this module imposes on it:
 
-- Built in `build_system` **only when** the config's `vision` section has `enabled: true` ([configuration.md](configuration.md)) **and** the robot is up (no api ⇒ no camera ⇒ no vision, like ASR and the mic). Built **after** WICA, so `on_gesture` resolves against a live agent; the `hand_gesture_1` … `hand_gesture_<max_hands>` entries are registered only in that case too, so a vision-less run does not tell the model about hands it can never see. Construction never loads a model or touches the camera (both happen on `start()`), so the only build failure is a programming/config error; it is still caught into a `Vision: …` banner line rather than crashing.
+- Built in `build_system` **only when** the config's `vision` section has `enabled: true` ([configuration.md](configuration.md)) **and** the embodiment is up (no body ⇒ no camera ⇒ no vision, like ASR and the mic) **and** the agent built. Built **after** WICA, over `embodiment.camera(fps=cfg.vision.fps)`, so `on_gesture` resolves against a live agent; the `hand_gesture_1` … `hand_gesture_<max_hands>` entries are registered — and `hand_signs_prompt_section()` appended to the persona — only in that case, so a vision-less run tells the model nothing about hands. Construction never loads a model or opens the camera (both happen on `start()`); a build failure is still caught into a `Vision: …` banner line rather than crashing.
 - `on_gesture(hand, value)` writes `world.update(f"hand_gesture_{hand}", value)` guarded on a running agent (as `_deliver_speech` is): a value arriving before start or after teardown is dropped.
-- Started after `wica.start()` (with the ASR bridge), stopped in `_shutdown` right after `wica.close()` and **before** the api's `__aexit__` — the camera source polls the api on the loop, so it must be stopped while the media session is still open, exactly the reason the ASR bridge is stopped before the api. Its `stop()` is a synchronous join, so it is not hopped onto the loop; it is isolated like every other teardown step.
+- Started after `wica.start()` (with the ASR bridge), stopped in `_shutdown` right after `wica.close()` and **before** the embodiment's `exit()` — the robot's source polls the api on the loop, so it must be joined while the media session is still open. Its `stop()` is a synchronous join, isolated like every other teardown step.
 
 ## Testing
 
-Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with a fake `ReachyMiniApi` whose `get_camera_frame()` returns synthetic frames and a scripted `HandDetector` / `ImageClassifier` (no camera, no model, no network), at a high `fps` so the tests run in well under a second:
+Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with a scripted `CameraSource` (synthetic frames, an injectable `capture_error`) and a scripted `HandDetector` / `ImageClassifier` (no camera, no model, no network), at a high `fps` so the tests run in well under a second:
 
 - Frames with a hand the classifier scores `like` at ≥ threshold deliver `(1, "like")` exactly once, even across many frames.
 - Then frames with no hand deliver `(1, None)` once; the hand back at `like` delivers `(1, "like")` again (`None → like → None → like` ⇒ three deliveries).
@@ -227,16 +223,17 @@ Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with 
 - `sign_shown`: `None → x` and `x → y` fire; `x → None` and `x → x` do not.
 - With a short `fps_window_s`, `stream_fps` / `hand_fps` / `classifier_fps` go from `None` to a positive rate once frames flow, and `target_fps` is the configured rate.
 - Snapshots: before any frame both save methods return a `⚠️` line and write nothing; once frames flow, the detector snapshot writes `snapshot_HandStage_<ts>.jpg` (the full frame) and the classifier snapshot `snapshot_GestureClassifier_<ts>_0.jpg` (the crop), each reporting `Saved …`; with no hand in frame the classifier snapshot reports `no crop to save`; an unwritable folder reports the `OSError` instead of raising.
-- `RobotCameraSource`: `None` frames from the api are skipped (the provider keeps running and later frames arrive); a raising `get_camera_frame` sets `capture_error`, a later success clears it; `close()` makes `read()` return `None` promptly.
+- `hand_signs_prompt_section()` names every sign of the vocabulary (exactly the values of `SIGNS`) and the `stop` rule.
+- The sources themselves are tested with their embodiments: `RobotCameraSource` in [reachy-embodiment.md](reachy-embodiment.md), `WebcamSource` in [computer-embodiment.md](computer-embodiment.md).
 - `stop()` joins the threads and the callback is not called afterwards.
-- In `tests/test_app.py`, with the fake api + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line (and the hand-1 "not showing a sign" line); `two → None` does not trigger; a vision config with no robot builds no `GestureInput`; `enabled: false` builds none either (and registers no entry); teardown stops vision before the api exits.
-- `tests-e2e/test_gesture_input_live.py` runs the **real** models: a fake api serving each of `vision-modules`' bundled photos must deliver its sign for hand 1 — `hand_fist.jpg` and `hand_stop.jpg` → `"stop"`, `hand_palm.jpg` → `"five"`, `hand_one.jpg` → `"one"`, `hand_three2.jpg` → `"three"` — and `no_hand.jpg` must deliver nothing — skipped when the fixtures or the models are unavailable (see [testing.md](testing.md)).
+- In `tests/test_system.py`, with a `FakeEmbodiment` whose camera serves synthetic frames + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered and the hand-signs section is in the first prompt; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line (and the hand-1 "not showing a sign" line); `two → None` does not trigger; a vision config with no embodiment builds no `GestureInput`; `enabled: false` builds none either (registers no entry, seeds no section); teardown stops vision before the embodiment exits.
+- `tests-e2e/test_gesture_input_live.py` runs the **real** models: a scripted source serving each of `vision-modules`' bundled photos must deliver its sign for hand 1 — `hand_fist.jpg` and `hand_stop.jpg` → `"stop"`, `hand_palm.jpg` → `"five"`, `hand_one.jpg` → `"one"`, `hand_three2.jpg` → `"three"` — and `no_hand.jpg` must deliver nothing — skipped when the fixtures or the models are unavailable (see [testing.md](testing.md)).
 
 ## Open questions
 
 1. **Tuning the vocabulary.** The `SIGNS` table is hardcoded and chosen by hand (`call` left out; `rock` counted as two fingers; `mute` its own sign). Once the agent's unprompted interpretations are observed on the robot, the table and the persona's one-line vocabulary may change — or move to config if it needs per-deployment tuning.
 2. **Debouncing.** A per-frame label can flicker between neighbouring classes (vision-modules gesture_classifier.md, open question 4), and a vocabulary makes that likelier than the fist alone: `stop` (fingers together) vs `five` (`palm`, fingers spread), `two` vs `three`, a hand at the threshold's edge flipping to `None` and back — each change to a sign waking the agent. If observed, require N consecutive identical frames before delivering (a small per-hand counter in the watcher). Deliberately deferred.
 3. **Showing the camera in the UI.** Only a status line is shown; the frame with the hand box (as in the hand demo) would be a natural debug panel, at the cost of a per-tick image round-trip. Deferred.
-4. **Vision without the robot.** A local webcam / browser source would let the vision path be developed with the `fake` backend (whose camera is a synthetic gradient — no hand). Deferred; the fake backend still exercises the plumbing.
+4. **Vision without the robot.** **Resolved (2026-09-17):** the camera is the embodiment's, so the computer embodiment's `WebcamSource` runs the same pipeline over a laptop webcam ([computer-embodiment.md](computer-embodiment.md)); the bridge's `fake` backend still exercises the robot plumbing with its synthetic frame.
 5. **Hand identity and handedness.** Entries are keyed by slot, and the library compacts slots when a hand leaves (see "Hands are slots, not identities"), so hand 2's sign can move to hand 1. Keying by `left` / `right` would need MediaPipe's handedness exposed on `Hand` ([vision-modules hand.md](../../vision-modules/specs/hand.md), open question 1) and a stable identity across gaps (open question 3 there). Deferred until the slot shift is seen to confuse the agent.
 6. **Coalescing for `stop`.** Signs no longer bypass the coalescing window, so `stop` waits up to ~200 ms. A separate `bypass_coalescing` entry for the stop sign alone is the fix if that latency is felt.
