@@ -2,6 +2,7 @@
 code:
   - src/wica_interaction/system.py
   - src/wica_interaction/app_ui.py
+  - prompts/computer.md
   - prompts/reachy.md
 tests:
   - tests/test_system.py

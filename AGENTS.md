@@ -13,7 +13,7 @@ Where things live. This is a coarse, module-level map — for the full file inve
 | `src/wica_interaction/` | The library itself — one module per shared concept, one subpackage per embodiment (see below) |
 | `specs/` | Pre-implementation design docs, one per concept, each with a `**Status:**` — indexed by [specs/_index.md](specs/_index.md) |
 | `plans/` | Implementation plans turning settled specs into buildable steps — indexed by [plans/_index.md](plans/_index.md) |
-| `tests/` | Fast, deterministic, no-network tests; mirrors the `src/wica_interaction/` module structure, embodiment subpackages included (`tests/reachy/`) |
+| `tests/` | Fast, deterministic, no-network tests; mirrors the `src/wica_interaction/` module structure, embodiment subpackages included (`tests/computer/`, `tests/reachy/`) |
 | `tests-e2e/` | Opt-in live tests that call real external services (not collected by default `pytest`) |
 
 ### `src/wica_interaction/` modules
@@ -28,6 +28,10 @@ Where things live. This is a coarse, module-level map — for the full file inve
 | [gesture_input.py](src/wica_interaction/gesture_input.py) | Vision-in: runs the embodiment's camera through `vision-modules`' hand + gesture pipeline, reduces each hand to one sign of the app's vocabulary (`stop`, `like`, `ok`, counts …), delivers changes to the World's per-hand `hand_gesture_<n>` entries (triggering the agent whenever a sign is shown); owns the "Hand signs" persona section | [gesture-input.md](specs/gesture-input.md) |
 | [system.py](src/wica_interaction/system.py) | Wiring + lifecycle, embodiment-agnostic: builds the agent, ASR and vision around an `Embodiment` on one event loop, wires the voice and its commands, `run_app` | [app.md](specs/app.md) |
 | [app_ui.py](src/wica_interaction/app_ui.py) | The Gradio presentation layer: the `display_entry` hook, the page layout (`build_ui` — WICA's `wica.contrib.gradio` observability panels next to the app's own ASR + Vision panel), the live views its timer polls | [app.md](specs/app.md) |
+| [computer/config.py](src/wica_interaction/computer/config.py) | The computer embodiment's config: the shared sections plus `tts` (its voice), `audio_processing` and `camera` | [computer-embodiment.md](specs/computer-embodiment.md) |
+| [computer/embodiment.py](src/wica_interaction/computer/embodiment.py) | `ComputerEmbodiment`: a `TTSEngine` voice through the speakers, the local (optionally processed) mic, a `WebcamSource`, no actions | [computer-embodiment.md](specs/computer-embodiment.md) |
+| [computer/audio_processing.py](src/wica_interaction/computer/audio_processing.py) | The computer's mic processing: one WebRTC coordinator doing echo cancellation (TTS far-end reference) and noise suppression, bridging the TTS sink to the ASR source | [audio-processing.md](specs/audio-processing.md) |
+| [computer/app.py](src/wica_interaction/computer/app.py) | The `wica-interaction-computer` entry point: load the config, construct the embodiment, `run_app` | [computer-embodiment.md](specs/computer-embodiment.md) |
 | [reachy/config.py](src/wica_interaction/reachy/config.py) | The Reachy Mini embodiment's config: the shared sections plus `reachy` — a verbatim `reachy-mini-bridge` config, voice included | [reachy-embodiment.md](specs/reachy-embodiment.md) |
 | [reachy/embodiment.py](src/wica_interaction/reachy/embodiment.py) | `ReachyEmbodiment`: one `ReachyMiniApi` behind `say`, the mic source and the camera source, plus the emotion names seeded into the prompt | [reachy-embodiment.md](specs/reachy-embodiment.md) |
 | [reachy/robot_control.py](src/wica_interaction/reachy/robot_control.py) | The robot's action commands: non-raising WICA commands wrapping `reachy-mini-bridge` verbs — play an emotion (its description naming the names), get/set motor state (head tracking is bridge-managed, not agent-facing) | [reachy-embodiment.md](specs/reachy-embodiment.md) |
