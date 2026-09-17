@@ -1,4 +1,4 @@
-"""Functional tests for the fist gesture input (`gesture_input`).
+"""Functional tests for the hand-sign gesture input (`gesture_input`).
 
 Drives `GestureInput` end-to-end through the real `vision-modules` pipeline — `RobotCameraSource →
 StreamProvider → HandStage → GestureClassifier → watcher` — with a fake `ReachyMiniApi` serving
@@ -23,13 +23,16 @@ from reachy_mini_bridge.api import ReachyMiniApi
 from vision_modules.hand import DetectedHand
 
 from reachy_mini_interaction_wica.gesture_input import (
-    FIST,
+    SIGNS,
     GestureInput,
     GestureModels,
     RobotCameraSource,
-    fist_raised,
+    sign_shown,
     snapshot_path,
 )
+
+# One delivery: (hand number, that hand's sign or None).
+Delivery = tuple[int, str | None]
 
 _FPS = 100.0  # every stage; tests wait on outcomes, so this only bounds their latency
 
@@ -69,7 +72,7 @@ class ScriptedDetector:
 class ScriptedClassifier:
     """Returns the current `scores` for every crop; a test reassigns them to change the gesture."""
 
-    labels = ("fist", "palm", "one")
+    labels = ("fist", "palm", "one", "peace", "rock", "three2", "stop_inverted", "call")
 
     def __init__(self, scores: dict[str, float]) -> None:
         self.scores = scores
@@ -116,69 +119,119 @@ def _input(
     loop: asyncio.AbstractEventLoop,
     api: FakeCameraApi,
     classifier: ScriptedClassifier,
-    deliveries: list[str | None],
+    deliveries: list[Delivery],
     *,
     threshold: float = 0.55,
+    max_hands: int = 2,
 ) -> GestureInput:
     return GestureInput(
         cast(ReachyMiniApi, api),
         loop,
-        on_gesture=deliveries.append,
+        on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         threshold=threshold,
         fps=_FPS,
+        max_hands=max_hands,
         models=GestureModels(detector=ScriptedDetector(), classifier=classifier),
     )
 
 
-def test_fist_is_delivered_once_across_many_frames(
+def test_a_sign_is_delivered_once_across_many_frames(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
-    """A fist held over many frames delivers `"fist"` exactly once — changes only, never per frame."""
+    """A sign held over many frames delivers once, for hand 1 — changes only, never per frame."""
     api = FakeCameraApi()
-    deliveries: list[str | None] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.9)), deliveries)
+    deliveries: list[Delivery] = []
+    gesture = _input(loop, api, ScriptedClassifier(_scores("like", 0.9)), deliveries)
     gesture.start()
     try:
-        assert _wait_until(lambda: deliveries == [FIST])
+        assert _wait_until(lambda: deliveries == [(1, "like")])
         polls_then = api.polls
         assert _wait_until(
             lambda: api.polls >= polls_then + 10
         )  # many more frames went by
-        assert deliveries == [FIST]
-        assert gesture.status()["gesture"] == FIST
+        assert deliveries == [(1, "like")]
+        assert gesture.status()["signs"] == ["like", None]  # one per max_hands
         assert gesture.status()["hands"] == [
-            {"label": FIST, "confidence": pytest.approx(0.9)}
+            {"label": "like", "confidence": pytest.approx(0.9)}
         ]
     finally:
         gesture.stop()
 
 
-def test_lowered_and_raised_again_deliver_each_change(
+def test_lowered_and_shown_again_deliver_each_change(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
-    """None → fist → None → fist ⇒ exactly three deliveries, in that order."""
+    """None → like → None → like ⇒ exactly three deliveries, in that order."""
     api = FakeCameraApi()
-    deliveries: list[str | None] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.9)), deliveries)
+    deliveries: list[Delivery] = []
+    gesture = _input(loop, api, ScriptedClassifier(_scores("like", 0.9)), deliveries)
     gesture.start()
     try:
-        assert _wait_until(lambda: deliveries == [FIST])
+        assert _wait_until(lambda: deliveries == [(1, "like")])
         api.frame = _EMPTY_FRAME  # the hand leaves the frame
-        assert _wait_until(lambda: deliveries == [FIST, None])
+        assert _wait_until(lambda: deliveries == [(1, "like"), (1, None)])
         assert gesture.status()["hands"] == []
-        api.frame = _HAND_FRAME  # ...and comes back as a fist
-        assert _wait_until(lambda: deliveries == [FIST, None, FIST])
+        api.frame = _HAND_FRAME  # ...and comes back showing the same sign
+        assert _wait_until(lambda: deliveries == [(1, "like"), (1, None), (1, "like")])
     finally:
         gesture.stop()
 
 
-def test_sub_threshold_fist_delivers_nothing_but_shows_its_score(
+@pytest.mark.parametrize(
+    ("label", "sign"),
+    [
+        ("fist", "stop"),
+        ("stop_inverted", "stop"),
+        ("one", "one"),
+        ("rock", "two"),
+        ("three2", "three"),
+        ("palm", "five"),
+    ],
+)
+def test_each_label_reduces_to_its_sign(
+    loop: asyncio.AbstractEventLoop, label: str, sign: str
+) -> None:
+    """The `SIGNS` table: several HaGRID classes collapse onto one app sign."""
+    api = FakeCameraApi()
+    deliveries: list[Delivery] = []
+    gesture = _input(loop, api, ScriptedClassifier(_scores(label, 0.9)), deliveries)
+    gesture.start()
+    try:
+        assert _wait_until(lambda: deliveries == [(1, sign)])
+    finally:
+        gesture.stop()
+
+
+def test_switching_sign_delivers_the_new_one_directly(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
-    """A fist scored below the threshold is "no fist": nothing delivered, the raw score visible."""
+    """A hand going from one sign to another with no sign-less frame between delivers the new sign;
+    two labels that mean the same sign deliver nothing new."""
     api = FakeCameraApi()
-    deliveries: list[str | None] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.5)), deliveries)
+    deliveries: list[Delivery] = []
+    classifier = ScriptedClassifier(_scores("one", 0.9))
+    gesture = _input(loop, api, classifier, deliveries)
+    gesture.start()
+    try:
+        assert _wait_until(lambda: deliveries == [(1, "one")])
+        classifier.scores = _scores("peace", 0.9)  # one → two, no None between
+        assert _wait_until(lambda: deliveries == [(1, "one"), (1, "two")])
+        classifier.scores = _scores("rock", 0.9)  # another label, the same sign
+        assert _wait_until(
+            lambda: [h["label"] for h in gesture.status()["hands"]] == ["rock"]
+        )
+        assert deliveries == [(1, "one"), (1, "two")]
+    finally:
+        gesture.stop()
+
+
+def test_sub_threshold_sign_delivers_nothing_but_shows_its_score(
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """A sign scored below the threshold is "no sign": nothing delivered, the raw score visible."""
+    api = FakeCameraApi()
+    deliveries: list[Delivery] = []
+    gesture = _input(loop, api, ScriptedClassifier(_scores("like", 0.5)), deliveries)
     gesture.start()
     try:
         # The classifier processed frames (the score shows up), yet nothing was delivered.
@@ -188,46 +241,62 @@ def test_sub_threshold_fist_delivers_nothing_but_shows_its_score(
                 == [{"label": None, "confidence": pytest.approx(0.5)}]
             )
         )
-        assert gesture.status()["gesture"] is None
+        assert gesture.status()["signs"] == [None, None]
         assert deliveries == []
     finally:
         gesture.stop()
 
 
 def test_threshold_is_the_apps_setting(loop: asyncio.AbstractEventLoop) -> None:
-    """The same 0.5 fist validates once the configured threshold allows it."""
+    """The same 0.5 hand validates once the configured threshold allows it."""
     api = FakeCameraApi()
-    deliveries: list[str | None] = []
+    deliveries: list[Delivery] = []
     gesture = _input(
         loop, api, ScriptedClassifier(_scores("fist", 0.5)), deliveries, threshold=0.4
     )
     gesture.start()
     try:
-        assert _wait_until(lambda: deliveries == [FIST])
+        assert _wait_until(lambda: deliveries == [(1, "stop")])
     finally:
         gesture.stop()
 
 
-def test_other_gestures_are_no_fist(loop: asyncio.AbstractEventLoop) -> None:
-    """A confidently classified non-fist gesture delivers nothing; only `fist` is recognised."""
+def test_an_unmapped_class_is_no_sign(loop: asyncio.AbstractEventLoop) -> None:
+    """`call` is outside the vocabulary: confidently classified, it still delivers nothing — and a
+    hand leaving a mapped sign for it delivers the `None`."""
     api = FakeCameraApi()
-    deliveries: list[str | None] = []
-    classifier = ScriptedClassifier(_scores("palm", 0.9))
+    deliveries: list[Delivery] = []
+    classifier = ScriptedClassifier(_scores("call", 0.9))
     gesture = _input(loop, api, classifier, deliveries)
     gesture.start()
     try:
         assert _wait_until(
-            lambda: [h["label"] for h in gesture.status()["hands"]] == ["palm"]
+            lambda: [h["label"] for h in gesture.status()["hands"]] == ["call"]
         )
         assert deliveries == []
-        classifier.scores = _scores("fist", 0.9)  # the palm becomes a fist
-        assert _wait_until(lambda: deliveries == [FIST])
-        classifier.scores = _scores(
-            "one", 0.9
-        )  # ...then another gesture: the fist is down
-        assert _wait_until(lambda: deliveries == [FIST, None])
+        classifier.scores = _scores("ok", 0.9)
+        assert _wait_until(lambda: deliveries == [(1, "ok")])
+        classifier.scores = _scores("call", 0.9)  # back outside the vocabulary
+        assert _wait_until(lambda: deliveries == [(1, "ok"), (1, None)])
     finally:
         gesture.stop()
+
+
+def test_the_vocabulary_is_the_specced_table() -> None:
+    """Every sign the persona names is reachable, and `call` is the one class left out."""
+    assert set(SIGNS.values()) == {
+        "stop",
+        "like",
+        "dislike",
+        "ok",
+        "mute",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+    }
+    assert "call" not in SIGNS
 
 
 # --- Two hands ------------------------------------------------------------------------------------
@@ -271,69 +340,70 @@ class PerHandClassifier(ScriptedClassifier):
 def _two_hand_input(
     loop: asyncio.AbstractEventLoop,
     classifier: PerHandClassifier,
-    deliveries: list[str | None],
+    deliveries: list[Delivery],
     *,
     max_hands: int,
 ) -> GestureInput:
     return GestureInput(
         cast(ReachyMiniApi, FakeCameraApi(frame=_TWO_HANDS_FRAME)),
         loop,
-        on_gesture=deliveries.append,
+        on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         fps=_FPS,
         max_hands=max_hands,
         models=GestureModels(detector=TwoHandDetector(), classifier=classifier),
     )
 
 
-def test_a_fist_on_the_second_hand_is_the_stop_sign(
+def test_each_hand_is_delivered_on_its_own_slot(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
-    """Any hand counts, not only slot 0: a relaxed left hand next to a right fist delivers `"fist"`;
-    the fist switching hands is still one stop sign (no delivery); both relaxed delivers `None`."""
-    deliveries: list[str | None] = []
-    classifier = PerHandClassifier(_scores("palm", 0.9), _scores("fist", 0.8))
+    """Two hands are two states: a sign on the second hand alone delivers `(2, sign)`; each hand's
+    later changes are reported against that hand only."""
+    deliveries: list[Delivery] = []
+    classifier = PerHandClassifier(_scores("call", 0.9), _scores("fist", 0.8))
     gesture = _two_hand_input(loop, classifier, deliveries, max_hands=2)
     gesture.start()
     try:
-        assert _wait_until(lambda: deliveries == [FIST])
+        assert _wait_until(lambda: deliveries == [(2, "stop")])
         status = gesture.status()
         assert status["max_hands"] == 2
-        # Slot order: the bigger left hand first, then the right one holding the fist.
+        assert status["signs"] == [None, "stop"]
+        # Slot order: the bigger left hand first, then the right one showing the fist.
         assert status["hands"] == [
-            {"label": "palm", "confidence": pytest.approx(0.9)},
-            {"label": FIST, "confidence": pytest.approx(0.8)},
+            {"label": "call", "confidence": pytest.approx(0.9)},
+            {"label": "fist", "confidence": pytest.approx(0.8)},
         ]
 
-        classifier.right_scores = _scores(
-            "palm", 0.9
-        )  # ...set atomically with the next line
-        classifier.scores = _scores("fist", 0.8)  # the fist moves to the left hand
-        assert _wait_until(
-            lambda: [h["label"] for h in gesture.status()["hands"]] == [FIST, "palm"]
-        )
-        assert deliveries == [FIST]  # fist → fist: nothing new
+        classifier.scores = _scores("three", 0.9)  # the left hand starts signing too
+        assert _wait_until(lambda: deliveries == [(2, "stop"), (1, "three")])
+        assert gesture.status()["signs"] == ["three", "stop"]
 
-        classifier.scores = _scores("palm", 0.9)
-        assert _wait_until(lambda: deliveries == [FIST, None])
+        classifier.right_scores = _scores("call", 0.8)  # the right hand stops signing
+        assert _wait_until(lambda: deliveries == [(2, "stop"), (1, "three"), (2, None)])
+        assert gesture.status()["signs"] == ["three", None]
     finally:
         gesture.stop()
 
 
 def test_max_hands_caps_what_is_classified(loop: asyncio.AbstractEventLoop) -> None:
-    """With `max_hands=1` only the bigger (left, relaxed) hand is published: the right fist is
-    never seen, so nothing is delivered."""
-    deliveries: list[str | None] = []
-    classifier = PerHandClassifier(_scores("palm", 0.9), _scores("fist", 0.8))
+    """With `max_hands=1` only the bigger (left, sign-less) hand is published: the right hand's sign
+    is never seen, and only hand 1 is ever reported."""
+    deliveries: list[Delivery] = []
+    classifier = PerHandClassifier(_scores("call", 0.9), _scores("fist", 0.8))
     gesture = _two_hand_input(loop, classifier, deliveries, max_hands=1)
     gesture.start()
     try:
         assert _wait_until(
-            lambda: [h["label"] for h in gesture.status()["hands"]] == ["palm"]
+            lambda: [h["label"] for h in gesture.status()["hands"]] == ["call"]
         )
         time.sleep(0.1)  # many more frames at 100 fps
         assert gesture.status()["max_hands"] == 1
+        assert gesture.status()["signs"] == [None]
         assert len(gesture.status()["hands"]) == 1
         assert deliveries == []
+
+        classifier.scores = _scores("ok", 0.9)  # the one published hand signs
+        assert _wait_until(lambda: deliveries == [(1, "ok")])
     finally:
         gesture.stop()
 
@@ -345,7 +415,7 @@ def test_achieved_fps_is_measured_per_stage(loop: asyncio.AbstractEventLoop) -> 
     gesture = GestureInput(
         cast(ReachyMiniApi, api),
         loop,
-        on_gesture=lambda _value: None,
+        on_gesture=lambda _hand, _sign: None,
         fps=_FPS,
         models=GestureModels(
             detector=ScriptedDetector(),
@@ -381,18 +451,18 @@ def test_stop_joins_and_delivers_nothing_afterwards(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     api = FakeCameraApi()
-    deliveries: list[str | None] = []
+    deliveries: list[Delivery] = []
     gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.9)), deliveries)
     gesture.start()
     assert gesture.running
-    assert _wait_until(lambda: deliveries == [FIST])
+    assert _wait_until(lambda: deliveries == [(1, "stop")])
     gesture.stop()
     assert not gesture.running
     polls_then = api.polls
     api.frame = _EMPTY_FRAME  # would deliver None if anything were still running
     time.sleep(0.1)
     assert api.polls == polls_then  # the camera is no longer polled
-    assert deliveries == [FIST]
+    assert deliveries == [(1, "stop")]
     gesture.stop()  # idempotent
 
 
@@ -400,9 +470,9 @@ def test_classifier_failure_is_reported_not_fatal(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     """A raising classifier (the model-load failure case) lands in status()["error"] and the graph
-    keeps running: once it works again, the fist is delivered."""
+    keeps running: once it works again, the sign is delivered."""
     api = FakeCameraApi()
-    deliveries: list[str | None] = []
+    deliveries: list[Delivery] = []
     classifier = ScriptedClassifier(_scores("fist", 0.9))
     classifier.raise_with = "model download failed"
     gesture = _input(loop, api, classifier, deliveries)
@@ -413,7 +483,7 @@ def test_classifier_failure_is_reported_not_fatal(
         )
         assert deliveries == []
         classifier.raise_with = None
-        assert _wait_until(lambda: deliveries == [FIST])
+        assert _wait_until(lambda: deliveries == [(1, "stop")])
     finally:
         gesture.stop()
 
@@ -422,10 +492,10 @@ def test_failing_consumer_does_not_kill_the_watcher(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     api = FakeCameraApi()
-    seen: list[str | None] = []
+    seen: list[Delivery] = []
 
-    def on_gesture(value: str | None) -> None:
-        seen.append(value)
+    def on_gesture(hand: int, value: str | None) -> None:
+        seen.append((hand, value))
         raise RuntimeError("consumer broke")
 
     gesture = GestureInput(
@@ -440,10 +510,10 @@ def test_failing_consumer_does_not_kill_the_watcher(
     )
     gesture.start()
     try:
-        assert _wait_until(lambda: seen == [FIST])
+        assert _wait_until(lambda: seen == [(1, "stop")])
         api.frame = _EMPTY_FRAME
         assert _wait_until(
-            lambda: seen == [FIST, None]
+            lambda: seen == [(1, "stop"), (1, None)]
         )  # still watching after the raise
     finally:
         gesture.stop()
@@ -458,7 +528,7 @@ def test_snapshots_save_what_each_stage_last_consumed(
     """Before any frame: a warning, nothing written. Once frames flow: the detector snapshot is the
     full frame, the classifier snapshot the hand crop, named `snapshot_<stage>_<ts>[_i].jpg`."""
     api = FakeCameraApi()
-    deliveries: list[str | None] = []
+    deliveries: list[Delivery] = []
     gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.9)), deliveries)
     when = datetime(2026, 9, 17, 14, 30, 5, tzinfo=UTC)
 
@@ -468,7 +538,7 @@ def test_snapshots_save_what_each_stage_last_consumed(
     gesture.start()
     try:
         assert _wait_until(
-            lambda: deliveries == [FIST]
+            lambda: deliveries == [(1, "stop")]
         )  # both stages have consumed a frame
         detector = gesture.save_detector_snapshot(tmp_path, when)
         classifier = gesture.save_classifier_snapshot(tmp_path, when)
@@ -584,13 +654,12 @@ def test_camera_source_paces_polls_to_fps(loop: asyncio.AbstractEventLoop) -> No
 @pytest.mark.parametrize(
     ("old", "new", "expected"),
     [
-        (None, FIST, True),  # raised
-        (FIST, None, False),  # lowered
-        (FIST, FIST, False),  # still up
-        (None, None, False),  # still down
+        (None, "stop", True),  # shown
+        ("two", "three", True),  # replaced by another sign, no gap
+        ("stop", None, False),  # gone
+        ("stop", "stop", False),  # still shown
+        (None, None, False),  # still nothing
     ],
 )
-def test_fist_raised_predicate(
-    old: str | None, new: str | None, expected: bool
-) -> None:
-    assert fist_raised(old, new) is expected
+def test_sign_shown_predicate(old: str | None, new: str | None, expected: bool) -> None:
+    assert sign_shown(old, new) is expected

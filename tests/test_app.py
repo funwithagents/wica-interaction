@@ -42,7 +42,7 @@ from reachy_mini_interaction_wica.app import (
 )
 from reachy_mini_interaction_wica.app_ui import display_entry
 from reachy_mini_interaction_wica.config import AppConfig, VisionConfig
-from reachy_mini_interaction_wica.gesture_input import FIST, GestureModels
+from reachy_mini_interaction_wica.gesture_input import GestureModels
 
 
 class FakeReachyMiniApi:
@@ -767,7 +767,7 @@ def test_main_requires_a_config_path(
     assert built == []  # no robot was ever constructed
 
 
-# --- Vision in: the fist gesture input (specs/gesture-input.md, "App integration") -------------
+# --- Vision in: the hand-sign input (specs/gesture-input.md, "App integration") ----------------
 
 
 class _ScriptedDetector:
@@ -783,13 +783,17 @@ class _ScriptedDetector:
 
 
 class _ScriptedClassifier:
-    labels = ("fist", "palm")
+    """Scores one label (`fist` ⇒ the `stop` sign by default) against the unmapped `call`, so a low
+    score means "no sign at all", not another sign."""
 
-    def __init__(self, fist: float) -> None:
+    labels = ("fist", "call")
+
+    def __init__(self, fist: float, label: str = "fist") -> None:
         self.fist = fist
+        self.label = label
 
     def classify(self, image_bgr: np.ndarray) -> dict[str, float]:
-        return {"fist": self.fist, "palm": 1.0 - self.fist}
+        return {self.label: self.fist, "call": 1.0 - self.fist}
 
     def close(self) -> None:
         pass
@@ -808,44 +812,80 @@ def _vision_system(
     )
 
 
-def _fist_steps(reactions: ReactionLog) -> int:
-    """How many reasoning steps the raised fist triggered, read off the reaction labels (each step
+def _sign_steps(reactions: ReactionLog, hand: int) -> int:
+    """How many reasoning steps a sign on *hand* triggered, read off the reaction labels (each step
     is labelled by its trigger through `display_entry`)."""
-    return sum("fist raised" in label for label, _ in reactions.snapshot().choices)
+    return sum(
+        f"✋ hand {hand}:" in label and "no sign" not in label
+        for label, _ in reactions.snapshot().choices
+    )
 
 
-def test_raised_fist_wakes_the_agent_with_the_fist_in_its_prompt() -> None:
-    """The robot camera → pipeline → `hand_gesture` → one reasoning step whose prompt says the fist
-    is up; the fist held over many frames wakes the agent only once, and lowering it does not."""
+def test_a_sign_wakes_the_agent_with_every_hand_in_its_prompt() -> None:
+    """The robot camera → pipeline → `hand_gesture_1` → one reasoning step whose prompt names the
+    sign that hand shows (and says the other hand shows none); the sign held over many frames wakes
+    the agent only once, and it going away does not wake it at all."""
     fake_api = FakeReachyMiniApi()
     classifier = _ScriptedClassifier(fist=0.9)
     system = _vision_system(fake_api, classifier, _say_once("okay, stopping"))
     try:
         assert system.gesture is not None
-        assert system.wica is not None and system.wica.world.is_registered(
-            "hand_gesture"
-        )
+        assert system.wica is not None
+        # One entry per hand the pipeline can publish (`max_hands`, 2 by default).
+        assert system.wica.world.is_registered("hand_gesture_1")
+        assert system.wica.world.is_registered("hand_gesture_2")
+        assert not system.wica.world.is_registered("hand_gesture_3")
         _, reactions = _wire(system)
         _start(system)
         assert _wait_until(lambda: fake_api.said == ["okay, stopping"])
-        assert system.wica.world.get("hand_gesture") == FIST
+        assert system.wica.world.get("hand_gesture_1") == "stop"
+        assert system.wica.world.get("hand_gesture_2") is None
         prompt = reactions.prompt_text(0)
-        assert prompt is not None and "holding up a fist" in prompt
+        assert prompt is not None
+        assert 'hand 1 is showing the "stop" sign' in prompt
+        assert "hand 2 is not showing a sign" in prompt
 
-        # Still up, many frames later: no second fist step (the `say` finishing re-triggers one
-        # step of its own — WICA's completion re-trigger — which is labelled by the say, not the fist).
+        # Still shown, many frames later: no second step for it (the `say` finishing re-triggers one
+        # step of its own — WICA's completion re-trigger — which is labelled by the say, not a sign).
         polls_then = fake_api.camera_polls
         assert _wait_until(lambda: fake_api.camera_polls >= polls_then + 10)
-        assert _fist_steps(reactions) == 1
+        assert _sign_steps(reactions, 1) == 1
 
-        # Lowered: the entry updates (silently), the agent is not woken.
+        # Gone: the entry updates (silently), the agent is not woken.
         classifier.fist = 0.1
-        assert _wait_until(lambda: system.wica.world.get("hand_gesture") is None)  # type: ignore[union-attr]
+        assert _wait_until(lambda: system.wica.world.get("hand_gesture_1") is None)  # type: ignore[union-attr]
         polls_then = fake_api.camera_polls
         assert _wait_until(lambda: fake_api.camera_polls >= polls_then + 10)
-        assert _fist_steps(reactions) == 1
-        assert not any("lowered" in label for label, _ in reactions.snapshot().choices)
+        assert _sign_steps(reactions, 1) == 1
+        assert not any("no sign" in label for label, _ in reactions.snapshot().choices)
         assert fake_api.said == ["okay, stopping"]
+    finally:
+        _shutdown(system)
+
+
+def test_another_sign_wakes_the_agent_again() -> None:
+    """A hand switching sign with no sign-less frame between is a second trigger: `sign_shown` fires
+    on `stop → five` too, and the new prompt carries the new sign."""
+    fake_api = FakeReachyMiniApi()
+    classifier = _ScriptedClassifier(fist=0.9)
+    # One step per trigger, each speaking: the second is the one the new sign wakes.
+    script = [
+        {"tool_calls": [{"name": "say", "args": {"text": "okay, stopping"}}]},
+        {"tool_calls": [{"name": "say", "args": {"text": "five it is"}}]},
+    ]
+    system = _vision_system(fake_api, classifier, script)
+    try:
+        assert system.wica is not None
+        _, reactions = _wire(system)
+        _start(system)
+        assert _wait_until(lambda: fake_api.said == ["okay, stopping"])
+        classifier.label = "palm"  # stop → five, no gap
+        assert _wait_until(
+            lambda: system.wica.world.get("hand_gesture_1") == "five"  # type: ignore[union-attr]
+        )
+        assert _wait_until(lambda: fake_api.said == ["okay, stopping", "five it is"])
+        assert system.wica.world.get("hand_gesture_1") == "five"
+        assert _sign_steps(reactions, 1) == 2
     finally:
         _shutdown(system)
 
@@ -860,14 +900,14 @@ def test_vision_is_off_without_a_config_section() -> None:
     try:
         assert system.gesture is None
         assert system.wica is not None
-        assert not system.wica.world.is_registered("hand_gesture")
+        assert not system.wica.world.is_registered("hand_gesture_1")
         assert not any(m.startswith("Vision:") for m in system.missing)
     finally:
         _shutdown(system)
 
 
 def test_vision_section_present_but_disabled_builds_nothing() -> None:
-    """`enabled: false` (the default) with the robot up: no gesture input, no `hand_gesture`
+    """`enabled: false` (the default) with the robot up: no gesture input, no `hand_gesture_<n>`
     entry — the section can sit in the file, tuned, without vision running."""
     fake_api = FakeReachyMiniApi()
     system = build_system(
@@ -878,7 +918,7 @@ def test_vision_section_present_but_disabled_builds_nothing() -> None:
     try:
         assert system.gesture is None
         assert system.wica is not None
-        assert not system.wica.world.is_registered("hand_gesture")
+        assert not system.wica.world.is_registered("hand_gesture_1")
         assert not any(m.startswith("Vision:") for m in system.missing)
     finally:
         _shutdown(system)
@@ -902,8 +942,8 @@ def test_vision_max_hands_reaches_the_gesture_input() -> None:
 
 
 def test_vision_needs_the_robot() -> None:
-    """No robot ⇒ no camera ⇒ no gesture input and no `hand_gesture` entry (the agent is never
-    told about a fist it cannot see); the banner carries only the robot line."""
+    """No robot ⇒ no camera ⇒ no gesture input and no `hand_gesture_<n>` entry (the agent is never
+    told about hands it cannot see); the banner carries only the robot line."""
     system = build_system(
         _config(script=[], vision=VisionConfig(enabled=True)),
         api=cast(ReachyMiniApi, FakeReachyMiniApi(raise_on_enter="no robot")),
@@ -912,7 +952,7 @@ def test_vision_needs_the_robot() -> None:
     try:
         assert system.gesture is None
         assert system.wica is not None
-        assert not system.wica.world.is_registered("hand_gesture")
+        assert not system.wica.world.is_registered("hand_gesture_1")
         assert [m for m in system.missing if m.startswith("Vision:")] == []
     finally:
         _shutdown(system)

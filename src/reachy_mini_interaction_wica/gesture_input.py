@@ -1,13 +1,15 @@
-"""Vision-in: the robot camera → hand/gesture pipeline → the ``hand_gesture`` fist input.
+"""Vision-in: the robot camera → hand/gesture pipeline → the ``hand_gesture_<n>`` sign inputs.
 
 The vision half of the app's perception. ``RobotCameraSource`` polls the bridge's
 ``get_camera_frame()`` as a ``vision-modules`` ``FrameSource``; ``GestureInput`` runs the library's
 hand stage + HaGRID gesture classifier over it (up to ``max_hands`` hands per frame) and reduces
-each result to one value — ``"fist"`` when any hand's validated label is ``fist``, else ``None`` —
-delivering it to the injected ``on_gesture`` callback **on change only**. The app wires that
-callback to ``world.update("hand_gesture", value)`` on an entry whose trigger predicate,
-``fist_raised``, wakes the agent only on ``None → fist``. The library perceives, this module decides; nothing here touches
-WICA. See specs/gesture-input.md.
+**each hand** to one value of the app's own sign vocabulary — ``SIGNS`` maps the classifier's labels
+onto ``"stop"``, ``"like"``, ``"dislike"``, ``"ok"``, ``"mute"`` and the counts ``"one"`` …
+``"five"``; anything unmapped, unconfident or absent is ``None`` — delivering ``(hand, sign)`` to the
+injected ``on_gesture`` callback **on change only, per hand**. The app wires that callback to
+``world.update(f"hand_gesture_{hand}", sign)`` on entries whose trigger predicate, ``sign_shown``,
+wakes the agent whenever a hand shows a sign (never when one goes away). The library perceives, this
+module decides; nothing here touches WICA. See specs/gesture-input.md.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from os import PathLike
@@ -40,10 +42,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-OnGesture = Callable[[str | None], None]
+# (hand number, 1…max_hands; that hand's sign, or None for "no sign")
+OnGesture = Callable[[int, str | None], None]
 
-# The one gesture recognised: HaGRID's class name, verbatim (never remapped by the library).
-FIST = "fist"
+# The app's sign vocabulary: HaGRID class (the library reports them verbatim) → the value the World
+# carries. Several classes collapse onto one sign — a fist and a flat hand both mean "stop", and
+# `peace` / `rock` / `two_up` all show two fingers — and the counts are named by fingers, so `palm`
+# is "five". `call` is the one class left unmapped (it reduces to `None`, like an unconfident or
+# absent hand). Hardcoded for now: the prompt and the persona depend on it (specs/gesture-input.md,
+# "The reduction: label → sign, per hand").
+SIGNS: Mapping[str, str] = {
+    "fist": "stop",
+    "stop": "stop",
+    "stop_inverted": "stop",
+    "like": "like",
+    "dislike": "dislike",
+    "ok": "ok",
+    "mute": "mute",
+    "one": "one",
+    "two_up": "two",
+    "two_up_inverted": "two",
+    "peace": "two",
+    "peace_inverted": "two",
+    "rock": "two",
+    "three": "three",
+    "three2": "three",
+    "four": "four",
+    "palm": "five",
+}
 
 # Bound on one camera poll hop to the loop. The bridge runs the SDK read off the loop, so a poll is
 # normally a few ms; a session that stalls longer than this is reported as a capture error rather
@@ -61,13 +87,15 @@ def snapshot_path(folder: str | PathLike[str], stage_name: str, now: datetime) -
     return Path(folder) / f"snapshot_{stage_name}_{now:%Y%m%d%H%M%S}.jpg"
 
 
-def fist_raised(old: str | None, new: str | None) -> bool:
-    """The ``hand_gesture`` trigger predicate: only a fist going *up* wakes the agent.
+def sign_shown(old: str | None, new: str | None) -> bool:
+    """The ``hand_gesture_<n>`` trigger predicate: only a sign being *shown* wakes the agent.
 
-    ``None → fist`` triggers; ``fist → None`` (lowered) updates the entry silently; ``fist → fist``
-    never fires (and never reaches the World anyway — ``GestureInput`` delivers changes only).
+    ``None → "two"`` triggers, and so does ``"two" → "three"`` (a hand switching sign with no
+    sign-less frame between). A sign going away (``"two" → None``) updates the entry silently, and an
+    unchanged sign never fires (it never reaches the World anyway — ``GestureInput`` delivers changes
+    only).
     """
-    return new == FIST and old != FIST
+    return new is not None and new != old
 
 
 class RobotCameraSource:
@@ -181,16 +209,20 @@ class GestureModels:
 
 
 class GestureInput:
-    """Runs the hand + gesture pipeline over the robot camera and delivers fist changes.
+    """Runs the hand + gesture pipeline over the robot camera and delivers each hand's sign changes.
 
     Graph: ``RobotCameraSource → StreamProvider → HandStage → GestureClassifier``, every stage at
-    ``fps``, plus a watcher thread (also at ``fps``) that reduces each new classifier result to
-    ``"fist"`` (a fist on any published hand) / ``None`` and calls ``on_gesture`` only when that
-    value changes from the last one
-    delivered (starting at ``None``, matching the World entry's initial value). ``threshold`` is the
+    ``fps``, plus a watcher thread (also at ``fps``) that reduces each new classifier result to one
+    value per hand slot — ``SIGNS[label]`` for a validated, mapped label, else ``None`` — and calls
+    ``on_gesture(hand, sign)`` only for the hands whose value changed from the last one delivered for
+    *that* hand (all starting at ``None``, matching the World entries' initial value). Hand ``n`` is
+    the library's ``hands[n-1]``: the same physical hand while it stays in view, but slots are
+    compacted when a hand leaves, so a remaining hand can move down a slot (specs/gesture-input.md,
+    "Hands are slots, not identities"). ``threshold`` is the
     library's own validation rule — a hand's label is its top class only at or above it — so this
     module adds no second one. ``max_hands`` is always passed to the hand stage (never the library's
-    default), so what the robot looks at is the app's setting. ``start``/``stop`` are synchronous and idempotent (threads, like the
+    default), so what the robot looks at is the app's setting, and it is also how many hands are
+    reported. ``start``/``stop`` are synchronous and idempotent (threads, like the
     library's ``Pipeline``); ``status()`` is the cheap read the UI timer polls.
     """
 
@@ -235,7 +267,8 @@ class GestureInput:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._gesture: str | None = None  # last delivered value
+        # Last delivered value per hand slot, indexed 0-based (hand n is `_signs[n - 1]`).
+        self._signs: list[str | None] = [None] * max_hands
         # Every hand of the latest result, in the library's slot order: (validated label, top score).
         self._seen: tuple[tuple[str | None, float], ...] = ()
 
@@ -264,20 +297,20 @@ class GestureInput:
         return self._thread is not None
 
     def status(self) -> dict:
-        """What the Vision line renders: the last delivered value, each hand's latest label/score (slot
+        """What the Vision line renders: every hand's last delivered sign, each hand's latest label/score (slot
         order — entry *i* stays the same physical hand while it is in view), the hand cap, the
         target rate and each node's achieved rate — the camera stream, the hand stage, the
         classifier (``None`` until a full sampling window has passed) — the camera's capture health,
         and the last stage error (the classifier's first — a failed model load lands there),
         ``None`` when healthy."""
         with self._lock:
-            gesture, seen = self._gesture, self._seen
+            signs, seen = list(self._signs), self._seen
             stream_fps = self._stream_meter.fps
             hand_fps, classifier_fps = self._hand_meter.fps, self._classifier_meter.fps
         error = self._gestures.last_error or self._hands.last_error
         return {
             "running": self.running,
-            "gesture": gesture,
+            "signs": signs,
             "hands": [
                 {"label": label, "confidence": confidence} for label, confidence in seen
             ],
@@ -348,20 +381,26 @@ class GestureInput:
                 seen_hands = tuple(
                     (hand.label, hand.confidence) for hand in result.hands
                 )
-                # Any hand counts: slot 0 is merely the hand that appeared first, not the one that
-                # matters, and two fists are still one stop sign.
-                value = FIST if any(label == FIST for label, _ in seen_hands) else None
+                # One value per slot, whether or not that hand is in the frame: a hand that left
+                # reads `None`, like one showing nothing the vocabulary names.
+                values = [
+                    SIGNS.get(seen_hands[i][0] or "") if i < len(seen_hands) else None
+                    for i in range(self._max_hands)
+                ]
                 with self._lock:
                     self._seen = seen_hands
-                    changed = value != self._gesture
-                    if changed:
-                        self._gesture = value
-                if changed:
-                    self._deliver(value)
+                    changes = [
+                        (i + 1, value)
+                        for i, value in enumerate(values)
+                        if value != self._signs[i]
+                    ]
+                    self._signs = values
+                for hand, value in changes:  # outside the lock: a consumer may be slow
+                    self._deliver(hand, value)
             self._stop_event.wait(max(self._interval - (time.monotonic() - t0), 0.0))
 
-    def _deliver(self, value: str | None) -> None:
+    def _deliver(self, hand: int, value: str | None) -> None:
         try:
-            self._on_gesture(value)
+            self._on_gesture(hand, value)
         except Exception:  # the watcher must survive a failing consumer
-            logger.exception("on_gesture(%r) failed", value)
+            logger.exception("on_gesture(%d, %r) failed", hand, value)

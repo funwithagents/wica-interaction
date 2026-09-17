@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,8 +42,6 @@ from wica.contrib.gradio import (
     world_state_panel,
 )
 
-from reachy_mini_interaction_wica.gesture_input import FIST
-
 if TYPE_CHECKING:
     from reachy_mini_interaction_wica.app import AppSystem
 
@@ -51,6 +50,16 @@ if TYPE_CHECKING:
 _SAY_COMMAND_NAME = "say"
 
 _NO_LIVE_SPEECH = "(no speech yet)"
+
+# The World keys of the per-hand sign entries (`hand_gesture_1`, …) — see specs/gesture-input.md.
+_HAND_GESTURE_KEY = re.compile(r"^hand_gesture_(\d+)$")
+
+
+def _hand_number(key: str) -> int | None:
+    """The hand number of a `hand_gesture_<n>` entry key, or `None` for any other key."""
+    match = _HAND_GESTURE_KEY.match(key)
+    return int(match.group(1)) if match is not None else None
+
 
 # Default folder for the Vision snapshot buttons: a `snapshots/` folder under the working directory
 # (the hand demo defaults to its own script's folder; an app run from its checkout gets the same).
@@ -64,10 +73,12 @@ def display_entry(entry: WorldEntry) -> EntryDisplay | None:
     value = entry.current.value
     if entry.key == "speech_input":
         return EntryDisplay(f'🗣️ "{value}"')
-    if entry.key == "hand_gesture":
-        # The fist input: only the raised fist ever triggers (and so shows in the transcript); the
-        # lowered one can still label a reaction whose prompt carried it.
-        return EntryDisplay("✊ fist raised" if value == FIST else "🖐️ fist lowered")
+    hand = _hand_number(entry.key)
+    if hand is not None:
+        # The hand-sign inputs: only a sign being shown ever triggers (and so shows in the
+        # transcript); a hand going sign-less can still label a reaction whose prompt carried it.
+        sign = value if isinstance(value, str) else "no sign"
+        return EntryDisplay(f"✋ hand {hand}: {sign}")
     if isinstance(value, CommandExecution) and value.name == _SAY_COMMAND_NAME:
         # The voice: title it by channel and show what the robot set out to say as the body.
         return EntryDisplay("🗣️ say", str(value.args.get("text", "")))
@@ -120,7 +131,7 @@ def _hand(label: str | None, confidence: float) -> str:
 
 def tick_vision(system: AppSystem) -> str:
     """Refresh the Vision line: whether the gesture input runs, every hand's raw top label and score
-    in slot order (or "no hand") under the configured cap, the last delivered fist state, each node's achieved rate next to the
+    in slot order (or "no hand") under the configured cap, every hand's last delivered sign, each node's achieved rate next to the
     configured one — the camera stream's poll rate, the two stages' target (the hand demo's
     readout) — and any camera / stage error."""
     gesture = system.gesture
@@ -131,11 +142,14 @@ def tick_vision(system: AppSystem) -> str:
         f"#{i} {_hand(hand['label'], hand['confidence'])}"
         for i, hand in enumerate(status["hands"], start=1)
     )
-    fist = "✊ fist raised" if status["gesture"] == FIST else "no fist"
+    signs = ", ".join(
+        f"#{hand} {sign if sign is not None else '—'}"
+        for hand, sign in enumerate(status["signs"], start=1)
+    )
     target = status["target_fps"]
     status_md = (
         f"**Vision:** {'running' if status['running'] else 'stopped'} · "
-        f"**hands (max {status['max_hands']}):** {seen or 'no hand'} · **stop sign:** {fist} · "
+        f"**hands (max {status['max_hands']}):** {seen or 'no hand'} · **signs:** {signs} · "
         f"**stream:** {_fps(status['stream_fps'])} (poll {target:g}) · "
         f"**hand stage:** {_fps(status['hand_fps'])} (target {target:g}) · "
         f"**classifier:** {_fps(status['classifier_fps'])} (target {target:g})"

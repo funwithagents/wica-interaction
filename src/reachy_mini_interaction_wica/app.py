@@ -65,10 +65,9 @@ from reachy_mini_interaction_wica.app_ui import build_ui
 from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
 from reachy_mini_interaction_wica.config import AppConfig, load_config
 from reachy_mini_interaction_wica.gesture_input import (
-    FIST,
     GestureInput,
     GestureModels,
-    fist_raised,
+    sign_shown,
 )
 from reachy_mini_interaction_wica.robot_control import (
     RobotControl,
@@ -91,14 +90,19 @@ def _speech_input(value: Any, previous: Any) -> Content:
     return [TextPart(f'The person said to you: "{value}"')]
 
 
-def _hand_gesture(value: Any, previous: Any) -> Content:
-    """Render the `hand_gesture` entry into the prompt — ambient state in every step, so the agent
-    always knows whether the fist is still up (specs/gesture-input.md, "In the prompt"). Only the
-    `None → fist` change triggers a step (`fist_raised`); the lowered fist renders as the `None`
-    line on the next one."""
-    if value == FIST:
-        return [TextPart("The person is holding up a fist — the stop sign.")]
-    return [TextPart("The person is not holding up a fist.")]
+def _hand_gesture(hand: int) -> Callable[[Any, Any], Content]:
+    """The `serialize_fn` of hand *hand*'s entry — ambient state in every step, so the agent always
+    knows what each hand currently shows (specs/gesture-input.md, "In the prompt"). Only a sign being
+    *shown* triggers a step (`sign_shown`); a hand that drops or relaxes renders as the `None` line
+    on the next one. What a sign *means* is deliberately not said here, nor in the persona (except
+    `stop`): the agent reads it from the interaction."""
+
+    def serialize(value: Any, previous: Any) -> Content:
+        if value is None:
+            return [TextPart(f"The person's hand {hand} is not showing a sign.")]
+        return [TextPart(f'The person\'s hand {hand} is showing the "{value}" sign.')]
+
+    return serialize
 
 
 @dataclass(frozen=True)
@@ -121,7 +125,7 @@ class AppSystem:
     wica: Wica | None
     bridge: AsrBridge | None
     voice: VoiceOutput | None
-    # Vision-in: the fist gesture input over the robot camera; None without a `vision` config
+    # Vision-in: the hand-sign input over the robot camera; None without a `vision` config
     # section or without the robot (its camera). See specs/gesture-input.md.
     gesture: GestureInput | None
     # The robot's emotion names, fetched once at build (specs/robot-control.md, "The agent knows the
@@ -268,9 +272,9 @@ def build_system(
         except ValueError as exc:
             missing.append(f"ASR: {exc}")
 
-    # --- Vision in: the fist gesture input over the robot camera, only with `vision.enabled` and
+    # --- Vision in: the hand-sign input over the robot camera, only with `vision.enabled` and
     # a robot (no api ⇒ no camera) and an agent (there is nothing else to deliver to). The World
-    # entry is registered only then, so a vision-less run never tells the model about a fist it
+    # entries are registered only then, so a vision-less run never tells the model about hands it
     # cannot see. Construction loads no model and touches no camera (both happen on start()), so a
     # failure here is a programming/config error — still a banner line, never a crash. -----------
     gesture: GestureInput | None = None
@@ -278,21 +282,24 @@ def build_system(
     if vision is not None and vision.enabled and robot is not None and wica is not None:
         world = wica.world
 
-        def _deliver_gesture(value: str | None) -> None:
-            # Change-only deliveries from the watcher thread; the entry's trigger predicate keeps
-            # only the raised fist waking the agent. Dropped while the agent is not running.
+        def _deliver_gesture(hand: int, value: str | None) -> None:
+            # Per-hand change-only deliveries from the watcher thread; the entries' trigger predicate
+            # keeps only a sign being shown waking the agent. Dropped while the agent is not running.
             if wica is not None and wica.is_running:
-                world.update("hand_gesture", value)
+                world.update(f"hand_gesture_{hand}", value)
 
         try:
-            world.register(
-                "hand_gesture",
-                str,
-                serialize_fn=_hand_gesture,
-                triggers_llm_call=True,
-                trigger_condition_fn=fist_raised,
-                bypass_coalescing=True,  # a stop sign acts now, not after the coalescing window
-            )
+            # One entry per hand the pipeline can publish, so two hands are two states the agent
+            # reads side by side rather than one merged signal. Coalescing is *not* bypassed: two
+            # hands changing on the same frame then make one reasoning step, not two.
+            for hand in range(1, vision.max_hands + 1):
+                world.register(
+                    f"hand_gesture_{hand}",
+                    str,
+                    serialize_fn=_hand_gesture(hand),
+                    triggers_llm_call=True,
+                    trigger_condition_fn=sign_shown,
+                )
             gesture = GestureInput(
                 robot,
                 loop,

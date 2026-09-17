@@ -111,7 +111,7 @@ class _Gesture:
     def __init__(self, **status: Any) -> None:
         base = {
             "running": True,
-            "gesture": None,
+            "signs": [None, None],
             "hands": [],
             "max_hands": 2,
             "target_fps": 5.0,
@@ -141,20 +141,27 @@ def _system_with_gesture(gesture: _Gesture | None) -> AppSystem:
     )
 
 
-def test_display_entry_labels_the_fist_input() -> None:
-    assert display_entry(_entry("hand_gesture", "fist")) == EntryDisplay(
-        "✊ fist raised"
+def test_display_entry_labels_each_hand_sign_input() -> None:
+    assert display_entry(_entry("hand_gesture_1", "stop")) == EntryDisplay(
+        "✋ hand 1: stop"
     )
-    assert display_entry(_entry("hand_gesture", None)) == EntryDisplay("🖐️ fist lowered")
+    assert display_entry(_entry("hand_gesture_2", "two")) == EntryDisplay(
+        "✋ hand 2: two"
+    )
+    assert display_entry(_entry("hand_gesture_1", None)) == EntryDisplay(
+        "✋ hand 1: no sign"
+    )
+    # A key that only looks like one: the generic default (None) still applies.
+    assert display_entry(_entry("hand_gesture_left", "stop")) is None
 
 
 def test_vision_line_without_gesture_input_says_off() -> None:
     assert "off" in tick_vision(_system_with_gesture(None))
 
 
-def test_vision_line_shows_hand_label_score_and_stop_sign() -> None:
+def test_vision_line_shows_hand_label_score_and_signs() -> None:
     no_hand = tick_vision(_system_with_gesture(_Gesture()))
-    assert "running" in no_hand and "no fist" in no_hand
+    assert "running" in no_hand and "signs: #1 —, #2 —" in no_hand.replace("**", "")
     assert "hands (max 2): no hand" in no_hand.replace("**", "")
     # Before the first sampling window the achieved rates are a placeholder, the target shows.
     assert "stream: — fps (poll 5)" in no_hand.replace("**", "")
@@ -170,38 +177,40 @@ def test_vision_line_shows_hand_label_score_and_stop_sign() -> None:
     assert "hand stage: 4.9 fps (target 5)" in rates
     assert "classifier: 2.5 fps (target 5)" in rates
 
-    fist = tick_vision(
+    signing = tick_vision(
         _system_with_gesture(
-            _Gesture(gesture="fist", hands=[{"label": "fist", "confidence": 0.87}])
+            _Gesture(
+                signs=["stop", None], hands=[{"label": "fist", "confidence": 0.87}]
+            )
         )
-    )
-    assert "#1 fist (0.87)" in fist and "✊ fist raised" in fist
+    ).replace("**", "")
+    assert "#1 fist (0.87)" in signing and "signs: #1 stop, #2 —" in signing
 
-    # A hand whose top class missed the threshold: the raw score shows, unvalidated, no fist.
+    # A hand whose top class missed the threshold: the raw score shows, unvalidated, no sign.
     weak = tick_vision(
         _system_with_gesture(_Gesture(hands=[{"label": None, "confidence": 0.5}]))
-    )
-    assert "#1 below threshold (0.50)" in weak and "no fist" in weak
+    ).replace("**", "")
+    assert "#1 below threshold (0.50)" in weak and "signs: #1 —, #2 —" in weak
 
 
 def test_vision_line_lists_every_hand_in_slot_order() -> None:
-    """Two hands: each shows under its slot number — a relaxed first hand, a fist on the second, a
-    hand at the frame edge with no crop — under the configured cap."""
+    """Three slots: each hand shows under its number — a hand classified outside the vocabulary, a
+    fist on the second, a hand at the frame edge with no crop — under the configured cap."""
     line = tick_vision(
         _system_with_gesture(
             _Gesture(
-                gesture="fist",
+                signs=[None, "stop", None],
                 max_hands=3,
                 hands=[
-                    {"label": "palm", "confidence": 0.91},
+                    {"label": "call", "confidence": 0.91},
                     {"label": "fist", "confidence": 0.77},
                     {"label": None, "confidence": 0.0},
                 ],
             )
         )
     ).replace("**", "")
-    assert "hands (max 3): #1 palm (0.91), #2 fist (0.77), #3 no crop" in line
-    assert "✊ fist raised" in line
+    assert "hands (max 3): #1 call (0.91), #2 fist (0.77), #3 no crop" in line
+    assert "signs: #1 —, #2 stop, #3 —" in line
 
 
 def test_vision_line_flags_camera_and_stage_errors() -> None:

@@ -15,13 +15,13 @@ tests:
 
 ## Purpose
 
-The **vision-in** half of the app — the first perception besides speech. The robot's own camera is run through the [`vision-modules`](../../vision-modules/README.md) hand pipeline (hand detection + HaGRID gesture classification, up to `max_hands` hands per frame), and one gesture is turned into a WICA Input: a **raised fist**, the person's "stop" sign. Holding up a fist — with either hand — wakes the agent, which the persona tells to stop whatever it is doing. Every other gesture, and no hand at all, is "no fist".
+The **vision-in** half of the app — the first perception besides speech. The robot's own camera is run through the [`vision-modules`](../../vision-modules/README.md) hand pipeline (hand detection + HaGRID gesture classification, up to `max_hands` hands per frame), and each hand's gesture is turned into a WICA Input: a small, app-owned **hand-sign vocabulary** — `stop`, `like`, `dislike`, `ok`, `mute`, and the counts `one` … `five` — one World entry **per hand**. Showing a sign wakes the agent, which decides for itself whether (and how) it matters in the current interaction; only `stop` carries an explicit persona rule (stop whatever it is doing). No hand, an unconfident classification, or a HaGRID class outside the vocabulary is "no sign".
 
-`vision-modules` *perceives* and this module *decides*: the library reports a label per frame with a score; this module owns the threshold, the "fist or not" reduction, the change detection, and the rule for which changes wake the agent. It is the one place that knows how a stream of per-frame classifications maps onto "the person is showing the stop sign", so the rest of the app (the WICA agent, the UI) never touches the vision pipeline directly.
+`vision-modules` *perceives* and this module *decides*: the library reports a label per frame with a score; this module owns the threshold, the label → sign reduction, the per-hand change detection, and the rule for which changes wake the agent. It is the one place that knows how a stream of per-frame classifications maps onto "the person is showing a sign", so the rest of the app (the WICA agent, the UI) never touches the vision pipeline directly.
 
 Two consumers read from it, as for speech ([asr-bridge.md](asr-bridge.md)):
 
-- **The WICA World** — the current fist state is the `hand_gesture` entry the agent reads in every prompt, and a fist being *raised* triggers a reasoning step.
+- **The WICA World** — each hand's current sign is a `hand_gesture_<n>` entry the agent reads in every prompt, and a hand *showing a new sign* triggers a reasoning step.
 - **The Gradio UI** — each published hand's current label/confidence and the pipeline's health are displayed (see [app.md](app.md), "Vision line").
 
 ## Decided
@@ -65,76 +65,97 @@ class RobotCameraSource:
 Exactly the hand demo's graph, with the robot as source and one consumer:
 
 ```
-RobotCameraSource ─▶ StreamProvider ─▶ HandStage ─▶ GestureClassifier ─▶ watcher ─▶ on_gesture(value)
+RobotCameraSource ─▶ StreamProvider ─▶ HandStage ─▶ GestureClassifier ─▶ watcher ─▶ on_gesture(hand, sign)
    (poll at fps)      (no mirror)       (fps)          (fps, threshold)     (fps)
 ```
 
 - `HandStage(provider, target_fps=fps, max_hands=max_hands, detector=…)` — `max_hands` from the config ([configuration.md](configuration.md), `vision.max_hands`, default **2**, the library's own default), default padding, rank (`"area"`) and hysteresis; the shipped MediaPipe detector unless one is injected. The app always passes `max_hands` explicitly, so a change of the library's default never silently changes what the robot looks at.
-  - **Why 2 by default.** `max_hands` is also MediaPipe's tracking capacity ([vision-modules hand.md](../../vision-modules/specs/hand.md), "One count"): with 1, the detector locks onto the first hand it sees and a second hand is not even considered until the first is lost — so a person whose relaxed hand was tracked first could raise a fist with the other and never be seen. With 2, both hands of the person are detected, published and classified. The price is up to one more ViT pass per frame while two hands are in view; if that starves the classifier on a slow machine (the Vision line's achieved rate shows it), `max_hands: 1` is the fallback.
+  - **Why 2 by default.** `max_hands` is also MediaPipe's tracking capacity ([vision-modules hand.md](../../vision-modules/specs/hand.md), "One count"): with 1, the detector locks onto the first hand it sees and a second hand is not even considered until the first is lost — so a person whose relaxed hand was tracked first could sign with the other and never be seen. With 2, both hands of the person are detected, published and classified — and each gets its own World entry (below), so `max_hands` is also the number of `hand_gesture_<n>` entries. The price is up to one more ViT pass per frame while two hands are in view; if that starves the classifier on a slow machine (the Vision line's achieved rate shows it), `max_hands: 1` is the fallback.
 - `GestureClassifier(hands, target_fps=fps, threshold=threshold, device=device, classifier=…)` — the shipped HaGRID ViT unless one is injected. `threshold` is the library's own validation rule: a hand's `label` is its top class **only when its score reaches the threshold**, else `None`. The app's default is **0.55** ([configuration.md](configuration.md), `vision.threshold`), and the module adds no second threshold of its own.
 - **Models load lazily**, on each stage's worker thread, at the first frame (that is the library's rule — see [vision-modules pipeline.md](../../vision-modules/specs/pipeline.md)). The first run downloads the MediaPipe bundle and the ~340 MB ViT; until they are ready the classifier publishes nothing and the status shows no label. A load failure (no network on first run, a missing extra) is recorded by the library in the stage's `last_error` and the graph keeps running; this module surfaces it in `status()["error"]` — vision never crashes the app.
 - **Nothing here touches the World or WICA.** The `on_gesture` callback is injected, like `AsrBridge`'s `on_final_segment`, so the module is unit-testable with a recording callback, a fake api, and scripted detector/classifier seams (no camera, no model).
 
-### The reduction: fist or nothing
+### The reduction: label → sign, per hand
 
-The watcher thread samples `gestures.latest()` at `fps`, once per new `frame_id`, and reduces each `Gesture` result to one value:
+The watcher thread samples `gestures.latest()` at `fps`, once per new `frame_id`, and reduces **each hand slot** `n` (1 … `max_hands`) to one value through a hardcoded table, `SIGNS` (HaGRID class → sign):
 
-| Classifier result (every published hand) | Value |
+| HaGRID label(s) | Sign |
 |---|---|
-| no hand in frame (`present=False`) | `None` |
-| no hand's `label` is `"fist"` (each is `None` — top score below threshold, or no crop — or another class) | `None` |
-| **any** hand's `label` is `"fist"` | `"fist"` |
+| `fist`, `stop`, `stop_inverted` | `"stop"` |
+| `like` | `"like"` |
+| `dislike` | `"dislike"` |
+| `ok` | `"ok"` |
+| `mute` | `"mute"` |
+| `one` | `"one"` |
+| `two_up`, `two_up_inverted`, `peace`, `peace_inverted`, `rock` | `"two"` |
+| `three`, `three2` | `"three"` |
+| `four` | `"four"` |
+| `palm` | `"five"` |
 
-**Any** hand counts, not only `hands[0]`. The library keeps `hands[i]` on the same physical hand while it stays in view (slot stability), so `first` is simply the hand that appeared first, not the one that matters — a fist in slot 1 next to a relaxed hand in slot 0 is still a stop sign. Two fists are one stop sign: the value is a flag, not a count, so which hand (or how many) holds the fist changes nothing delivered — a fist moving from one hand to the other without a fist-free frame in between is `fist → fist`, no delivery. Only `fist` is recognised for now: the other 17 HaGRID classes are deliberately folded into "no fist" rather than exposed, so the World holds a stop signal, not a gesture vocabulary (extending to more gestures is open question 1).
+17 of the model's 18 classes are mapped; `call` is not, and neither is anything else the classifier might report. For slot `n`:
+
+| Classifier result | Value of hand `n` |
+|---|---|
+| fewer than `n` hands published (no hand in frame, or only `n-1`) | `None` |
+| `hands[n-1].label` is `None` (top score below threshold, or no crop) | `None` |
+| `hands[n-1].label` is a class outside `SIGNS` (`call`) | `None` |
+| `hands[n-1].label` is in `SIGNS` | `SIGNS[label]` |
+
+The signs are the **app's** vocabulary, not HaGRID's: several classes that mean the same thing to a person collapse to one value (a fist or a flat hand are both `stop`; `peace`, `rock`, `two_up` all show two fingers), and the counts are named by fingers (`palm` → `five`). The mapping is a module constant for now (not a config knob) — the prompt and the persona depend on it.
+
+**Hands are slots, not identities.** Hand `n` is the library's `hands[n-1]`, which stays the same physical hand while it stays in view ([vision-modules hand.md](../../vision-modules/specs/hand.md), "slot stability"). But the published tuple is **compacted**: when hand 1 leaves while hand 2 stays, the remaining hand becomes `hands[0]`. That shows up as hand 1 taking hand 2's sign (a change, so it triggers) and hand 2 going to `None`. Accepted for now — the agent is told the numbers are not left/right (see "What the agent does with it"); stable identity is open question 5.
+
+**No cross-hand logic here.** Each hand is reported on its own: two hands showing `three` and `two` are two entries, not a `five`. Whether to combine them (a count on two hands, a sign on each) is left to the agent, deliberately not explained in the prompt.
 
 ### Change detection and the trigger rule (the core decision)
 
 Two rules, at two layers:
 
-1. **The module delivers changes only.** `on_gesture(value)` is called when the reduced value differs from the last delivered one — `None → "fist"` and `"fist" → None` — never on every frame (the classifier runs at 5 fps; the World must not be churned at that rate with an unchanged value, which would also spam the World panel). The last-delivered value starts at `None`, matching the entry's initial `None`, so the first "no fist" frames deliver nothing. The app wires `on_gesture` to `world.update("hand_gesture", value)`.
-2. **The World triggers on a raised fist only.** The app registers the entry with a trigger predicate, so the direction of the change is decided where WICA decides it:
+1. **The module delivers changes only, per hand.** `on_gesture(hand, value)` is called for hand `n` when its reduced value differs from the last one delivered **for that hand** — including a change to `None` — never on every frame (the classifier runs at 5 fps; the World must not be churned at that rate with an unchanged value, which would also spam the World panel). Every hand's last-delivered value starts at `None`, matching the entries' initial `None`, so the first sign-less frames deliver nothing. A frame that changes both hands delivers twice (hand 1 then hand 2). The app wires `on_gesture` to `world.update(f"hand_gesture_{hand}", value)`.
+2. **The World triggers on a sign being shown, never on it going away.** The app registers one entry per hand, each with the same trigger predicate:
 
    ```python
-   FIST = "fist"
+   def sign_shown(old: str | None, new: str | None) -> bool:
+       return new is not None and new != old
 
 
-   def fist_raised(old: str | None, new: str | None) -> bool:
-       return new == FIST and old != FIST
-
-
-   wica.world.register(
-       "hand_gesture",
-       str,
-       serialize_fn=_hand_gesture,
-       triggers_llm_call=True,
-       trigger_condition_fn=fist_raised,
-       bypass_coalescing=True,
-   )
+   for n in range(1, max_hands + 1):
+       wica.world.register(
+           f"hand_gesture_{n}",
+           str,
+           serialize_fn=hand_gesture_line(n),
+           triggers_llm_call=True,
+           trigger_condition_fn=sign_shown,
+       )
    ```
 
-   So `None → fist` wakes the agent; `fist → None` updates the entry silently (the agent sees the fist is down on its next step); `fist → fist` never reaches the World at all (rule 1), and even if it did the predicate would not fire. `bypass_coalescing=True` because a stop sign must act **now**, not after WICA's ~200 ms coalescing window (the exact case [wica inputs.md](../../wica-framework/specs/inputs.md) names for it).
+   So `None → two` wakes the agent, and so does `two → three` (a direct switch, no sign-less frame between); `three → None` updates the entry silently (the agent sees the hand is down on its next step); `two → two` never reaches the World at all (rule 1), and even if it did the predicate would not fire.
+
+   **Coalescing is not bypassed** (no `bypass_coalescing`, unlike the fist-only version): signs ride WICA's ~200 ms coalescing window like every other Input ([wica inputs.md](../../wica-framework/specs/inputs.md)). That is what folds two hands changing on the same frame — or a speech segment closing alongside a sign — into **one** reasoning step instead of two. The price is up to ~200 ms before a `stop` acts; revisit if that is felt on the robot.
 
 ### In the prompt: ambient state, not a one-shot event
 
-`hand_gesture` is rendered in **every** prompt (`include_in_prompt` default), not only on the step it triggers, so the agent always knows whether the fist is still up:
+Every `hand_gesture_<n>` entry is rendered in **every** prompt (`include_in_prompt` default), not only on the step it triggers, so the agent always knows what each hand currently shows:
 
-| Value | Rendered |
+| Value of hand `n` | Rendered |
 |---|---|
-| `None` | `The person is not holding up a fist.` |
-| `"fist"` | `The person is holding up a fist — the stop sign.` |
+| `None` | `The person's hand {n} is not showing a sign.` |
+| a sign | `The person's hand {n} is showing the "{sign}" sign.` |
 
-The `None` rendering is what the entry reads once the hand drops (rule 1 delivers that change), so the agent is never left believing a fist is still raised. The person-facing counterpart (`display_entry` in [app.md](app.md)) shows a raised fist as `✊ fist raised` and a lowered one as `🖐️ fist lowered`.
+The `None` rendering is what an entry reads once the hand drops or relaxes (rule 1 delivers that change), so the agent is never left believing a sign is still up. The person-facing counterpart (`display_entry` in [app.md](app.md)) shows `✋ hand {n}: {sign}` / `✋ hand {n}: no sign`.
 
 ### What the agent does with it — the persona
 
-The stop rule is **prompt text**, in [prompts/assistant.md](../prompts/assistant.md), not a guard in code: this module reports the sign, the agent decides. The persona says, in a "Stop sign" section: a raised fist means *stop what you are doing* — cancel every running Command (`cancel_command` on each running `say` / `play_emotion` / whatever is in flight) and start nothing new; then, per the existing "always answer out loud" rule, **say a short confirmation in the next turn** once the cancellation is observed done (the person asked for a stop and gets a spoken acknowledgement, not a silent halt); and if nothing was running, just acknowledge briefly. It also says not to issue the cancel and the confirmation in the same turn (the no-collision rule, [app.md](app.md)) and that the fist being lowered is not a request for anything — do not react to `fist lowered` on its own.
+The persona ([prompts/assistant.md](../prompts/assistant.md)) **describes the perception, not the reactions**. A "Hand signs" section says: you can see the person's hands; each `hand_gesture_<n>` state says which sign hand `n` shows — one of `stop`, `like`, `dislike`, `ok`, `mute`, `one`, `two`, `three`, `four`, `five` — or none; hand numbers follow the hands in view in the order they appeared and are not left/right. It does **not** say what `like`, `ok`, a count, or two hands at once mean, nor whether to respond: the agent decides from the interaction context whether a sign is meant for it and what to make of it (acknowledge it, use it as an answer, ignore it). That is deliberate — the point is to see how the agent interprets the signs unprompted, including whether it sums counts across hands when that makes sense.
 
-**A known limit** (WICA's, not this module's): the agent handles one reasoning step at a time and a trigger arriving mid-step is dropped, not queued. A running `say` is a Command, not a step, so a fist raised *while the robot speaks* does wake the agent — the common case. A fist raised while the model is still reasoning is lost; the person holds the fist a moment longer, lowers and raises it again, and the next `None → fist` triggers. Barge-in proper is deferred in WICA.
+**`stop` is the one exception**, keeping the explicit rule from the fist-only version: when any hand shows `stop`, stop what you are doing — cancel every running Command (`cancel_command` on each running `say` / `play_emotion` / whatever is in flight) and start nothing new; then, per the existing "always answer out loud" rule, **say a short confirmation in the next turn** once the cancellation is observed done; and if nothing was running, just acknowledge briefly. It also says not to issue the cancel and the confirmation in the same turn (the no-collision rule, [app.md](app.md)) and that a `stop` going away is not a request for anything.
+
+**A known limit** (WICA's, not this module's): the agent handles one reasoning step at a time and a trigger arriving mid-step is dropped, not queued. A running `say` is a Command, not a step, so a sign shown *while the robot speaks* does wake the agent — the common case. A sign shown while the model is still reasoning is lost; the person lowers and shows it again (or shows another), and the next change triggers. With a whole vocabulary this happens more often than with the fist alone; barge-in proper is deferred in WICA.
 
 ### `GestureInput`
 
 ```python
-OnGesture = Callable[[str | None], None]
+OnGesture = Callable[[int, str | None], None]  # (hand number 1…max_hands, sign or None)
 
 
 @dataclass(frozen=True)
@@ -175,11 +196,11 @@ class GestureInput:
     ) -> str: ...  # the crop(s) the classifier last classified
     def status(
         self,
-    ) -> dict: ...  # {"running", "gesture", "hands", "max_hands", "target_fps", "stream_fps", "hand_fps", "classifier_fps", "capture_error", "error"}
+    ) -> dict: ...  # {"running", "signs", "hands", "max_hands", "target_fps", "stream_fps", "hand_fps", "classifier_fps", "capture_error", "error"}
 ```
 
 - `start()` / `stop()` are **synchronous** (threads, like the library's `Pipeline`), called from the app's main/Gradio thread, never from the loop. `stop()` joins every thread; `close()` hooks release the models. Both are idempotent.
-- `status()` is a cheap read the UI timer polls: `gesture` is the last *delivered* value (`"fist"` / `None`), `hands` one `{"label", "confidence"}` per hand in the latest classifier result, **in the library's slot order** (so entry *i* stays the same physical hand while it is in view) — each hand's validated top class (`None` below threshold or with no crop) and raw top score (`0.0` with no crop); an empty list with no hand or no result yet — `max_hands` the configured cap, `target_fps` the configured rate, `stream_fps` / `hand_fps` / `classifier_fps` each node's **achieved** rate (below), `capture_error` the camera source's, and `error` the message of the last exception a stage recorded (`hands.last_error` or `gestures.last_error`, the classifier's first), `None` when healthy.
+- `status()` is a cheap read the UI timer polls: `signs` is the last *delivered* value of every hand, a list of length `max_hands` (`["two", None]`), `hands` one `{"label", "confidence"}` per hand in the latest classifier result, **in the library's slot order** (so entry *i* stays the same physical hand while it is in view) — each hand's validated top class (`None` below threshold or with no crop) and raw top score (`0.0` with no crop); an empty list with no hand or no result yet — `max_hands` the configured cap, `target_fps` the configured rate, `stream_fps` / `hand_fps` / `classifier_fps` each node's **achieved** rate (below), `capture_error` the camera source's, and `error` the message of the last exception a stage recorded (`hands.last_error` or `gestures.last_error`, the classifier's first), `None` when healthy.
 - **Achieved rates, the hand demo's way.** A stage's real rate is capped by its upstream and by the model's speed, so `target_fps` is a ceiling, not a fact. Every node's `published_count` increments exactly once per publish — the two stages' and the `StreamProvider`'s alike (the library's exact counter for this — `frame_id` would not do, it is inherited from the camera frame) — so the watcher samples the three counters once per window (`fps_window_s`, default 1 s) and keeps (Δcount / Δtime) as that node's rate; `None` until two samples exist. The stream's rate is the rate the robot camera actually delivered frames at (a `None` frame is not a publish), against the configured poll rate — the provider's `source_fps` would only echo `RobotCameraSource.fps()`, the poll rate, since the bridge reports no camera rate. The UI shows each next to its configured rate, so a camera returning nothing, or a classifier starved by a slow model, is visible at a glance.
 - `max_hands` must be `>= 1` (the library's `HandStage` raises `ValueError` otherwise; the config validates it first).
 - `device` is forwarded to the classifier: `None` lets the library pick (`mps` → `cuda` → `cpu`).
@@ -189,29 +210,33 @@ class GestureInput:
 
 See [app.md](app.md) for the composition; the rules this module imposes on it:
 
-- Built in `build_system` **only when** the config's `vision` section has `enabled: true` ([configuration.md](configuration.md)) **and** the robot is up (no api ⇒ no camera ⇒ no vision, like ASR and the mic). Built **after** WICA, so `on_gesture` resolves against a live agent; the `hand_gesture` entry is registered only in that case too, so a vision-less run does not tell the model about a fist it can never see. Construction never loads a model or touches the camera (both happen on `start()`), so the only build failure is a programming/config error; it is still caught into a `Vision: …` banner line rather than crashing.
-- `on_gesture` writes `world.update("hand_gesture", value)` guarded on a running agent (as `_deliver_speech` is): a value arriving before start or after teardown is dropped.
+- Built in `build_system` **only when** the config's `vision` section has `enabled: true` ([configuration.md](configuration.md)) **and** the robot is up (no api ⇒ no camera ⇒ no vision, like ASR and the mic). Built **after** WICA, so `on_gesture` resolves against a live agent; the `hand_gesture_1` … `hand_gesture_<max_hands>` entries are registered only in that case too, so a vision-less run does not tell the model about hands it can never see. Construction never loads a model or touches the camera (both happen on `start()`), so the only build failure is a programming/config error; it is still caught into a `Vision: …` banner line rather than crashing.
+- `on_gesture(hand, value)` writes `world.update(f"hand_gesture_{hand}", value)` guarded on a running agent (as `_deliver_speech` is): a value arriving before start or after teardown is dropped.
 - Started after `wica.start()` (with the ASR bridge), stopped in `_shutdown` right after `wica.close()` and **before** the api's `__aexit__` — the camera source polls the api on the loop, so it must be stopped while the media session is still open, exactly the reason the ASR bridge is stopped before the api. Its `stop()` is a synchronous join, so it is not hopped onto the loop; it is isolated like every other teardown step.
 
 ## Testing
 
 Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with a fake `ReachyMiniApi` whose `get_camera_frame()` returns synthetic frames and a scripted `HandDetector` / `ImageClassifier` (no camera, no model, no network), at a high `fps` so the tests run in well under a second:
 
-- Frames with a hand the classifier scores `fist` at ≥ threshold deliver `"fist"` exactly once, even across many frames.
-- Then frames with no hand deliver `None` once; a hand back at `fist` delivers `"fist"` again (`None → fist → None → fist` ⇒ three deliveries).
-- A `fist` score below the threshold delivers nothing; a hand classified as any other label delivers nothing (both stay `None`).
-- `status()` reports each hand's raw `label` / `confidence` even when the value is `None` (a sub-threshold fist shows `hands == [{"label": None, "confidence": 0.5}]`).
-- **Two hands** (a scripted detector returning two boxes, a classifier scoring each crop by its position): a fist on the *second* hand only delivers `"fist"`, and `hands` lists both in slot order; the fist moving to the other hand delivers nothing more; both hands relaxed delivers `None`. With `max_hands=1` the same frame publishes one hand.
+- Frames with a hand the classifier scores `like` at ≥ threshold deliver `(1, "like")` exactly once, even across many frames.
+- Then frames with no hand deliver `(1, None)` once; the hand back at `like` delivers `(1, "like")` again (`None → like → None → like` ⇒ three deliveries).
+- The table: every mapped label reduces to its sign (e.g. `fist` and `stop_inverted` → `"stop"`, `rock` → `"two"`, `three2` → `"three"`, `palm` → `"five"`), and a switch between two signs with no sign-less frame (`one → two`) delivers the new sign directly. Two labels mapping to the same sign (`peace → rock`) deliver nothing new.
+- An unconfident classification (score below the threshold) and an unmapped class (`call`) both deliver nothing (stay `None`).
+- `status()` reports each hand's raw `label` / `confidence` even when the value is `None` (a sub-threshold `like` shows `hands == [{"label": None, "confidence": 0.5}]`), and `signs` has one entry per `max_hands`.
+- **Two hands** (a scripted detector returning two boxes, a classifier scoring each crop by its position): a sign on the *second* hand only delivers `(2, sign)` and nothing for hand 1; different signs on both hands deliver one change each; hand 2 relaxing delivers `(2, None)` only; `hands` lists both in slot order. With `max_hands=1` the same frame publishes one hand and only hand 1 is ever delivered.
+- `sign_shown`: `None → x` and `x → y` fire; `x → None` and `x → x` do not.
 - With a short `fps_window_s`, `stream_fps` / `hand_fps` / `classifier_fps` go from `None` to a positive rate once frames flow, and `target_fps` is the configured rate.
 - Snapshots: before any frame both save methods return a `⚠️` line and write nothing; once frames flow, the detector snapshot writes `snapshot_HandStage_<ts>.jpg` (the full frame) and the classifier snapshot `snapshot_GestureClassifier_<ts>_0.jpg` (the crop), each reporting `Saved …`; with no hand in frame the classifier snapshot reports `no crop to save`; an unwritable folder reports the `OSError` instead of raising.
 - `RobotCameraSource`: `None` frames from the api are skipped (the provider keeps running and later frames arrive); a raising `get_camera_frame` sets `capture_error`, a later success clears it; `close()` makes `read()` return `None` promptly.
 - `stop()` joins the threads and the callback is not called afterwards.
-- In `tests/test_app.py`, with the fake api + `GestureModels`: a `None → fist` update on `hand_gesture` triggers a reasoning step whose prompt renders the fist line; `fist → None` does not trigger; a vision config with no robot builds no `GestureInput`; `enabled: false` builds none either (and registers no entry); teardown stops vision before the api exits.
-- `tests-e2e/test_gesture_input_live.py` runs the **real** models: a fake api serving `vision-modules`' bundled `hand_fist.jpg` fixture must deliver `"fist"`, and `no_hand.jpg` must not — skipped when the fixtures or the models are unavailable (see [testing.md](testing.md)).
+- In `tests/test_app.py`, with the fake api + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line (and the hand-1 "not showing a sign" line); `two → None` does not trigger; a vision config with no robot builds no `GestureInput`; `enabled: false` builds none either (and registers no entry); teardown stops vision before the api exits.
+- `tests-e2e/test_gesture_input_live.py` runs the **real** models: a fake api serving each of `vision-modules`' bundled photos must deliver its sign for hand 1 — `hand_fist.jpg` and `hand_stop.jpg` → `"stop"`, `hand_palm.jpg` → `"five"`, `hand_one.jpg` → `"one"`, `hand_three2.jpg` → `"three"` — and `no_hand.jpg` must deliver nothing — skipped when the fixtures or the models are unavailable (see [testing.md](testing.md)).
 
 ## Open questions
 
-1. **More gestures.** Only `fist` is mapped. Exposing more of HaGRID's vocabulary (a `palm`/`stop` as an alternative stop sign, `like`/`dislike` as feedback, `one`…`four` as choices) means the entry becomes a gesture rather than a fist flag and the trigger predicate grows a whitelist. Deferred until a second gesture has a use.
-2. **Debouncing.** A per-frame label can flicker between neighbouring classes (vision-modules gesture_classifier.md, open question 4), so a fist held at the threshold's edge could deliver `fist`/`None` repeatedly — each `None → fist` waking the agent. If observed, require N consecutive `fist` frames before delivering (a small counter in the watcher). Deferred until seen on the robot.
+1. **Tuning the vocabulary.** The `SIGNS` table is hardcoded and chosen by hand (`call` left out; `rock` counted as two fingers; `mute` its own sign). Once the agent's unprompted interpretations are observed on the robot, the table and the persona's one-line vocabulary may change — or move to config if it needs per-deployment tuning.
+2. **Debouncing.** A per-frame label can flicker between neighbouring classes (vision-modules gesture_classifier.md, open question 4), and a vocabulary makes that likelier than the fist alone: `stop` (fingers together) vs `five` (`palm`, fingers spread), `two` vs `three`, a hand at the threshold's edge flipping to `None` and back — each change to a sign waking the agent. If observed, require N consecutive identical frames before delivering (a small per-hand counter in the watcher). Deliberately deferred.
 3. **Showing the camera in the UI.** Only a status line is shown; the frame with the hand box (as in the hand demo) would be a natural debug panel, at the cost of a per-tick image round-trip. Deferred.
 4. **Vision without the robot.** A local webcam / browser source would let the vision path be developed with the `fake` backend (whose camera is a synthetic gradient — no hand). Deferred; the fake backend still exercises the plumbing.
+5. **Hand identity and handedness.** Entries are keyed by slot, and the library compacts slots when a hand leaves (see "Hands are slots, not identities"), so hand 2's sign can move to hand 1. Keying by `left` / `right` would need MediaPipe's handedness exposed on `Hand` ([vision-modules hand.md](../../vision-modules/specs/hand.md), open question 1) and a stable identity across gaps (open question 3 there). Deferred until the slot shift is seen to confuse the agent.
+6. **Coalescing for `stop`.** Signs no longer bypass the coalescing window, so `stop` waits up to ~200 ms. A separate `bypass_coalescing` entry for the stop sign alone is the fix if that latency is felt.

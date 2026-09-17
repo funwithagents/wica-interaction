@@ -25,7 +25,7 @@ _VISION_KEYS = frozenset({"enabled", "threshold", "fps", "max_hands", "device"})
 
 @dataclass(frozen=True)
 class VisionConfig:
-    """The optional `vision` section: the fist-gesture input over the robot camera (see
+    """The optional `vision` section: the hand-sign input over the robot camera (see
     specs/gesture-input.md). `vision-modules` has no config loader of its own, so this is the app's
     own small schema — its defaults are the library's (threshold 0.55, two hands) and the app's
     (5 fps for the camera poll, hand stage, and classifier alike; `device` None lets the classifier pick
