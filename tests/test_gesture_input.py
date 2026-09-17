@@ -22,7 +22,7 @@ import pytest
 from reachy_mini_bridge.api import ReachyMiniApi
 from vision_modules.hand import DetectedHand
 
-from reachy_mini_interaction_wica.gesture_input import (
+from wica_interaction.gesture_input import (
     SIGNS,
     GestureInput,
     GestureModels,

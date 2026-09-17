@@ -15,10 +15,10 @@ from wica import CommandExecution
 from wica.contrib.gradio import EntryDisplay
 from wica.world import WorldEntry, WorldEntryVersion
 
-from reachy_mini_interaction_wica.app import AppSystem
-from reachy_mini_interaction_wica.app_ui import display_entry, tick_asr, tick_vision
-from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
-from reachy_mini_interaction_wica.gesture_input import GestureInput
+from wica_interaction.app import AppSystem
+from wica_interaction.app_ui import display_entry, tick_asr, tick_vision
+from wica_interaction.asr_bridge import AsrBridge, RobotMicSource
+from wica_interaction.gesture_input import GestureInput
 
 
 def _entry(key: str, value: Any) -> WorldEntry:

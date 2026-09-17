@@ -18,7 +18,7 @@ from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
 from reachy_mini_bridge.api import ReachyMiniApi
 
-from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
+from wica_interaction.asr_bridge import AsrBridge, RobotMicSource
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:

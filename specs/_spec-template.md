@@ -1,6 +1,6 @@
 ---
 code:
-  - src/reachy_mini_interaction_wica/example.py
+  - src/wica_interaction/example.py
 tests:
   - tests/test_example.py
 ---

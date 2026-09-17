@@ -30,8 +30,8 @@ from vision_modules.hand import DetectedHand
 from wica.config import WicaConfig
 from wica.contrib.gradio import ReactionLog, TranscriptLog
 
-from reachy_mini_interaction_wica import app
-from reachy_mini_interaction_wica.app import (
+from wica_interaction import app
+from wica_interaction.app import (
     AppSystem,
     _degraded_system,
     _serve,
@@ -40,9 +40,9 @@ from reachy_mini_interaction_wica.app import (
     build_system,
     wire,
 )
-from reachy_mini_interaction_wica.app_ui import display_entry
-from reachy_mini_interaction_wica.config import AppConfig, VisionConfig
-from reachy_mini_interaction_wica.gesture_input import GestureModels
+from wica_interaction.app_ui import display_entry
+from wica_interaction.config import AppConfig, VisionConfig
+from wica_interaction.gesture_input import GestureModels
 
 
 class FakeReachyMiniApi:

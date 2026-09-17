@@ -10,7 +10,7 @@ from asr_engine.config import ASREngineConfig
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica.config import WicaConfig
 
-from reachy_mini_interaction_wica.config import AppConfig, VisionConfig, load_config
+from wica_interaction.config import AppConfig, VisionConfig, load_config
 
 
 def _composed(system_prompt_file: str = "prompts/assistant.md") -> dict:

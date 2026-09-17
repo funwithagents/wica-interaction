@@ -43,7 +43,7 @@ from wica.contrib.gradio import (
 )
 
 if TYPE_CHECKING:
-    from reachy_mini_interaction_wica.app import AppSystem
+    from wica_interaction.app import AppSystem
 
 # The output Command's name (VoiceOutput.say.__name__): the voice, whose execution item the hook
 # titles by channel with the spoken text as body.

@@ -61,19 +61,19 @@ from wica.config import (
 )
 from wica.contrib.gradio import TranscriptLog
 
-from reachy_mini_interaction_wica.app_ui import build_ui
-from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
-from reachy_mini_interaction_wica.config import AppConfig, load_config
-from reachy_mini_interaction_wica.gesture_input import (
+from wica_interaction.app_ui import build_ui
+from wica_interaction.asr_bridge import AsrBridge, RobotMicSource
+from wica_interaction.config import AppConfig, load_config
+from wica_interaction.gesture_input import (
     GestureInput,
     GestureModels,
     sign_shown,
 )
-from reachy_mini_interaction_wica.robot_control import (
+from wica_interaction.robot_control import (
     RobotControl,
     emotions_prompt_section,
 )
-from reachy_mini_interaction_wica.tts_output import VoiceOutput
+from wica_interaction.tts_output import VoiceOutput
 
 logger = logging.getLogger(__name__)
 

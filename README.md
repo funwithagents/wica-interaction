@@ -1,4 +1,4 @@
-# reachy-mini-interaction-wica
+# wica-interaction
 
 An interaction application for the [Reachy Mini](https://github.com/pollen-robotics/reachy_mini) robot, built on the **WICA** agentic framework. A person speaks to the robot; a WICA agent reasons over the conversation and the robot speaks and acts back — replying out loud, playing emotions, following the person's face, and managing its motors.
 
@@ -33,5 +33,5 @@ uv run pytest
 Run the app (opens the Gradio UI); `config.example.json` is a template, not a config to run unmodified — copy it, fill in the API keys (the agent's and ASR's — the committed voice is the local `pocket` model, which needs none, downloading its weights on first run), and point `reachy.backend` at what you're driving. As committed it targets a **headful `sim`** daemon (`"reachy": {"backend": "sim", "daemon": {"spawn": "auto", "headless": false}}`), which the bridge spawns itself and opens the MuJoCo viewer in (needs `mjpython` on `PATH` and an unlocked GUI session — see [reachy-mini-bridge docs/running-the-sim-daemon.md](../reachy-mini-bridge/docs/running-the-sim-daemon.md)); set `reachy.daemon.headless` to `true` for a windowless daemon. For the physical robot, change `reachy.backend` to `"real"` — the `reachy.daemon` block then spawns the daemon of a robot plugged in over USB (a wireless robot runs its own daemon: set `spawn` to `"never"` and point `reachy.robot.host` at it). For the offline `fake` backend, change it to `"fake"` **and delete the `reachy.daemon` block** (`fake` has no daemon, so the loader rejects spawning there). Either way keep `reachy.tts`, or the robot comes up without a voice:
 
 ```
-uv run reachy-mini-interaction-wica --config config.example.json
+uv run wica-interaction --config config.example.json
 ```

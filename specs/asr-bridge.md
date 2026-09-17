@@ -1,6 +1,6 @@
 ---
 code:
-  - src/reachy_mini_interaction_wica/asr_bridge.py
+  - src/wica_interaction/asr_bridge.py
 tests:
   - tests/test_asr_bridge.py
 ---

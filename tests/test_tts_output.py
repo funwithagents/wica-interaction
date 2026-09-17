@@ -16,7 +16,7 @@ from typing import Any, cast
 
 from reachy_mini_bridge.api import ReachyMiniApi
 
-from reachy_mini_interaction_wica.tts_output import VoiceOutput
+from wica_interaction.tts_output import VoiceOutput
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:

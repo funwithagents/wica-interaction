@@ -1,7 +1,7 @@
 ---
 code:
-  - src/reachy_mini_interaction_wica/gesture_input.py
-  - src/reachy_mini_interaction_wica/app.py
+  - src/wica_interaction/gesture_input.py
+  - src/wica_interaction/app.py
   - prompts/assistant.md
 tests:
   - tests/test_gesture_input.py

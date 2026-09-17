@@ -1,6 +1,6 @@
 ---
 code:
-  - src/reachy_mini_interaction_wica/tts_output.py
+  - src/wica_interaction/tts_output.py
 tests:
   - tests/test_tts_output.py
 ---

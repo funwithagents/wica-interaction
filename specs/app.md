@@ -1,7 +1,7 @@
 ---
 code:
-  - src/reachy_mini_interaction_wica/app.py
-  - src/reachy_mini_interaction_wica/app_ui.py
+  - src/wica_interaction/app.py
+  - src/wica_interaction/app_ui.py
   - prompts/assistant.md
 tests:
   - tests/test_app.py

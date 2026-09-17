@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from reachy_mini_bridge.api import ReachyMiniApi
 
-from reachy_mini_interaction_wica.gesture_input import GestureInput
+from wica_interaction.gesture_input import GestureInput
 
 # One delivery: (hand number, that hand's sign or None).
 Delivery = tuple[int, str | None]

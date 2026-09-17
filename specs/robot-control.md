@@ -1,6 +1,6 @@
 ---
 code:
-  - src/reachy_mini_interaction_wica/robot_control.py
+  - src/wica_interaction/robot_control.py
 tests:
   - tests/test_robot_control.py
 ---

@@ -3,16 +3,14 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _AGENTS_MD = _REPO_ROOT / "AGENTS.md"
-_PKG = _REPO_ROOT / "src" / "reachy_mini_interaction_wica"
+_PKG = _REPO_ROOT / "src" / "wica_interaction"
 _SPECS_DIR = _REPO_ROOT / "specs"
 
-# Matches link targets like `src/reachy_mini_interaction_wica/foo.py` anywhere in AGENTS.md.
+# Matches link targets like `src/wica_interaction/foo.py` or `src/wica_interaction/reachy/foo.py`
+# anywhere in AGENTS.md.
 _MODULE_LINK = re.compile(
-    r"src/reachy_mini_interaction_wica/([A-Za-z_][A-Za-z0-9_]*\.py)"
+    r"src/wica_interaction/((?:[a-z_]+/)*[A-Za-z_][A-Za-z0-9_]*\.py)"
 )
-
-# Package glue that isn't a spec'd concept, so it needs no owning spec.
-_NON_CONCEPT_MODULES = {"__init__.py"}
 
 
 def _mapped_modules() -> set[str]:
@@ -21,11 +19,13 @@ def _mapped_modules() -> set[str]:
 
 
 def _actual_modules() -> set[str]:
-    return {path.name for path in _PKG.glob("*.py")}
+    """Package-relative paths of every module: "config.py", "reachy/embodiment.py", ..."""
+    return {str(path.relative_to(_PKG)) for path in _PKG.rglob("*.py")}
 
 
 def _concept_modules() -> set[str]:
-    return _actual_modules() - _NON_CONCEPT_MODULES
+    """The modules a spec must govern — package glue (`__init__.py` at any depth) is exempt."""
+    return {m for m in _actual_modules() if Path(m).name != "__init__.py"}
 
 
 def test_agents_md_maps_exactly_the_package_modules():
@@ -51,7 +51,7 @@ def test_agents_md_maps_exactly_the_package_modules():
 #
 #     ---
 #     code:
-#       - src/reachy_mini_interaction_wica/example.py
+#       - src/wica_interaction/example.py
 #     tests:
 #       - tests/test_example.py
 #     ---
@@ -148,12 +148,12 @@ def test_every_concept_module_is_governed_by_a_spec():
     governed: set[str] = set()
     for spec in _spec_files():
         for rel in _parse_frontmatter(spec).get("code", []):
-            if rel.startswith("src/reachy_mini_interaction_wica/"):
-                governed.add(Path(rel).name)
+            if rel.startswith("src/wica_interaction/"):
+                governed.add(rel.removeprefix("src/wica_interaction/"))
 
     ungoverned = _concept_modules() - governed
     assert not ungoverned, (
         f"src package modules not named in any spec's `code:` frontmatter: {sorted(ungoverned)}. "
         "Add each to the frontmatter of the spec that governs it "
-        f"(package glue exempt from this rule: {sorted(_NON_CONCEPT_MODULES)})."
+        "(package glue — `__init__.py` — is exempt from this rule)."
     )

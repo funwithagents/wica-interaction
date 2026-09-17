@@ -1,40 +1,51 @@
 [project]
-name = "reachy-mini-interaction-wica"
+name = "wica-interaction"
 version = "0.1.0"
-description = "An interaction application for the Reachy Mini robot, built on the WICA agentic framework and driving the robot through reachy-mini-bridge."
+description = "A WICA interaction application: a person speaks to a WICA agent, which speaks (and acts) back through the embodiment it is launched with — the computer it runs on, or a Reachy Mini robot."
 readme = "README.md"
 authors = [
     { name = "Thibault Hervier", email = "thibault@fr2g.io" }
 ]
 requires-python = ">=3.12"
+# What every embodiment needs: the agent + its Gradio observability panels, speech in, the vision
+# plumbing, the page. `vision-modules` core is numpy + opencv only (its heavy models are the
+# `vision` extra below); `numpy` is imported directly by gesture_input.py.
 dependencies = [
-    # Speech in: the app runs its own ASR over the robot's echo-cancelled mic stream (the bridge
-    # embeds no ASR — see reachy-mini-bridge specs/audio.md). Providers are extras upstream; the
-    # `deepgram` extra matches the committed config.example.json (asr type "deepgram_v2").
-    "asr-engine[deepgram]",
-    # The robot: high-level interaction verbs (say, mic stream, play_emotion, head tracking, motors)
-    # over a real/sim/fake Reachy Mini. The bridge owns its own config (ReachyMiniConfig) and builds
-    # the voice itself from the `reachy.tts` block, on a tts-engine it carries as a base dependency.
-    # Its TTS providers are extras mirroring tts-engine's own one-to-one, so the extra to install is
-    # named by `reachy.tts.module.type`: `tts-pocket` matches the committed config.example.json
-    # (type "pocket") — the local model, no key and no network at synthesis time. Switching the
-    # config to the cloud provider means swapping this for `[tts-elevenlabs]`.
-    "reachy-mini-bridge[tts-pocket]",
-    # The anthropic extra pulls langchain-anthropic so the committed config.example.json (provider
-    # "anthropic") runs with just an API key set. Switch provider by editing the config and swapping
-    # that extra (see wica's optional-dependencies: openai, huggingface-hub). The gradio extra is not
-    # a provider: it makes `wica.contrib.gradio` importable — the reusable observability panels the
-    # UI places (core wica never imports Gradio).
-    "wica[anthropic,gradio]",
-    # Vision in: the hand stage + gesture classifier that turn the robot's camera frames into the
-    # fist gesture input (specs/gesture-input.md). The `hand` extra pulls mediapipe (hand detection)
-    # and torch/transformers (the HaGRID ViT classifier); the core package is numpy + opencv only.
-    "vision-modules[hand]",
+    "wica[gradio]",
+    "asr-engine",
+    "vision-modules",
     "gradio>=6",
+    "numpy",
+]
+
+[project.optional-dependencies]
+# One extra per embodiment, per optional feature, per provider (specs/project.md, "Extras"), so a
+# deployment installs only what it runs and a missing one surfaces as a banner line, not a crash.
+# The computer embodiment's voice: a local TTSEngine through the machine's speakers.
+computer = ["tts-engine"]
+# The computer's WebRTC echo cancellation / noise suppression (specs/audio-processing.md).
+audio-processing = ["aec-audio-processing>=1.0.1", "samplerate>=0.2.4"]
+# The Reachy Mini embodiment (pulls the upstream reachy-mini SDK through the bridge).
+reachy = ["reachy-mini-bridge"]
+# The hand-sign input: MediaPipe + the torch/transformers HaGRID classifier, either embodiment.
+vision = ["vision-modules[hand]"]
+# The agent provider the example configs select.
+anthropic = ["wica[anthropic]"]
+# The ASR provider the example configs select.
+deepgram = ["asr-engine[deepgram]"]
+# The two voices, for *both* embodiments (the bridge builds the robot's voice from the same
+# tts-engine): the cloud provider, and the local model (torch + a first-run weight download).
+tts-elevenlabs = ["tts-engine[elevenlabs]"]
+tts-pocket = ["tts-engine[pocket]"]
+all = [
+    "wica-interaction[computer,audio-processing,reachy,vision,anthropic,deepgram,tts-elevenlabs,tts-pocket]",
 ]
 
 [project.scripts]
-reachy-mini-interaction-wica = "reachy_mini_interaction_wica.app:main"
+wica-interaction-computer = "wica_interaction.computer.app:main"
+wica-interaction-reachy = "wica_interaction.reachy.app:main"
+# Temporary, until the lifecycle moves to system.py and each embodiment gets its own entry point.
+wica-interaction = "wica_interaction.app:main"
 
 [build-system]
 requires = ["uv_build>=0.11.29,<0.12.0"]
@@ -45,25 +56,23 @@ dev = [
     "pyright>=1.1.411",
     "pytest>=9.1.1",
     "ruff>=0.16.6",
-    # The reachy-mini-bridge `sim` extra pulls the upstream MuJoCo mockup so the `sim` robot backend
-    # runs locally (dev/manual testing against a simulated robot). Kept dev-only — a real-robot
-    # deployment needs none of it — mirroring the bridge's own dev setup.
+    # Every extra, so the default `uv sync` runs both entry points and the whole test tier.
+    "wica-interaction[all]",
+    # The sim robot backend (the upstream MuJoCo mockup) for manual/e2e testing against a simulated
+    # robot; kept dev-only — a real-robot deployment needs none of it.
     "reachy-mini-bridge[sim]",
 ]
 
 [tool.uv.sources]
+# Self-reference for the `dev` group above, which pulls the package's own extras.
+wica-interaction = { workspace = true }
 # First-party sibling repos, consumed as local path dependencies during development (a pinned git
-# URL later, per specs/project.md). They live in the parent folder. There is deliberately no
-# tts-engine entry: the bridge names it by GitHub URL as a *direct reference* in its own metadata,
-# which uv sources cannot redirect from here — a path entry would either be ignored (sources reach
-# only this project's own dependencies, not transitive ones) or, if tts-engine were re-declared
-# directly, fail the resolve with "conflicting URLs for package `tts-engine`". So tts-engine
-# resolves from GitHub and the lock pins its commit; `uv lock --upgrade-package tts-engine` picks
-# up newer ones. To drive a local checkout here, add an uncommitted
-# `[tool.uv] override-dependencies = ["tts-engine[pocket] @ file:///abs/path/to/tts-engine"]`
-# (the extra must be repeated there — an override replaces the whole requirement).
+# URL later, per specs/project.md). They live in the parent folder. `tts-engine` is one of them:
+# the bridge names it by plain name in its own metadata, so this source resolves the whole graph —
+# the bridge's own requirement included — from ../tts-engine.
 wica = { path = "../wica-framework", editable = true }
 asr-engine = { path = "../asr-engine", editable = true }
+tts-engine = { path = "../tts-engine", editable = true }
 reachy-mini-bridge = { path = "../reachy-mini-bridge", editable = true }
 vision-modules = { path = "../vision-modules", editable = true }
 

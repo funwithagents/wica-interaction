@@ -32,7 +32,7 @@ from reachy_mini_bridge.api import ReachyMiniApi
 from reachy_mini_bridge.fake_reachy_mini import FakeReachyMini
 from wica import Command
 
-from reachy_mini_interaction_wica.robot_control import (
+from wica_interaction.robot_control import (
     RobotControl,
     emotions_prompt_section,
 )
