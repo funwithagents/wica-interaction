@@ -19,12 +19,14 @@ from pathlib import Path
 from typing import Any, Self, cast
 
 import gradio as gr
+import numpy as np
 import pytest
 from asr_engine.config import ASREngineConfig
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
 from reachy_mini_bridge.api import ReachyMiniApi
 from reachy_mini_bridge.config import ReachyMiniConfig
+from vision_modules.hand import DetectedHand
 from wica.config import WicaConfig
 from wica.contrib.gradio import ReactionLog, TranscriptLog
 
@@ -39,7 +41,8 @@ from reachy_mini_interaction_wica.app import (
     wire,
 )
 from reachy_mini_interaction_wica.app_ui import display_entry
-from reachy_mini_interaction_wica.config import AppConfig
+from reachy_mini_interaction_wica.config import AppConfig, VisionConfig
+from reachy_mini_interaction_wica.gesture_input import FIST, GestureModels
 
 
 class FakeReachyMiniApi:
@@ -73,6 +76,15 @@ class FakeReachyMiniApi:
 
     async def say(self, text: str) -> None:
         self.said.append(text)
+
+    # The perception slice: the camera frame the gesture input polls (a bright synthetic frame the
+    # scripted detector below reads as "a hand"; set `frame` to None for "nothing buffered").
+    frame: np.ndarray | None = np.full((48, 64, 3), 200, dtype=np.uint8)
+    camera_polls = 0
+
+    async def get_camera_frame(self) -> np.ndarray | None:
+        self.camera_polls += 1
+        return self.frame
 
     # The robot-control slice: enough for a wiring test that a registered action command routes here.
     async def get_motors_state(self) -> str:
@@ -126,10 +138,16 @@ class FakeASREngine:
         return {"running": self.started}
 
 
-def _config(*, script: list[dict], reachy: ReachyMiniConfig | None = None) -> AppConfig:
+def _config(
+    *,
+    script: list[dict],
+    reachy: ReachyMiniConfig | None = None,
+    vision: VisionConfig | None = None,
+) -> AppConfig:
     """An `AppConfig` whose WICA section is the `fake` provider running *script*.
 
-    The ASR section is unused here (tests inject fakes), so it is `None` behind a cast.
+    The ASR section is unused here (tests inject fakes), so it is `None` behind a cast. `vision`
+    is off unless given (the gesture input is built only with a section).
     """
     wica = WicaConfig.from_dict(
         {
@@ -145,6 +163,7 @@ def _config(*, script: list[dict], reachy: ReachyMiniConfig | None = None) -> Ap
         wica=wica,
         asr_engine=cast(ASREngineConfig, None),
         reachy=reachy if reachy is not None else ReachyMiniConfig(backend="fake"),
+        vision=vision,
     )
 
 
@@ -645,3 +664,154 @@ def test_main_requires_a_config_path(
     assert exc.value.code == 2
     assert "--config" in capsys.readouterr().err
     assert built == []  # no robot was ever constructed
+
+
+# --- Vision in: the fist gesture input (specs/gesture-input.md, "App integration") -------------
+
+
+class _ScriptedDetector:
+    """One centered hand in any non-black frame."""
+
+    def detect(self, image_bgr: np.ndarray, ts: float) -> tuple[DetectedHand, ...]:
+        if int(image_bgr[0, 0, 0]) == 0:
+            return ()
+        return (DetectedHand(box=(0.25, 0.25, 0.75, 0.75), score=0.95),)
+
+    def close(self) -> None:
+        pass
+
+
+class _ScriptedClassifier:
+    labels = ("fist", "palm")
+
+    def __init__(self, fist: float) -> None:
+        self.fist = fist
+
+    def classify(self, image_bgr: np.ndarray) -> dict[str, float]:
+        return {"fist": self.fist, "palm": 1.0 - self.fist}
+
+    def close(self) -> None:
+        pass
+
+
+def _vision_system(
+    fake_api: FakeReachyMiniApi, classifier: _ScriptedClassifier, script: list[dict]
+) -> AppSystem:
+    return build_system(
+        _config(script=script, vision=VisionConfig(enabled=True, fps=100.0)),
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+        gesture_models=GestureModels(
+            detector=_ScriptedDetector(), classifier=classifier
+        ),
+    )
+
+
+def _fist_steps(reactions: ReactionLog) -> int:
+    """How many reasoning steps the raised fist triggered, read off the reaction labels (each step
+    is labelled by its trigger through `display_entry`)."""
+    return sum("fist raised" in label for label, _ in reactions.snapshot().choices)
+
+
+def test_raised_fist_wakes_the_agent_with_the_fist_in_its_prompt() -> None:
+    """The robot camera → pipeline → `hand_gesture` → one reasoning step whose prompt says the fist
+    is up; the fist held over many frames wakes the agent only once, and lowering it does not."""
+    fake_api = FakeReachyMiniApi()
+    classifier = _ScriptedClassifier(fist=0.9)
+    system = _vision_system(fake_api, classifier, _say_once("okay, stopping"))
+    try:
+        assert system.gesture is not None
+        assert system.wica is not None and system.wica.world.is_registered(
+            "hand_gesture"
+        )
+        _, reactions = _wire(system)
+        _start(system)
+        assert _wait_until(lambda: fake_api.said == ["okay, stopping"])
+        assert system.wica.world.get("hand_gesture") == FIST
+        prompt = reactions.prompt_text(0)
+        assert prompt is not None and "holding up a fist" in prompt
+
+        # Still up, many frames later: no second fist step (the `say` finishing re-triggers one
+        # step of its own — WICA's completion re-trigger — which is labelled by the say, not the fist).
+        polls_then = fake_api.camera_polls
+        assert _wait_until(lambda: fake_api.camera_polls >= polls_then + 10)
+        assert _fist_steps(reactions) == 1
+
+        # Lowered: the entry updates (silently), the agent is not woken.
+        classifier.fist = 0.1
+        assert _wait_until(lambda: system.wica.world.get("hand_gesture") is None)  # type: ignore[union-attr]
+        polls_then = fake_api.camera_polls
+        assert _wait_until(lambda: fake_api.camera_polls >= polls_then + 10)
+        assert _fist_steps(reactions) == 1
+        assert not any("lowered" in label for label, _ in reactions.snapshot().choices)
+        assert fake_api.said == ["okay, stopping"]
+    finally:
+        _shutdown(system)
+
+
+def test_vision_is_off_without_a_config_section() -> None:
+    fake_api = FakeReachyMiniApi()
+    system = build_system(
+        _config(script=[]),
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+    )
+    try:
+        assert system.gesture is None
+        assert system.wica is not None
+        assert not system.wica.world.is_registered("hand_gesture")
+        assert not any(m.startswith("Vision:") for m in system.missing)
+    finally:
+        _shutdown(system)
+
+
+def test_vision_section_present_but_disabled_builds_nothing() -> None:
+    """`enabled: false` (the default) with the robot up: no gesture input, no `hand_gesture`
+    entry — the section can sit in the file, tuned, without vision running."""
+    fake_api = FakeReachyMiniApi()
+    system = build_system(
+        _config(script=[], vision=VisionConfig(fps=100.0)),
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+    )
+    try:
+        assert system.gesture is None
+        assert system.wica is not None
+        assert not system.wica.world.is_registered("hand_gesture")
+        assert not any(m.startswith("Vision:") for m in system.missing)
+    finally:
+        _shutdown(system)
+
+
+def test_vision_needs_the_robot() -> None:
+    """No robot ⇒ no camera ⇒ no gesture input and no `hand_gesture` entry (the agent is never
+    told about a fist it cannot see); the banner carries only the robot line."""
+    system = build_system(
+        _config(script=[], vision=VisionConfig(enabled=True)),
+        api=cast(ReachyMiniApi, FakeReachyMiniApi(raise_on_enter="no robot")),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+    )
+    try:
+        assert system.gesture is None
+        assert system.wica is not None
+        assert not system.wica.world.is_registered("hand_gesture")
+        assert [m for m in system.missing if m.startswith("Vision:")] == []
+    finally:
+        _shutdown(system)
+
+
+def test_shutdown_stops_vision_before_the_robot_exits() -> None:
+    fake_api = FakeReachyMiniApi()
+    system = _vision_system(fake_api, _ScriptedClassifier(fist=0.1), [])
+    try:
+        _wire(system)
+        _start(system)
+        assert system.gesture is not None and system.gesture.running
+        assert _wait_until(lambda: fake_api.camera_polls > 0)
+    finally:
+        _shutdown(system)
+    assert system.gesture is not None and not system.gesture.running
+    assert fake_api.exited
+    polls_then = fake_api.camera_polls
+    time.sleep(0.05)
+    assert fake_api.camera_polls == polls_then  # nothing polls the exited robot

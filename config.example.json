@@ -31,6 +31,15 @@
       }
     },
     "audio": { "xvf3800": null },
-    "motion": { "presence": true, "breathing": true, "wobbling": true, "tracking": true }
-  }
+    "motion": {
+      "presence": true,
+      "breathing": true,
+      "wobbling": true,
+      "tracking": true }
+  },
+  "vision": {
+    "enabled": true,
+    "threshold": 0.55,
+    "fps": 5,
+    "device": null }
 }

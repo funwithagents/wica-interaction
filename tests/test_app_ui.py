@@ -16,8 +16,9 @@ from wica.contrib.gradio import EntryDisplay
 from wica.world import WorldEntry, WorldEntryVersion
 
 from reachy_mini_interaction_wica.app import AppSystem
-from reachy_mini_interaction_wica.app_ui import display_entry, tick_asr
+from reachy_mini_interaction_wica.app_ui import display_entry, tick_asr, tick_vision
 from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
+from reachy_mini_interaction_wica.gesture_input import GestureInput
 
 
 def _entry(key: str, value: Any) -> WorldEntry:
@@ -84,6 +85,7 @@ def _system_with_mic(capture_error: str | None) -> AppSystem:
         wica=None,
         bridge=bridge,
         voice=None,
+        gesture=None,
         missing=[],
         submit_speech=lambda _text: None,
     )
@@ -97,3 +99,92 @@ def test_asr_status_line_flags_a_dead_mic_stream() -> None:
     _, stalled, _ = tick_asr(_system_with_mic("mic stream ended"))
     assert "running" in stalled
     assert "capture" in stalled and "mic stream ended" in stalled
+
+
+# --- The Vision line (specs/app.md, "Vision line"; specs/gesture-input.md) --------------------
+
+
+class _Gesture:
+    """Stands in for a `GestureInput` — only `status()` is read."""
+
+    def __init__(self, **status: Any) -> None:
+        base = {
+            "running": True,
+            "gesture": None,
+            "label": None,
+            "confidence": 0.0,
+            "target_fps": 5.0,
+            "stream_fps": None,
+            "hand_fps": None,
+            "classifier_fps": None,
+            "capture_error": None,
+            "error": None,
+        }
+        self._status = {**base, **status}
+
+    def status(self) -> dict[str, Any]:
+        return dict(self._status)
+
+
+def _system_with_gesture(gesture: _Gesture | None) -> AppSystem:
+    return AppSystem(
+        loop=None,
+        api=None,
+        wica=None,
+        bridge=None,
+        voice=None,
+        gesture=cast(GestureInput, gesture) if gesture is not None else None,
+        missing=[],
+        submit_speech=lambda _text: None,
+    )
+
+
+def test_display_entry_labels_the_fist_input() -> None:
+    assert display_entry(_entry("hand_gesture", "fist")) == EntryDisplay(
+        "✊ fist raised"
+    )
+    assert display_entry(_entry("hand_gesture", None)) == EntryDisplay("🖐️ fist lowered")
+
+
+def test_vision_line_without_gesture_input_says_off() -> None:
+    assert "off" in tick_vision(_system_with_gesture(None))
+
+
+def test_vision_line_shows_hand_label_score_and_stop_sign() -> None:
+    no_hand = tick_vision(_system_with_gesture(_Gesture()))
+    assert "running" in no_hand and "no hand" in no_hand and "no fist" in no_hand
+    # Before the first sampling window the achieved rates are a placeholder, the target shows.
+    assert "stream: — fps (poll 5)" in no_hand.replace("**", "")
+    assert "hand stage: — fps (target 5)" in no_hand.replace("**", "")
+    assert "classifier: — fps (target 5)" in no_hand.replace("**", "")
+
+    rates = tick_vision(
+        _system_with_gesture(
+            _Gesture(stream_fps=5.02, hand_fps=4.93, classifier_fps=2.5, target_fps=5.0)
+        )
+    ).replace("**", "")
+    assert "stream: 5.0 fps (poll 5)" in rates
+    assert "hand stage: 4.9 fps (target 5)" in rates
+    assert "classifier: 2.5 fps (target 5)" in rates
+
+    fist = tick_vision(
+        _system_with_gesture(_Gesture(gesture="fist", label="fist", confidence=0.87))
+    )
+    assert "fist (0.87)" in fist and "✊ fist raised" in fist
+
+    # A hand whose top class missed the threshold: the raw score shows, unvalidated, no fist.
+    weak = tick_vision(_system_with_gesture(_Gesture(label=None, confidence=0.5)))
+    assert "below threshold (0.50)" in weak and "no fist" in weak
+
+
+def test_vision_line_flags_camera_and_stage_errors() -> None:
+    camera = tick_vision(
+        _system_with_gesture(_Gesture(capture_error="camera read failed: no camera"))
+    )
+    assert "camera" in camera and "no camera" in camera
+
+    stage = tick_vision(_system_with_gesture(_Gesture(error="model download failed")))
+    assert "error" in stage and "model download failed" in stage
+
+    stopped = tick_vision(_system_with_gesture(_Gesture(running=False)))
+    assert "stopped" in stopped

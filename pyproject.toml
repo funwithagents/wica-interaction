@@ -22,6 +22,10 @@ dependencies = [
     # a provider: it makes `wica.contrib.gradio` importable — the reusable observability panels the
     # UI places (core wica never imports Gradio).
     "wica[anthropic,gradio]",
+    # Vision in: the hand stage + gesture classifier that turn the robot's camera frames into the
+    # fist gesture input (specs/gesture-input.md). The `hand` extra pulls mediapipe (hand detection)
+    # and torch/transformers (the HaGRID ViT classifier); the core package is numpy + opencv only.
+    "vision-modules[hand]",
     "gradio>=6",
 ]
 
@@ -51,6 +55,7 @@ wica = { path = "../wica-framework", editable = true }
 tts-engine = { path = "../tts-engine", editable = true }
 asr-engine = { path = "../asr-engine", editable = true }
 reachy-mini-bridge = { path = "../reachy-mini-bridge", editable = true }
+vision-modules = { path = "../vision-modules", editable = true }
 
 [tool.uv]
 # reachy-mini (a reachy-mini-bridge dependency) gates PyGObject to Linux (macOS/Windows use the

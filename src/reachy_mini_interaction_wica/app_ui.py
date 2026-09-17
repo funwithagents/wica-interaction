@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import html
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import gradio as gr
@@ -40,6 +41,8 @@ from wica.contrib.gradio import (
     world_state_panel,
 )
 
+from reachy_mini_interaction_wica.gesture_input import FIST
+
 if TYPE_CHECKING:
     from reachy_mini_interaction_wica.app import AppSystem
 
@@ -49,6 +52,10 @@ _SAY_COMMAND_NAME = "say"
 
 _NO_LIVE_SPEECH = "(no speech yet)"
 
+# Default folder for the Vision snapshot buttons: a `snapshots/` folder under the working directory
+# (the hand demo defaults to its own script's folder; an app run from its checkout gets the same).
+_SNAPSHOT_DIR = Path.cwd() / "snapshots"
+
 
 def display_entry(entry: WorldEntry) -> EntryDisplay | None:
     """How the app's entries show in the transcript and the reaction labels — the person-facing
@@ -57,6 +64,10 @@ def display_entry(entry: WorldEntry) -> EntryDisplay | None:
     value = entry.current.value
     if entry.key == "speech_input":
         return EntryDisplay(f'🗣️ "{value}"')
+    if entry.key == "hand_gesture":
+        # The fist input: only the raised fist ever triggers (and so shows in the transcript); the
+        # lowered one can still label a reaction whose prompt carried it.
+        return EntryDisplay("✊ fist raised" if value == FIST else "🖐️ fist lowered")
     if isinstance(value, CommandExecution) and value.name == _SAY_COMMAND_NAME:
         # The voice: title it by channel and show what the robot set out to say as the body.
         return EntryDisplay("🗣️ say", str(value.args.get("text", "")))
@@ -94,6 +105,42 @@ def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
     return display, status_md, gr.update(interactive=bool(status["dictating"]))
 
 
+def _fps(value: float | None) -> str:
+    """An achieved rate, or an em dash before the first full sampling window."""
+    return f"{value:.1f} fps" if value is not None else "— fps"
+
+
+def tick_vision(system: AppSystem) -> str:
+    """Refresh the Vision line: whether the gesture input runs, the first hand's raw top label and
+    score (or "no hand"), the last delivered fist state, each node's achieved rate next to the
+    configured one — the camera stream's poll rate, the two stages' target (the hand demo's
+    readout) — and any camera / stage error."""
+    gesture = system.gesture
+    if gesture is None:
+        return "_Vision off (`vision.enabled` is false, or no robot camera)._"
+    status = gesture.status()
+    if status["label"] is None and status["confidence"] == 0.0:
+        seen = "no hand"
+    else:
+        # A hand whose top class missed the threshold still shows its raw score, unvalidated.
+        label = status["label"] if status["label"] is not None else "below threshold"
+        seen = f"{label} ({status['confidence']:.2f})"
+    fist = "✊ fist raised" if status["gesture"] == FIST else "no fist"
+    target = status["target_fps"]
+    status_md = (
+        f"**Vision:** {'running' if status['running'] else 'stopped'} · "
+        f"**hand:** {seen} · **stop sign:** {fist} · "
+        f"**stream:** {_fps(status['stream_fps'])} (poll {target:g}) · "
+        f"**hand stage:** {_fps(status['hand_fps'])} (target {target:g}) · "
+        f"**classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
+    )
+    if status["capture_error"]:
+        status_md += f" · ⚠️ **camera:** {status['capture_error']}"
+    if status["error"]:
+        status_md += f" · ⚠️ **error:** {status['error']}"
+    return status_md
+
+
 # --- Layout ------------------------------------------------------------------------------------
 
 
@@ -120,6 +167,16 @@ def build_ui(system: AppSystem) -> AppUi:
         bridge = system.bridge
         if bridge is not None and loop is not None:
             asyncio.run_coroutine_threadsafe(bridge.stop_dictation(), loop)
+
+    # The snapshot buttons run on the Gradio thread — the caller's thread, as the library's
+    # snapshot functions require — and return a status line rather than raising.
+    def on_save_detector(folder: str) -> str:
+        gesture = system.gesture
+        return gesture.save_detector_snapshot(folder) if gesture is not None else ""
+
+    def on_save_classifier(folder: str) -> str:
+        gesture = system.gesture
+        return gesture.save_classifier_snapshot(folder) if gesture is not None else ""
 
     with gr.Blocks(title="Reachy Mini Interaction WICA") as demo:
         gr.Markdown("# Talk to a WICA-driven Reachy Mini")
@@ -167,6 +224,28 @@ def build_ui(system: AppSystem) -> AppUi:
                 )
                 stop_dictation = gr.Button("Stop dictation", interactive=False)
 
+                gr.Markdown("### Vision")
+                vision_status = gr.Markdown("_Vision status…_")
+                if system.gesture is not None:
+                    # As in the vision-modules hand demo: save what each stage last consumed.
+                    with gr.Row():
+                        snapshot_folder = gr.Textbox(
+                            value=str(_SNAPSHOT_DIR), label="Snapshot folder", scale=3
+                        )
+                        save_detector = gr.Button("Save detector snapshot", scale=1)
+                        save_classifier = gr.Button("Save classifier snapshot", scale=1)
+                    snapshot_status = gr.Markdown("")
+                    save_detector.click(  # pyright: ignore[reportAttributeAccessIssue]
+                        on_save_detector,
+                        inputs=snapshot_folder,
+                        outputs=snapshot_status,
+                    )
+                    save_classifier.click(  # pyright: ignore[reportAttributeAccessIssue]
+                        on_save_classifier,
+                        inputs=snapshot_folder,
+                        outputs=snapshot_status,
+                    )
+
             with gr.Column(scale=2):
                 show_debug = gr.Checkbox(label="Show debug panels", value=False)
                 # The toggle is visibility only: the contrib panels own their timers and keep
@@ -189,11 +268,13 @@ def build_ui(system: AppSystem) -> AppUi:
             outputs=debug_panels,
         )
 
-        # The one timer the app owns: the ASR panel reads the bridge (the contrib panels above each
-        # own theirs, so the surfaces never share one round-trip).
+        # The one timer the app owns: the ASR panel reads the bridge and the Vision line reads the
+        # gesture input (the contrib panels above each own theirs, so the surfaces never share one
+        # round-trip).
         asr_timer = gr.Timer(0.2)
         asr_timer.tick(
-            lambda: tick_asr(system), outputs=[asr_live, asr_status, stop_dictation]
+            lambda: (*tick_asr(system), tick_vision(system)),
+            outputs=[asr_live, asr_status, stop_dictation, vision_status],
         )  # pyright: ignore[reportAttributeAccessIssue]
 
     return AppUi(blocks=demo, transcript=transcript)

@@ -18,6 +18,7 @@ Consumed as local path dependencies (in the parent folder), per [specs/project.m
 - `wica` (`../wica-framework`) — the agentic framework.
 - `asr-engine` (`../asr-engine`) — speech-to-text over the robot's mic stream.
 - `reachy-mini-bridge` (`../reachy-mini-bridge`) — the robot's interaction API: connects to the robot, manages the daemon, and builds the voice itself from the config's `reachy.tts` block (a `tts-engine` `engine` block — `reachy-mini-bridge[tts]` pulls `tts-engine`).
+- `vision-modules` (`../vision-modules`) — perception over the robot camera: the hand stage + HaGRID gesture classifier (`vision-modules[hand]` pulls MediaPipe, torch, and transformers) behind the app's fist gesture input — a raised fist is the person's stop sign (see [specs/gesture-input.md](specs/gesture-input.md)). The models download on first run (a MediaPipe bundle and a ~340 MB ViT); enable it with a `vision` config section.
 
 ## Development
 

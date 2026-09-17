@@ -10,7 +10,7 @@ from asr_engine.config import ASREngineConfig
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica.config import WicaConfig
 
-from reachy_mini_interaction_wica.config import AppConfig, load_config
+from reachy_mini_interaction_wica.config import AppConfig, VisionConfig, load_config
 
 
 def _composed(system_prompt_file: str = "prompts/assistant.md") -> dict:
@@ -237,3 +237,61 @@ def test_engine_validation_error_propagates(tmp_path: Path) -> None:
     config["asr"]["engine"]["dictation_default_segmentation_mode"] = "nonsense"
     with pytest.raises(ValueError, match="dictation_default_segmentation_mode"):
         load_config(_write(tmp_path, config))
+
+
+# --- The optional `vision` section (specs/configuration.md, "The `vision` section") ------------
+
+
+def test_vision_absent_means_off(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, _composed()))
+    assert cfg.vision is None
+
+
+def test_vision_null_means_off(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, {**_composed(), "vision": None}))
+    assert cfg.vision is None
+
+
+def test_vision_empty_object_takes_the_defaults(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, {**_composed(), "vision": {}}))
+    assert cfg.vision == VisionConfig(
+        enabled=False, threshold=0.55, fps=5.0, device=None
+    )
+
+
+def test_vision_fields_are_carried(tmp_path: Path) -> None:
+    section = {"enabled": True, "threshold": 0.7, "fps": 10, "device": "cpu"}
+    cfg = load_config(_write(tmp_path, {**_composed(), "vision": section}))
+    assert cfg.vision == VisionConfig(
+        enabled=True, threshold=0.7, fps=10.0, device="cpu"
+    )
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    [
+        ({"enabled": "yes"}, "vision.enabled"),
+        ({"enabled": 1}, "vision.enabled"),
+        ({"threshold": 1.5}, "vision.threshold"),
+        ({"threshold": "high"}, "vision.threshold"),
+        ({"threshold": True}, "vision.threshold"),
+        ({"fps": 0}, "vision.fps"),
+        ({"fps": -5}, "vision.fps"),
+        ({"device": 3}, "vision.device"),
+    ],
+)
+def test_vision_invalid_value_names_the_field(
+    tmp_path: Path, section: dict, field: str
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        load_config(_write(tmp_path, {**_composed(), "vision": section}))
+
+
+def test_vision_unknown_key_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="'mirror'"):
+        load_config(_write(tmp_path, {**_composed(), "vision": {"mirror": True}}))
+
+
+def test_vision_not_an_object_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="'vision' must be an object"):
+        load_config(_write(tmp_path, {**_composed(), "vision": "on"}))

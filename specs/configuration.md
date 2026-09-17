@@ -11,7 +11,7 @@ tests:
 
 ## Purpose
 
-The whole app is stood up from **one JSON config file** that carries the sub-configurations for the pieces it wires together: `wica` (the agent), `asr` (speech in), and `reachy` (the whole robot backend — including the voice). Switching provider, voice, ASR backend, robot backend, or persona is a file edit, not a code change. This spec defines that file's shape and how each section becomes a live config, **reusing each engine's own loader and validation** rather than re-implementing it here.
+The whole app is stood up from **one JSON config file** that carries the sub-configurations for the pieces it wires together: `wica` (the agent), `asr` (speech in), `reachy` (the whole robot backend — including the voice), and optionally `vision` (the fist gesture input over the robot camera). Switching provider, voice, ASR backend, robot backend, or persona is a file edit, not a code change. This spec defines that file's shape and how each section becomes a live config, **reusing each engine's own loader and validation** rather than re-implementing it here.
 
 ## Each engine owns its config schema
 
@@ -72,6 +72,21 @@ The whole section is handed, verbatim, to `ReachyMiniConfig.from_dict` — every
 - `audio.xvf3800` — the tuned XVF3800 profile applied on media-session start; `null`/absent keeps the firmware defaults.
 
 Absent `reachy` section ⇒ `ReachyMiniConfig()` (the `real` backend, upstream defaults, no voice). Validation errors (an unknown backend, an unknown key, `daemon.spawn` set on the `fake` backend, a malformed block) raise the bridge's `ConfigError`, a `ValueError` subclass — so the documented "`load_config` raises `ValueError`" error surface holds without wrapping.
+
+### The `vision` section — the app's own small schema
+
+```json
+"vision": { "enabled": false, "threshold": 0.55, "fps": 5, "device": null }
+```
+
+Enables the fist gesture input ([gesture-input.md](gesture-input.md)). Unlike the other sections, this one is **not** delegated to a sibling loader: `vision-modules` is a library with constructor kwargs and no config document of its own, so the app owns this schema in `config.py` as a frozen `VisionConfig(enabled, threshold, fps, device)` with a `from_dict(data, path=…)` that validates it:
+
+- `enabled` — the switch; a boolean, default **`false`**. The section can stay in the file, tuned, with vision off; turning it on is a one-key edit.
+- `threshold` — the gesture classifier's validation threshold (a hand's label is its top class only at or above it); a number in `[0, 1]`, default **`0.55`**.
+- `fps` — one rate for the camera poll, the hand stage, and the classifier; a number `> 0`, default **`5`**.
+- `device` — the classifier's torch device (`"mps"`, `"cuda"`, `"cpu"`); `null`/absent lets the library pick (`mps` → `cuda` → `cpu`).
+
+**Vision is off unless `enabled` is `true`** — an absent section, `null`, `{}`, or `enabled: false` all mean: no camera is polled, no model is downloaded, and the `hand_gesture` entry is not registered. It is an explicit opt-in because its first run downloads ~340 MB of models. `{"enabled": true}` ⇒ on, with the other defaults. Not an object, an unknown key, or an out-of-range value raises `ValueError` from `load_config`, naming the file and the field, like every other section.
 
 ## Loading: `load_config`
 

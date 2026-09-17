@@ -56,6 +56,12 @@ from wica.contrib.gradio import TranscriptLog
 from reachy_mini_interaction_wica.app_ui import build_ui
 from reachy_mini_interaction_wica.asr_bridge import AsrBridge, RobotMicSource
 from reachy_mini_interaction_wica.config import AppConfig, load_config
+from reachy_mini_interaction_wica.gesture_input import (
+    FIST,
+    GestureInput,
+    GestureModels,
+    fist_raised,
+)
 from reachy_mini_interaction_wica.robot_control import RobotControl
 from reachy_mini_interaction_wica.tts_output import VoiceOutput
 
@@ -72,6 +78,16 @@ def _speech_input(value: Any, previous: Any) -> Content:
     if value is None:
         return [TextPart("The person hasn't said anything to you yet.")]
     return [TextPart(f'The person said to you: "{value}"')]
+
+
+def _hand_gesture(value: Any, previous: Any) -> Content:
+    """Render the `hand_gesture` entry into the prompt — ambient state in every step, so the agent
+    always knows whether the fist is still up (specs/gesture-input.md, "In the prompt"). Only the
+    `None → fist` change triggers a step (`fist_raised`); the lowered fist renders as the `None`
+    line on the next one."""
+    if value == FIST:
+        return [TextPart("The person is holding up a fist — the stop sign.")]
+    return [TextPart("The person is not holding up a fist.")]
 
 
 @dataclass(frozen=True)
@@ -94,6 +110,9 @@ class AppSystem:
     wica: Wica | None
     bridge: AsrBridge | None
     voice: VoiceOutput | None
+    # Vision-in: the fist gesture input over the robot camera; None without a `vision` config
+    # section or without the robot (its camera). See specs/gesture-input.md.
+    gesture: GestureInput | None
     missing: list[str]
     # The typed-text hatch: writes the same `speech_input` World update a closed ASR segment makes (so
     # both flow through the identical reason → say → sink path), but ignores empty/whitespace input —
@@ -106,6 +125,7 @@ def build_system(
     *,
     api: ReachyMiniApi | None = None,
     asr_engine: ASREngine | None = None,
+    gesture_models: GestureModels | None = None,
 ) -> AppSystem:
     """Stand up the whole system from *config* — the build step of `main`, minus the UI, the output
     wiring, and starting/launching.
@@ -216,12 +236,51 @@ def build_system(
         except ValueError as exc:
             missing.append(f"ASR: {exc}")
 
+    # --- Vision in: the fist gesture input over the robot camera, only with `vision.enabled` and
+    # a robot (no api ⇒ no camera) and an agent (there is nothing else to deliver to). The World
+    # entry is registered only then, so a vision-less run never tells the model about a fist it
+    # cannot see. Construction loads no model and touches no camera (both happen on start()), so a
+    # failure here is a programming/config error — still a banner line, never a crash. -----------
+    gesture: GestureInput | None = None
+    vision = config.vision
+    if vision is not None and vision.enabled and robot is not None and wica is not None:
+        world = wica.world
+
+        def _deliver_gesture(value: str | None) -> None:
+            # Change-only deliveries from the watcher thread; the entry's trigger predicate keeps
+            # only the raised fist waking the agent. Dropped while the agent is not running.
+            if wica is not None and wica.is_running:
+                world.update("hand_gesture", value)
+
+        try:
+            world.register(
+                "hand_gesture",
+                str,
+                serialize_fn=_hand_gesture,
+                triggers_llm_call=True,
+                trigger_condition_fn=fist_raised,
+                bypass_coalescing=True,  # a stop sign acts now, not after the coalescing window
+            )
+            gesture = GestureInput(
+                robot,
+                loop,
+                on_gesture=_deliver_gesture,
+                threshold=vision.threshold,
+                fps=vision.fps,
+                device=vision.device,
+                models=gesture_models,
+            )
+        except Exception as exc:  # noqa: BLE001 - vision degrades to a banner line, never a crash
+            missing.append(f"Vision: {exc}")
+            gesture = None
+
     return AppSystem(
         loop=loop,
         api=robot,
         wica=wica,
         bridge=bridge,
         voice=voice,
+        gesture=gesture,
         missing=missing,
         submit_speech=submit_speech,
     )
@@ -268,6 +327,9 @@ def _start(system: AppSystem) -> None:
             asyncio.run_coroutine_threadsafe(
                 system.bridge.start(), system.loop
             ).result()
+        if system.gesture is not None:
+            # Threads, not a coroutine: the camera source hops to the loop itself per poll.
+            system.gesture.start()
 
 
 def _degraded_system(message: str) -> AppSystem:
@@ -278,6 +340,7 @@ def _degraded_system(message: str) -> AppSystem:
         wica=None,
         bridge=None,
         voice=None,
+        gesture=None,
         missing=[message],
         submit_speech=lambda _text: None,
     )
@@ -318,6 +381,14 @@ def _shutdown(system: AppSystem) -> None:
             system.wica.close()
         except Exception:  # one teardown step must not abort the rest
             logger.exception("teardown step 'wica.close' failed")
+    # Vision before the api exits: its camera source polls the api on the loop, so it must be
+    # joined while the media session is still open (the same reason the bridge precedes the api).
+    # A synchronous join, not a loop hop — the pipeline is threads.
+    if system.gesture is not None:
+        try:
+            system.gesture.stop()
+        except Exception:  # one teardown step must not abort the rest
+            logger.exception("teardown step 'gesture.stop' failed")
     # Only a running bridge is stopped — one can be built but never started (no agent ⇒ _start
     # skipped it), and this keeps teardown off ASREngine.stop()'s behavior on a never-started engine.
     bridge = system.bridge
