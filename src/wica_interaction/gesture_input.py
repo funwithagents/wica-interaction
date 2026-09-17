@@ -1,20 +1,22 @@
-"""Vision-in: the robot camera → hand/gesture pipeline → the ``hand_gesture_<n>`` sign inputs.
+"""Vision-in: the embodiment's camera → hand/gesture pipeline → the ``hand_gesture_<n>`` sign inputs.
 
-The vision half of the app's perception. ``RobotCameraSource`` polls the bridge's
-``get_camera_frame()`` as a ``vision-modules`` ``FrameSource``; ``GestureInput`` runs the library's
+The vision half of the app's perception, over whatever camera the embodiment looks through (the
+robot's own, a webcam on the computer — specs/embodiment.md): ``GestureInput`` takes a
+``CameraSource``, it never builds one. It runs the library's
 hand stage + HaGRID gesture classifier over it (up to ``max_hands`` hands per frame) and reduces
 **each hand** to one value of the app's own sign vocabulary — ``SIGNS`` maps the classifier's labels
 onto ``"stop"``, ``"like"``, ``"dislike"``, ``"ok"``, ``"mute"`` and the counts ``"one"`` …
 ``"five"``; anything unmapped, unconfident or absent is ``None`` — delivering ``(hand, sign)`` to the
 injected ``on_gesture`` callback **on change only, per hand**. The app wires that callback to
 ``world.update(f"hand_gesture_{hand}", sign)`` on entries whose trigger predicate, ``sign_shown``,
-wakes the agent whenever a hand shows a sign (never when one goes away). The library perceives, this
-module decides; nothing here touches WICA. See specs/gesture-input.md.
+wakes the agent whenever a hand shows a sign (never when one goes away). The vocabulary's persona
+text lives here too, as ``hand_signs_prompt_section()``, appended to the resolved persona at
+startup when — and only when — vision is on, so it stays next to the ``SIGNS`` table it describes.
+The library perceives, this module decides; nothing here touches WICA. See specs/gesture-input.md.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
@@ -23,10 +25,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
-import numpy as np
 from vision_modules import (
+    FrameSource,
     GestureClassifier,
     HandDetector,
     HandStage,
@@ -36,9 +38,6 @@ from vision_modules import (
     StreamProvider,
     save_input,
 )
-
-if TYPE_CHECKING:
-    from reachy_mini_bridge.api import ReachyMiniApi
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +70,6 @@ SIGNS: Mapping[str, str] = {
     "palm": "five",
 }
 
-# Bound on one camera poll hop to the loop. The bridge runs the SDK read off the loop, so a poll is
-# normally a few ms; a session that stalls longer than this is reported as a capture error rather
-# than wedging the capture thread forever.
-_POLL_TIMEOUT_S = 5.0
-
 # How often the watcher samples each stage's achieved rate (delta published_count / delta time).
 # One second smooths a 5 fps target into a readable figure; the UI timer (0.2 s) reads the latest.
 _FPS_WINDOW_S = 1.0
@@ -85,6 +79,26 @@ def snapshot_path(folder: str | PathLike[str], stage_name: str, now: datetime) -
     """``<folder>/snapshot_<stage name>_<YYYYMMDDHHMMSS>.jpg`` — the hand demo's naming (local
     wall-clock time); ``save_input`` inserts ``_<i>`` per crop for the classifier's input."""
     return Path(folder) / f"snapshot_{stage_name}_{now:%Y%m%d%H%M%S}.jpg"
+
+
+# The "Hand signs" persona section, owned here rather than written in either prompt file: the
+# app appends it at startup when vision is on, so a persona never describes hands the agent
+# cannot see and the vocabulary stays next to the SIGNS table it must match
+# (specs/gesture-input.md, "What the agent does with it"). It describes the *perception*, not
+# the reactions — what each sign means is the agent's to read from context — except `stop`,
+# the one sign that carries an instruction.
+_HAND_SIGNS_TEXT = (
+    "You can see the person's hands. Each `hand_gesture_<n>` state says which sign hand *n* is showing right now — one of `stop`, `like`, `dislike`, `ok`, `mute`, `one`, `two`, `three`, `four`, `five` — or that it is showing none. The numbers follow the hands in view, in the order they appeared; they are not left and right, and a hand can change number when the other one leaves. A sign is not necessarily meant for you: read it the way you read anything else the person does, and decide for yourself whether it matters here and what to make of it."
+    "\n\n"
+    "One sign always means the same thing: **`stop`**. When any hand shows `stop`, **stop what you are doing.** Cancel every command that is running (`cancel_command` on each in-flight `say` or anything else), and start nothing new. Then, in the next turn, once you see the cancellation done, `say` a short confirmation that you stopped — a stop is a request like any other and gets a spoken reply, never a silent halt. If nothing was running, just briefly acknowledge out loud. Do not issue the cancel and the confirmation in the same turn. A `stop` going away is not a request for anything: do not react to it on its own, just carry on when the person next speaks."
+)
+
+
+def hand_signs_prompt_section() -> str:
+    """The persona's "Hand signs" section, appended by the app to the resolved persona at startup
+    when vision is enabled (specs/gesture-input.md). Starts with a blank line so it reads as a new
+    section after whatever precedes it."""
+    return "\n\n## Hand signs\n\n" + _HAND_SIGNS_TEXT
 
 
 def sign_shown(old: str | None, new: str | None) -> bool:
@@ -98,83 +112,21 @@ def sign_shown(old: str | None, new: str | None) -> bool:
     return new is not None and new != old
 
 
-class RobotCameraSource:
-    """The robot camera as a ``vision-modules`` ``FrameSource``: a paced poll of the bridge's
-    ``get_camera_frame()`` on the app loop.
+class CameraSource(FrameSource, Protocol):
+    """A ``FrameSource`` that paces itself to the configured fps and reports its own health.
 
-    ``read()`` runs on the ``StreamProvider``'s capture thread and hops each poll to the loop the api
-    was entered on. It paces itself to ``fps`` (the provider calls ``read()`` back-to-back), skips a
-    ``None`` frame (nothing buffered yet — the provider would otherwise end its loop for good), and
-    keeps polling through a failing verb, recording why in ``capture_error`` (cleared by the next
-    success) so a dead camera shows in the UI instead of silently killing vision. Only ``close()``
-    makes ``read()`` return ``None``.
+    What this module requires of the camera the embodiment hands it (specs/gesture-input.md,
+    "Frames come from the embodiment"): the library's ``FrameSource`` protocol — ``open``/``read``/
+    ``close``/``fps`` — plus ``capture_error``, so the Vision line can say *why* frames stopped.
+    Every implementation obeys the same three rules: it paces itself to ``fps``; a missing frame is
+    not the end of the stream (only ``close()`` makes ``read()`` return ``None``); and a failing
+    read is recorded in ``capture_error`` and retried, never fatal.
     """
-
-    def __init__(
-        self, api: ReachyMiniApi, loop: asyncio.AbstractEventLoop, *, fps: float
-    ) -> None:
-        if fps <= 0:
-            raise ValueError("fps must be > 0")
-        self._api = api
-        self._loop = loop
-        self._interval = 1.0 / fps
-        self._next_poll = time.monotonic()
-        self._closed = threading.Event()
-        self._error: str | None = None
 
     @property
     def capture_error(self) -> str | None:
-        """Why the last poll failed; ``None`` while healthy (or before the first poll)."""
-        return self._error
-
-    def open(self) -> None:
-        """Called by the provider on every ``start()``: (re)arm the source so a provider restarted
-        after a ``stop()`` polls again. Nothing to open on the robot side — the api's media session
-        is the app's, entered long before."""
-        self._closed.clear()
-        self._next_poll = time.monotonic()
-
-    def read(self) -> np.ndarray | None:
-        """The next camera frame, or ``None`` once closed. Never ``None`` for "no frame yet"."""
-        while not self._closed.is_set():
-            # Pace: one poll per interval, measured from the previous poll — a frame is returned
-            # the moment it is read (no added latency), and a `None` just waits for the next slot.
-            remaining = self._next_poll - time.monotonic()
-            if remaining > 0:
-                self._closed.wait(remaining)
-                continue
-            self._next_poll = time.monotonic() + self._interval
-            frame = self._poll()
-            if frame is not None:
-                return frame
-        return None
-
-    def _poll(self) -> np.ndarray | None:
-        try:
-            frame = asyncio.run_coroutine_threadsafe(
-                self._api.get_camera_frame(), self._loop
-            ).result(_POLL_TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001 - any failure is surfaced, and polling goes on
-            message = f"camera read failed: {exc}"
-            if self._error != message:  # log the transition, not every poll
-                logger.warning(
-                    "robot camera read failed; vision is receiving no frames: %s", exc
-                )
-            self._error = message
-            return None
-        if self._error is not None:
-            logger.info("robot camera read recovered")
-            self._error = None
-        return frame
-
-    def close(self) -> None:
-        self._closed.set()
-
-    def fps(self) -> float:
-        """The nominal rate, per the ``FrameSource`` protocol: the poll rate this source paces
-        itself to (the robot camera reports none of its own through the bridge). The rate actually
-        achieved is the provider's ``published_count``, metered like every other node."""
-        return 1.0 / self._interval
+        """Why the last read failed; ``None`` while healthy (or before the first read)."""
+        ...
 
 
 class _FpsMeter:
@@ -209,9 +161,10 @@ class GestureModels:
 
 
 class GestureInput:
-    """Runs the hand + gesture pipeline over the robot camera and delivers each hand's sign changes.
+    """Runs the hand + gesture pipeline over the embodiment's camera and delivers each hand's sign
+    changes.
 
-    Graph: ``RobotCameraSource → StreamProvider → HandStage → GestureClassifier``, every stage at
+    Graph: ``CameraSource → StreamProvider → HandStage → GestureClassifier``, every stage at
     ``fps``, plus a watcher thread (also at ``fps``) that reduces each new classifier result to one
     value per hand slot — ``SIGNS[label]`` for a validated, mapped label, else ``None`` — and calls
     ``on_gesture(hand, sign)`` only for the hands whose value changed from the last one delivered for
@@ -221,15 +174,14 @@ class GestureInput:
     "Hands are slots, not identities"). ``threshold`` is the
     library's own validation rule — a hand's label is its top class only at or above it — so this
     module adds no second one. ``max_hands`` is always passed to the hand stage (never the library's
-    default), so what the robot looks at is the app's setting, and it is also how many hands are
+    default), so what the camera looks at is the app's setting, and it is also how many hands are
     reported. ``start``/``stop`` are synchronous and idempotent (threads, like the
     library's ``Pipeline``); ``status()`` is the cheap read the UI timer polls.
     """
 
     def __init__(
         self,
-        api: ReachyMiniApi,
-        loop: asyncio.AbstractEventLoop,
+        source: CameraSource,
         *,
         on_gesture: OnGesture,
         threshold: float = 0.55,
@@ -248,7 +200,7 @@ class GestureInput:
         self._stream_meter = _FpsMeter()
         self._hand_meter = _FpsMeter()
         self._classifier_meter = _FpsMeter()
-        self._source = RobotCameraSource(api, loop, fps=fps)
+        self._source = source
         self._provider = StreamProvider(self._source, mirror=False)
         self._hands = HandStage(
             self._provider,

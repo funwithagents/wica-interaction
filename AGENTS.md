@@ -10,10 +10,10 @@ Where things live. This is a coarse, module-level map — for the full file inve
 
 | Path | What's there |
 |---|---|
-| `src/wica_interaction/` | The library itself — one module per core concept (see below) |
+| `src/wica_interaction/` | The library itself — one module per shared concept, one subpackage per embodiment (see below) |
 | `specs/` | Pre-implementation design docs, one per concept, each with a `**Status:**` — indexed by [specs/_index.md](specs/_index.md) |
 | `plans/` | Implementation plans turning settled specs into buildable steps — indexed by [plans/_index.md](plans/_index.md) |
-| `tests/` | Fast, deterministic, no-network tests; mirrors the `src/wica_interaction/` module structure |
+| `tests/` | Fast, deterministic, no-network tests; mirrors the `src/wica_interaction/` module structure, embodiment subpackages included (`tests/reachy/`) |
 | `tests-e2e/` | Opt-in live tests that call real external services (not collected by default `pytest`) |
 
 ### `src/wica_interaction/` modules
@@ -22,14 +22,16 @@ Where things live. This is a coarse, module-level map — for the full file inve
 
 | Module | Role | Spec |
 |---|---|---|
-| [config.py](src/wica_interaction/config.py) | Composed app config: one JSON with `wica`/`asr` engine sections plus `reachy` — a verbatim `reachy-mini-bridge` config (voice included) — each section delegated to its own loader | [configuration.md](specs/configuration.md) |
-| [asr_bridge.py](src/wica_interaction/asr_bridge.py) | Speech-in: owns the `ASREngine` (fed the robot's echo-cancelled mic stream), maps segments to World `speech_input` (final only) + live partial view, hosts the dictation command | [asr-bridge.md](specs/asr-bridge.md) |
-| [tts_output.py](src/wica_interaction/tts_output.py) | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | [tts-output.md](specs/tts-output.md) |
-| [robot_control.py](src/wica_interaction/robot_control.py) | Robot commands: non-raising WICA commands wrapping `reachy-mini-bridge` verbs — play an emotion (the names seeded into the prompt at startup), get/set motor state (head tracking is bridge-managed, not agent-facing) | [robot-control.md](specs/robot-control.md) |
-| [gesture_input.py](src/wica_interaction/gesture_input.py) | Vision-in: polls the robot camera through the bridge into `vision-modules`' hand + gesture pipeline, reduces each hand to one sign of the app's vocabulary (`stop`, `like`, `ok`, counts …), delivers changes to the World's per-hand `hand_gesture_<n>` entries (triggering the agent whenever a sign is shown) | [gesture-input.md](specs/gesture-input.md) |
-| [reachy/config.py](src/wica_interaction/reachy/config.py) | The Reachy Mini embodiment's config: the shared sections plus the `reachy` section — a verbatim `reachy-mini-bridge` config, voice included | [reachy-embodiment.md](specs/reachy-embodiment.md) |
-| [app.py](src/wica_interaction/app.py) | App wiring + lifecycle: builds the engines + robot behind WICA on one event loop, registers commands, `main()` entry | [app.md](specs/app.md) |
-| [app_ui.py](src/wica_interaction/app_ui.py) | The Gradio presentation layer: the `display_entry` hook, the page layout (`build_ui` — WICA's `wica.contrib.gradio` observability panels next to the app's own ASR panel), the ASR live view its timer polls | [app.md](specs/app.md) |
+| [config.py](src/wica_interaction/config.py) | The shared config sections: one JSON's `wica`/`asr`/`vision` — each delegated to its owner's loader — plus the file and unknown-section rules every embodiment's loader reuses | [configuration.md](specs/configuration.md) |
+| [embodiment.py](src/wica_interaction/embodiment.py) | The `Embodiment` protocol the lifecycle is written against: enter/exit, voice, mic, camera, commands, prompt addendum | [embodiment.md](specs/embodiment.md) |
+| [asr_bridge.py](src/wica_interaction/asr_bridge.py) | Speech-in: owns the `ASREngine` (fed the embodiment's mic), maps segments to World `speech_input` (final only) + live partial view, hosts the dictation command | [asr-bridge.md](specs/asr-bridge.md) |
+| [gesture_input.py](src/wica_interaction/gesture_input.py) | Vision-in: runs the embodiment's camera through `vision-modules`' hand + gesture pipeline, reduces each hand to one sign of the app's vocabulary (`stop`, `like`, `ok`, counts …), delivers changes to the World's per-hand `hand_gesture_<n>` entries (triggering the agent whenever a sign is shown); owns the "Hand signs" persona section | [gesture-input.md](specs/gesture-input.md) |
+| [system.py](src/wica_interaction/system.py) | Wiring + lifecycle, embodiment-agnostic: builds the agent, ASR and vision around an `Embodiment` on one event loop, wires the voice and its commands, `run_app` | [app.md](specs/app.md) |
+| [app_ui.py](src/wica_interaction/app_ui.py) | The Gradio presentation layer: the `display_entry` hook, the page layout (`build_ui` — WICA's `wica.contrib.gradio` observability panels next to the app's own ASR + Vision panel), the live views its timer polls | [app.md](specs/app.md) |
+| [reachy/config.py](src/wica_interaction/reachy/config.py) | The Reachy Mini embodiment's config: the shared sections plus `reachy` — a verbatim `reachy-mini-bridge` config, voice included | [reachy-embodiment.md](specs/reachy-embodiment.md) |
+| [reachy/embodiment.py](src/wica_interaction/reachy/embodiment.py) | `ReachyEmbodiment`: one `ReachyMiniApi` behind `say`, the mic source and the camera source, plus the emotion names seeded into the prompt | [reachy-embodiment.md](specs/reachy-embodiment.md) |
+| [reachy/robot_control.py](src/wica_interaction/reachy/robot_control.py) | The robot's action commands: non-raising WICA commands wrapping `reachy-mini-bridge` verbs — play an emotion (its description naming the names), get/set motor state (head tracking is bridge-managed, not agent-facing) | [reachy-embodiment.md](specs/reachy-embodiment.md) |
+| [reachy/app.py](src/wica_interaction/reachy/app.py) | The `wica-interaction-reachy` entry point: load the config, construct the embodiment, `run_app` | [reachy-embodiment.md](specs/reachy-embodiment.md) |
 
 **Keep this map current:** when you add, rename, or remove a top-level `src/wica_interaction/` module or a root directory, update the map in the same change — same discipline as keeping spec/plan statuses honest (below). A test (`tests/test_project_map.py`) enforces that every `src/wica_interaction/*.py` module appears here and vice-versa — and that the spec frontmatter (see below) stays honest too.
 

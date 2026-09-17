@@ -1,6 +1,6 @@
 """The Gradio UI: the page layout, the presenters it owns, and the app's own ASR live view.
 
-This is the *presentation* half of the app, split from the wiring in [app.py](app.py). The three
+This is the *presentation* half of the app, split from the wiring in [system.py](system.py). The three
 framework-observability panels — Conversation, World state, Reaction (prompt + instrumentation) —
 are **not** implemented here: they are WICA's reusable ``wica.contrib.gradio`` components (the
 ``wica[gradio]`` extra), each a presenter built over the ``Wica`` plus a panel function that creates
@@ -9,17 +9,17 @@ the components and owns the timer keeping them live. What this module holds:
 - ``display_entry`` — the one hook through which the app injects persona knowledge into those generic
   panels: how a World entry reads to a *person* (`speech_input` → `🗣️ "…"`, a `say` execution →
   the spoken text). The person-facing counterpart of the ``speech_input`` ``serialize_fn`` in
-  [app.py](app.py).
+  [system.py](system.py).
 - ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
   the agent's Events in their constructors, both given ``display_entry``), lays out the page (the
   three contrib panels, the app's ASR panel, the typed-text hatch, a banner for anything missing,
   the debug toggle), and returns the page plus the transcript on an ``AppUi`` handle so the app can
-  wire the transcript's sink (``wire`` in [app.py](app.py)). The UI wires nothing itself.
+  wire the transcript's sink (``wire`` in [system.py](system.py)). The UI wires nothing itself.
 - ``tick_asr`` — the live view the ASR panel's timer polls (the only timer the app owns).
 
-The only dependency on ``app`` is the ``AppSystem`` *type* (for annotations), imported under
-``TYPE_CHECKING`` so there is no import cycle: ``app`` imports ``build_ui`` from here at runtime, and
-this module never imports ``app`` at runtime. See specs/app.md.
+The only dependency on ``system`` is the ``AppSystem`` *type* (for annotations), imported under
+``TYPE_CHECKING`` so there is no import cycle: ``system`` imports ``build_ui`` from here at runtime,
+and this module never imports ``system`` at runtime. See specs/app.md.
 """
 
 from __future__ import annotations
@@ -43,10 +43,10 @@ from wica.contrib.gradio import (
 )
 
 if TYPE_CHECKING:
-    from wica_interaction.app import AppSystem
+    from wica_interaction.system import AppSystem
 
-# The output Command's name (VoiceOutput.say.__name__): the voice, whose execution item the hook
-# titles by channel with the spoken text as body.
+# The output Command's name (the embodiment's `say.__name__`): the voice, whose execution item the
+# hook titles by channel with the spoken text as body.
 _SAY_COMMAND_NAME = "say"
 
 _NO_LIVE_SPEECH = "(no speech yet)"
@@ -80,7 +80,7 @@ def display_entry(entry: WorldEntry) -> EntryDisplay | None:
         sign = value if isinstance(value, str) else "no sign"
         return EntryDisplay(f"✋ hand {hand}: {sign}")
     if isinstance(value, CommandExecution) and value.name == _SAY_COMMAND_NAME:
-        # The voice: title it by channel and show what the robot set out to say as the body.
+        # The voice: title it by channel and show what the agent set out to say as the body.
         return EntryDisplay("🗣️ say", str(value.args.get("text", "")))
     return None
 
@@ -136,7 +136,7 @@ def tick_vision(system: AppSystem) -> str:
     readout) — and any camera / stage error."""
     gesture = system.gesture
     if gesture is None:
-        return "_Vision off (`vision.enabled` is false, or no robot camera)._"
+        return "_Vision off (`vision.enabled` is false, or no camera)._"
     status = gesture.status()
     seen = ", ".join(
         f"#{i} {_hand(hand['label'], hand['confidence'])}"
@@ -198,20 +198,22 @@ def build_ui(system: AppSystem) -> AppUi:
         gesture = system.gesture
         return gesture.save_classifier_snapshot(folder) if gesture is not None else ""
 
-    with gr.Blocks(title="Reachy Mini Interaction WICA") as demo:
-        gr.Markdown("# Talk to a WICA-driven Reachy Mini")
+    # The page is named after the body the app was launched with (specs/embodiment.md).
+    name = system.embodiment.display_name if system.embodiment is not None else "WICA"
+    with gr.Blocks(title=f"WICA Interaction — {name}") as demo:
+        gr.Markdown(f"# Talk to a WICA agent embodied in a {name}")
         if system.missing:
             items = "\n".join(f"> - {html.escape(m)}" for m in system.missing)
             gr.Markdown(
-                "> ⚠️ **Some parts could not start — set the missing variables (or connect the robot) "
+                "> ⚠️ **Some parts could not start — set the missing variables (or connect the body) "
                 "and restart.**\n"
                 f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
-                "own key is set. With no robot, the `say` voice and the robot actions are not wired "
-                "(the agent reasons but cannot speak or move); with no TTS key, `say` exists but reports "
-                'a TTS error. For offline development, set `reachy.backend` to `"fake"` or `"sim"`.'
+                "own key is set. With no embodiment, the `say` voice and its action commands are not "
+                "wired (the agent reasons but cannot speak or act); with no voice, `say` reports a "
+                "TTS error."
             )
         gr.Markdown(
-            "Speak (or type) a turn; the assistant reasons over the World and replies with its **🗣️ "
+            "Speak (or type) a turn; the agent reasons over the World and replies with its **🗣️ "
             "say** voice. It handles **one reasoning call at a time** (v1): input arriving mid-step is "
             "dropped, not queued. On the left, each step is one collapsible **💬 reaction**; inside it, "
             "items are labelled by channel — **🗣️ say** (what you heard), **💭 output sink** (private "

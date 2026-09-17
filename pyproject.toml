@@ -44,8 +44,6 @@ all = [
 [project.scripts]
 wica-interaction-computer = "wica_interaction.computer.app:main"
 wica-interaction-reachy = "wica_interaction.reachy.app:main"
-# Temporary, until the lifecycle moves to system.py and each embodiment gets its own entry point.
-wica-interaction = "wica_interaction.app:main"
 
 [build-system]
 requires = ["uv_build>=0.11.29,<0.12.0"]

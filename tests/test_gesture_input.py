@@ -1,32 +1,29 @@
 """Functional tests for the hand-sign gesture input (`gesture_input`).
 
-Drives `GestureInput` end-to-end through the real `vision-modules` pipeline — `RobotCameraSource →
-StreamProvider → HandStage → GestureClassifier → watcher` — with a fake `ReachyMiniApi` serving
-synthetic frames on a real event loop, a scripted `HandDetector`, and a scripted `ImageClassifier`
-whose scores a test flips mid-run. No camera, no model, no network; a high fps keeps each test well
-under a second. See specs/gesture-input.md ("Testing").
+Drives `GestureInput` end-to-end through the real `vision-modules` pipeline — `CameraSource →
+StreamProvider → HandStage → GestureClassifier → watcher` — over a scripted camera source serving
+synthetic frames, a scripted `HandDetector`, and a scripted `ImageClassifier` whose scores a test
+flips mid-run. No camera, no model, no network; a high fps keeps each test well under a second. The
+camera sources themselves are tested with their embodiments. See specs/gesture-input.md ("Testing").
 """
 
 from __future__ import annotations
 
-import asyncio
-import threading
 import time
-from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import pytest
-from reachy_mini_bridge.api import ReachyMiniApi
 from vision_modules.hand import DetectedHand
 
+from tests.fakes import ScriptedCameraSource
 from wica_interaction.gesture_input import (
     SIGNS,
     GestureInput,
     GestureModels,
-    RobotCameraSource,
+    hand_signs_prompt_section,
     sign_shown,
     snapshot_path,
 )
@@ -41,20 +38,9 @@ _HAND_FRAME = np.full((48, 64, 3), 200, dtype=np.uint8)
 _EMPTY_FRAME = np.zeros((48, 64, 3), dtype=np.uint8)
 
 
-class FakeCameraApi:
-    """The one verb `RobotCameraSource` calls: `get_camera_frame()`, served from a settable `frame`
-    (`None` ⇒ "nothing buffered yet"); `fail_with` makes it raise instead. Counts the polls."""
-
-    def __init__(self, frame: np.ndarray | None = _HAND_FRAME) -> None:
-        self.frame: np.ndarray | None = frame
-        self.fail_with: str | None = None
-        self.polls = 0
-
-    async def get_camera_frame(self) -> np.ndarray | None:
-        self.polls += 1
-        if self.fail_with is not None:
-            raise RuntimeError(self.fail_with)
-        return self.frame
+def _camera(frame: np.ndarray | None = _HAND_FRAME) -> ScriptedCameraSource:
+    """The embodiment's camera, scripted: one settable frame at this file's fps."""
+    return ScriptedCameraSource(frame, fps=_FPS)
 
 
 class ScriptedDetector:
@@ -94,18 +80,6 @@ def _scores(label: str, score: float) -> dict[str, float]:
     return {label: score, **{name: rest for name in others}}
 
 
-@pytest.fixture
-def loop() -> Iterator[asyncio.AbstractEventLoop]:
-    """A running loop on its own thread — the app loop the camera source hops onto."""
-    loop = asyncio.new_event_loop()
-    thread = threading.Thread(target=loop.run_forever, daemon=True)
-    thread.start()
-    yield loop
-    loop.call_soon_threadsafe(loop.stop)
-    thread.join(timeout=2.0)
-    loop.close()
-
-
 def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -116,8 +90,7 @@ def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
 
 
 def _input(
-    loop: asyncio.AbstractEventLoop,
-    api: FakeCameraApi,
+    camera: ScriptedCameraSource,
     classifier: ScriptedClassifier,
     deliveries: list[Delivery],
     *,
@@ -125,8 +98,7 @@ def _input(
     max_hands: int = 2,
 ) -> GestureInput:
     return GestureInput(
-        cast(ReachyMiniApi, api),
-        loop,
+        camera,
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         threshold=threshold,
         fps=_FPS,
@@ -135,19 +107,17 @@ def _input(
     )
 
 
-def test_a_sign_is_delivered_once_across_many_frames(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
+def test_a_sign_is_delivered_once_across_many_frames() -> None:
     """A sign held over many frames delivers once, for hand 1 — changes only, never per frame."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores("like", 0.9)), deliveries)
+    gesture = _input(camera, ScriptedClassifier(_scores("like", 0.9)), deliveries)
     gesture.start()
     try:
         assert _wait_until(lambda: deliveries == [(1, "like")])
-        polls_then = api.polls
+        reads_then = camera.reads
         assert _wait_until(
-            lambda: api.polls >= polls_then + 10
+            lambda: camera.reads >= reads_then + 10
         )  # many more frames went by
         assert deliveries == [(1, "like")]
         assert gesture.status()["signs"] == ["like", None]  # one per max_hands
@@ -158,20 +128,18 @@ def test_a_sign_is_delivered_once_across_many_frames(
         gesture.stop()
 
 
-def test_lowered_and_shown_again_deliver_each_change(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
+def test_lowered_and_shown_again_deliver_each_change() -> None:
     """None → like → None → like ⇒ exactly three deliveries, in that order."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores("like", 0.9)), deliveries)
+    gesture = _input(camera, ScriptedClassifier(_scores("like", 0.9)), deliveries)
     gesture.start()
     try:
         assert _wait_until(lambda: deliveries == [(1, "like")])
-        api.frame = _EMPTY_FRAME  # the hand leaves the frame
+        camera.frame = _EMPTY_FRAME  # the hand leaves the frame
         assert _wait_until(lambda: deliveries == [(1, "like"), (1, None)])
         assert gesture.status()["hands"] == []
-        api.frame = _HAND_FRAME  # ...and comes back showing the same sign
+        camera.frame = _HAND_FRAME  # ...and comes back showing the same sign
         assert _wait_until(lambda: deliveries == [(1, "like"), (1, None), (1, "like")])
     finally:
         gesture.stop()
@@ -188,13 +156,11 @@ def test_lowered_and_shown_again_deliver_each_change(
         ("palm", "five"),
     ],
 )
-def test_each_label_reduces_to_its_sign(
-    loop: asyncio.AbstractEventLoop, label: str, sign: str
-) -> None:
+def test_each_label_reduces_to_its_sign(label: str, sign: str) -> None:
     """The `SIGNS` table: several HaGRID classes collapse onto one app sign."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores(label, 0.9)), deliveries)
+    gesture = _input(camera, ScriptedClassifier(_scores(label, 0.9)), deliveries)
     gesture.start()
     try:
         assert _wait_until(lambda: deliveries == [(1, sign)])
@@ -202,15 +168,13 @@ def test_each_label_reduces_to_its_sign(
         gesture.stop()
 
 
-def test_switching_sign_delivers_the_new_one_directly(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
+def test_switching_sign_delivers_the_new_one_directly() -> None:
     """A hand going from one sign to another with no sign-less frame between delivers the new sign;
     two labels that mean the same sign deliver nothing new."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
     classifier = ScriptedClassifier(_scores("one", 0.9))
-    gesture = _input(loop, api, classifier, deliveries)
+    gesture = _input(camera, classifier, deliveries)
     gesture.start()
     try:
         assert _wait_until(lambda: deliveries == [(1, "one")])
@@ -225,13 +189,11 @@ def test_switching_sign_delivers_the_new_one_directly(
         gesture.stop()
 
 
-def test_sub_threshold_sign_delivers_nothing_but_shows_its_score(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
+def test_sub_threshold_sign_delivers_nothing_but_shows_its_score() -> None:
     """A sign scored below the threshold is "no sign": nothing delivered, the raw score visible."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores("like", 0.5)), deliveries)
+    gesture = _input(camera, ScriptedClassifier(_scores("like", 0.5)), deliveries)
     gesture.start()
     try:
         # The classifier processed frames (the score shows up), yet nothing was delivered.
@@ -247,12 +209,12 @@ def test_sub_threshold_sign_delivers_nothing_but_shows_its_score(
         gesture.stop()
 
 
-def test_threshold_is_the_apps_setting(loop: asyncio.AbstractEventLoop) -> None:
+def test_threshold_is_the_apps_setting() -> None:
     """The same 0.5 hand validates once the configured threshold allows it."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
     gesture = _input(
-        loop, api, ScriptedClassifier(_scores("fist", 0.5)), deliveries, threshold=0.4
+        camera, ScriptedClassifier(_scores("fist", 0.5)), deliveries, threshold=0.4
     )
     gesture.start()
     try:
@@ -261,13 +223,13 @@ def test_threshold_is_the_apps_setting(loop: asyncio.AbstractEventLoop) -> None:
         gesture.stop()
 
 
-def test_an_unmapped_class_is_no_sign(loop: asyncio.AbstractEventLoop) -> None:
+def test_an_unmapped_class_is_no_sign() -> None:
     """`call` is outside the vocabulary: confidently classified, it still delivers nothing — and a
     hand leaving a mapped sign for it delivers the `None`."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
     classifier = ScriptedClassifier(_scores("call", 0.9))
-    gesture = _input(loop, api, classifier, deliveries)
+    gesture = _input(camera, classifier, deliveries)
     gesture.start()
     try:
         assert _wait_until(
@@ -338,15 +300,13 @@ class PerHandClassifier(ScriptedClassifier):
 
 
 def _two_hand_input(
-    loop: asyncio.AbstractEventLoop,
     classifier: PerHandClassifier,
     deliveries: list[Delivery],
     *,
     max_hands: int,
 ) -> GestureInput:
     return GestureInput(
-        cast(ReachyMiniApi, FakeCameraApi(frame=_TWO_HANDS_FRAME)),
-        loop,
+        _camera(_TWO_HANDS_FRAME),
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         fps=_FPS,
         max_hands=max_hands,
@@ -354,14 +314,12 @@ def _two_hand_input(
     )
 
 
-def test_each_hand_is_delivered_on_its_own_slot(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
+def test_each_hand_is_delivered_on_its_own_slot() -> None:
     """Two hands are two states: a sign on the second hand alone delivers `(2, sign)`; each hand's
     later changes are reported against that hand only."""
     deliveries: list[Delivery] = []
     classifier = PerHandClassifier(_scores("call", 0.9), _scores("fist", 0.8))
-    gesture = _two_hand_input(loop, classifier, deliveries, max_hands=2)
+    gesture = _two_hand_input(classifier, deliveries, max_hands=2)
     gesture.start()
     try:
         assert _wait_until(lambda: deliveries == [(2, "stop")])
@@ -385,12 +343,12 @@ def test_each_hand_is_delivered_on_its_own_slot(
         gesture.stop()
 
 
-def test_max_hands_caps_what_is_classified(loop: asyncio.AbstractEventLoop) -> None:
+def test_max_hands_caps_what_is_classified() -> None:
     """With `max_hands=1` only the bigger (left, sign-less) hand is published: the right hand's sign
     is never seen, and only hand 1 is ever reported."""
     deliveries: list[Delivery] = []
     classifier = PerHandClassifier(_scores("call", 0.9), _scores("fist", 0.8))
-    gesture = _two_hand_input(loop, classifier, deliveries, max_hands=1)
+    gesture = _two_hand_input(classifier, deliveries, max_hands=1)
     gesture.start()
     try:
         assert _wait_until(
@@ -408,13 +366,12 @@ def test_max_hands_caps_what_is_classified(loop: asyncio.AbstractEventLoop) -> N
         gesture.stop()
 
 
-def test_achieved_fps_is_measured_per_stage(loop: asyncio.AbstractEventLoop) -> None:
+def test_achieved_fps_is_measured_per_stage() -> None:
     """Both stages' achieved rates appear (from their published_count) once frames flow, after
     one sampling window; the target is the configured rate."""
-    api = FakeCameraApi()
+    camera = _camera()
     gesture = GestureInput(
-        cast(ReachyMiniApi, api),
-        loop,
+        camera,
         on_gesture=lambda _hand, _sign: None,
         fps=_FPS,
         models=GestureModels(
@@ -447,35 +404,31 @@ def test_achieved_fps_is_measured_per_stage(loop: asyncio.AbstractEventLoop) -> 
         gesture.stop()
 
 
-def test_stop_joins_and_delivers_nothing_afterwards(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
-    api = FakeCameraApi()
+def test_stop_joins_and_delivers_nothing_afterwards() -> None:
+    camera = _camera()
     deliveries: list[Delivery] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.9)), deliveries)
+    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), deliveries)
     gesture.start()
     assert gesture.running
     assert _wait_until(lambda: deliveries == [(1, "stop")])
     gesture.stop()
     assert not gesture.running
-    polls_then = api.polls
-    api.frame = _EMPTY_FRAME  # would deliver None if anything were still running
+    reads_then = camera.reads
+    camera.frame = _EMPTY_FRAME  # would deliver None if anything were still running
     time.sleep(0.1)
-    assert api.polls == polls_then  # the camera is no longer polled
+    assert camera.reads == reads_then  # the camera is no longer polled
     assert deliveries == [(1, "stop")]
     gesture.stop()  # idempotent
 
 
-def test_classifier_failure_is_reported_not_fatal(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
+def test_classifier_failure_is_reported_not_fatal() -> None:
     """A raising classifier (the model-load failure case) lands in status()["error"] and the graph
     keeps running: once it works again, the sign is delivered."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
     classifier = ScriptedClassifier(_scores("fist", 0.9))
     classifier.raise_with = "model download failed"
-    gesture = _input(loop, api, classifier, deliveries)
+    gesture = _input(camera, classifier, deliveries)
     gesture.start()
     try:
         assert _wait_until(
@@ -488,10 +441,8 @@ def test_classifier_failure_is_reported_not_fatal(
         gesture.stop()
 
 
-def test_failing_consumer_does_not_kill_the_watcher(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
-    api = FakeCameraApi()
+def test_failing_consumer_does_not_kill_the_watcher() -> None:
+    camera = _camera()
     seen: list[Delivery] = []
 
     def on_gesture(hand: int, value: str | None) -> None:
@@ -499,8 +450,7 @@ def test_failing_consumer_does_not_kill_the_watcher(
         raise RuntimeError("consumer broke")
 
     gesture = GestureInput(
-        cast(ReachyMiniApi, api),
-        loop,
+        camera,
         on_gesture=on_gesture,
         fps=_FPS,
         models=GestureModels(
@@ -511,7 +461,7 @@ def test_failing_consumer_does_not_kill_the_watcher(
     gesture.start()
     try:
         assert _wait_until(lambda: seen == [(1, "stop")])
-        api.frame = _EMPTY_FRAME
+        camera.frame = _EMPTY_FRAME
         assert _wait_until(
             lambda: seen == [(1, "stop"), (1, None)]
         )  # still watching after the raise
@@ -522,14 +472,12 @@ def test_failing_consumer_does_not_kill_the_watcher(
 # --- Snapshots (the hand demo's buttons) --------------------------------------------------------
 
 
-def test_snapshots_save_what_each_stage_last_consumed(
-    loop: asyncio.AbstractEventLoop, tmp_path: Path
-) -> None:
+def test_snapshots_save_what_each_stage_last_consumed(tmp_path: Path) -> None:
     """Before any frame: a warning, nothing written. Once frames flow: the detector snapshot is the
     full frame, the classifier snapshot the hand crop, named `snapshot_<stage>_<ts>[_i].jpg`."""
-    api = FakeCameraApi()
+    camera = _camera()
     deliveries: list[Delivery] = []
-    gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.9)), deliveries)
+    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), deliveries)
     when = datetime(2026, 9, 17, 14, 30, 5, tzinfo=UTC)
 
     early = gesture.save_detector_snapshot(tmp_path, when)
@@ -560,11 +508,9 @@ def test_snapshots_save_what_each_stage_last_consumed(
     assert crop is not None and crop.shape[0] < frame.shape[0]
 
 
-def test_classifier_snapshot_without_a_hand_reports_no_crop(
-    loop: asyncio.AbstractEventLoop, tmp_path: Path
-) -> None:
-    api = FakeCameraApi(frame=_EMPTY_FRAME)
-    gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.9)), [])
+def test_classifier_snapshot_without_a_hand_reports_no_crop(tmp_path: Path) -> None:
+    camera = _camera(_EMPTY_FRAME)
+    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), [])
     gesture.start()
     try:
         assert _wait_until(lambda: gesture._gestures.published_count > 0)  # pyright: ignore[reportPrivateUsage]
@@ -576,10 +522,10 @@ def test_classifier_snapshot_without_a_hand_reports_no_crop(
 
 
 def test_snapshot_into_an_unwritable_folder_reports_instead_of_raising(
-    loop: asyncio.AbstractEventLoop, tmp_path: Path
+    tmp_path: Path,
 ) -> None:
-    api = FakeCameraApi()
-    gesture = _input(loop, api, ScriptedClassifier(_scores("fist", 0.9)), [])
+    camera = _camera()
+    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), [])
     gesture.start()
     try:
         assert _wait_until(lambda: gesture._hands.published_count > 0)  # pyright: ignore[reportPrivateUsage]
@@ -589,63 +535,6 @@ def test_snapshot_into_an_unwritable_folder_reports_instead_of_raising(
     finally:
         gesture.stop()
     assert status.startswith("⚠️ HandStage:")
-
-
-# --- RobotCameraSource ---------------------------------------------------------------------------
-
-
-def test_camera_source_skips_none_frames_instead_of_ending(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
-    """ "Nothing buffered yet" is not the end of the stream: read() waits for a real frame."""
-    api = FakeCameraApi(frame=None)
-    source = RobotCameraSource(cast(ReachyMiniApi, api), loop, fps=_FPS)
-    threading.Timer(0.05, lambda: setattr(api, "frame", _HAND_FRAME)).start()
-    frame = source.read()
-    assert frame is not None and frame is _HAND_FRAME
-    assert api.polls >= 2  # it polled through the None(s) rather than returning one
-
-
-def test_camera_source_reports_and_recovers_from_a_failing_poll(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
-    api = FakeCameraApi()
-    api.fail_with = "no camera"
-    source = RobotCameraSource(cast(ReachyMiniApi, api), loop, fps=_FPS)
-    threading.Timer(0.05, lambda: setattr(api, "fail_with", None)).start()
-    frame = (
-        source.read()
-    )  # blocks through the failures, returns once the verb works again
-    assert frame is _HAND_FRAME
-    assert source.capture_error is None  # cleared by the success
-    api.fail_with = "camera gone"
-    threading.Timer(0.05, source.close).start()
-    assert (
-        source.read() is None
-    )  # closed while failing ⇒ None, and the reason stays visible
-    assert source.capture_error == "camera read failed: camera gone"
-
-
-def test_camera_source_close_unblocks_read(loop: asyncio.AbstractEventLoop) -> None:
-    source = RobotCameraSource(
-        cast(ReachyMiniApi, FakeCameraApi(frame=None)), loop, fps=1.0
-    )
-    threading.Timer(0.05, source.close).start()
-    t0 = time.monotonic()
-    assert source.read() is None
-    assert time.monotonic() - t0 < 0.5  # did not wait out the 1 s interval
-
-
-def test_camera_source_paces_polls_to_fps(loop: asyncio.AbstractEventLoop) -> None:
-    api = FakeCameraApi()
-    source = RobotCameraSource(cast(ReachyMiniApi, api), loop, fps=50.0)
-    assert source.fps() == 50.0  # the protocol's nominal rate is the poll rate
-    t0 = time.monotonic()
-    for _ in range(6):
-        assert source.read() is not None
-    elapsed = time.monotonic() - t0
-    assert elapsed >= 5 * 0.02 * 0.9  # 6 reads span at least 5 intervals (with slack)
-    assert api.polls == 6
 
 
 # --- The trigger predicate -----------------------------------------------------------------------
@@ -663,3 +552,21 @@ def test_camera_source_paces_polls_to_fps(loop: asyncio.AbstractEventLoop) -> No
 )
 def test_sign_shown_predicate(old: str | None, new: str | None, expected: bool) -> None:
     assert sign_shown(old, new) is expected
+
+
+# --- The persona section this module owns --------------------------------------------------------
+
+
+def test_hand_signs_prompt_section_names_the_whole_vocabulary_and_the_stop_rule() -> (
+    None
+):
+    """The section the app appends when vision is on must match the SIGNS table it describes —
+    every sign the World can carry is named — and carry the one sign that comes with an instruction."""
+    section = hand_signs_prompt_section()
+
+    assert section.startswith("\n\n## Hand signs\n\n")
+    for sign in set(SIGNS.values()):
+        assert f"`{sign}`" in section
+    assert "`stop`" in section
+    assert "cancel_command" in section  # the stop rule, spelled out
+    assert "hand_gesture_<n>" in section

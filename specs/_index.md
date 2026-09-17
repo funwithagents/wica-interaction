@@ -4,7 +4,7 @@ An interaction application built on the **WICA** agentic framework, which handle
 
 > **New here?** Read [_overview.md](_overview.md) first for the global vision — what the app is, the end-to-end data flow, the embodiments, and how the specs below fit together.
 
-> **In transition (2026-09-17).** The repo is being merged with its sibling `vocal-interaction-wica` and renamed `wica-interaction` — see the [merge plan](../plans/202609172311_wica-interaction-merge.md). The `Updated` specs below describe the target design while their code is still the pre-merge, reachy-only code; the `Stable` ones are new and unbuilt; the two `Updated` specs marked *superseded* describe code that moves into the embodiment specs and are deleted when the plan lands.
+> **In transition (2026-09-17).** The repo is being merged with its sibling `vocal-interaction-wica` and renamed `wica-interaction` — see the [merge plan](../plans/202609172311_wica-interaction-merge.md). The `Updated` specs below describe the target design while their code catches up.
 
 ## Specs
 
@@ -22,8 +22,6 @@ An interaction application built on the **WICA** agentic framework, which handle
 | [asr-bridge.md](asr-bridge.md) | Speech-in: the ASR engine over the embodiment's mic → World `speech_input` (final only), live partial view, capture health from the embodiment, and the agent's dictation command | Updated |
 | [gesture-input.md](gesture-input.md) | Vision-in: the embodiment's camera through `vision-modules`' hand + gesture pipeline → a hand-sign vocabulary (`stop`, `like`, `dislike`, `ok`, `mute`, `one`…`five`) as one `hand_gesture_<n>` entry per hand, triggering the agent whenever a sign is shown; the "Hand signs" persona section seeded at startup | Updated |
 | [app.md](app.md) | The Gradio app: the embodiment-agnostic build → UI → wire → start → close lifecycle (`system.py`), the panels, the typed-text funnel, degraded start, one thin entry point per embodiment | Updated |
-| [tts-output.md](tts-output.md) | *Superseded* by the embodiment specs — describes today's `tts_output.py` (`say` through the robot) until the merge plan moves it | Updated |
-| [robot-control.md](robot-control.md) | *Superseded* by [reachy-embodiment.md](reachy-embodiment.md) — describes today's `robot_control.py` until the merge plan moves it | Updated |
 | _(add concept specs here — see [_spec-template.md](_spec-template.md))_ | | |
 
 Each spec also opens with a YAML **frontmatter** block declaring the `code:` and `tests:` files it governs — the spec → code/tests mapping the spec-drift checks use to scope what they compare. Keep it current when files move, and see [AGENTS.md](../AGENTS.md) ("Spec frontmatter") for the full convention. A spec that is not yet `Implemented` may name the files it *will* govern.

@@ -1,11 +1,10 @@
 ---
 code:
   - src/wica_interaction/gesture_input.py
-  - src/wica_interaction/app.py
-  - prompts/assistant.md
+  - src/wica_interaction/system.py
 tests:
   - tests/test_gesture_input.py
-  - tests/test_app.py
+  - tests/test_system.py
   - tests-e2e/test_gesture_input_live.py
 ---
 

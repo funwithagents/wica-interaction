@@ -15,10 +15,11 @@ from wica import CommandExecution
 from wica.contrib.gradio import EntryDisplay
 from wica.world import WorldEntry, WorldEntryVersion
 
-from wica_interaction.app import AppSystem
-from wica_interaction.app_ui import display_entry, tick_asr, tick_vision
-from wica_interaction.asr_bridge import AsrBridge, RobotMicSource
+from tests.fakes import FakeEmbodiment
+from wica_interaction.app_ui import build_ui, display_entry, tick_asr, tick_vision
+from wica_interaction.asr_bridge import AsrBridge
 from wica_interaction.gesture_input import GestureInput
+from wica_interaction.system import AppSystem
 
 
 def _entry(key: str, value: Any) -> WorldEntry:
@@ -66,27 +67,28 @@ class _FakeEngine:
         return {"running": True}
 
 
-class _Mic:
-    """Stands in for a `RobotMicSource` — only its `capture_error` is read."""
-
-    def __init__(self, capture_error: str | None) -> None:
-        self.capture_error = capture_error
-
-
 def _system_with_mic(capture_error: str | None) -> AppSystem:
     bridge = AsrBridge(
         cast(ASREngine, _FakeEngine()),
         on_final_segment=lambda _text: None,
-        mic=cast(RobotMicSource, _Mic(capture_error)),
+        mic_error=lambda: capture_error,
     )
+    return _system(bridge=bridge)
+
+
+def _system(
+    *,
+    bridge: AsrBridge | None = None,
+    gesture: GestureInput | None = None,
+    embodiment: FakeEmbodiment | None = None,
+) -> AppSystem:
+    """A bare `AppSystem` carrying only what the view under test reads."""
     return AppSystem(
         loop=None,
-        api=None,
+        embodiment=embodiment,
         wica=None,
         bridge=bridge,
-        voice=None,
-        gesture=None,
-        emotions=None,
+        gesture=gesture,
         missing=[],
         submit_speech=lambda _text: None,
     )
@@ -128,17 +130,7 @@ class _Gesture:
 
 
 def _system_with_gesture(gesture: _Gesture | None) -> AppSystem:
-    return AppSystem(
-        loop=None,
-        api=None,
-        wica=None,
-        bridge=None,
-        voice=None,
-        gesture=cast(GestureInput, gesture) if gesture is not None else None,
-        emotions=None,
-        missing=[],
-        submit_speech=lambda _text: None,
-    )
+    return _system(gesture=cast(GestureInput, gesture) if gesture is not None else None)
 
 
 def test_display_entry_labels_each_hand_sign_input() -> None:
@@ -224,3 +216,16 @@ def test_vision_line_flags_camera_and_stage_errors() -> None:
 
     stopped = tick_vision(_system_with_gesture(_Gesture(running=False)))
     assert "stopped" in stopped
+
+
+# --- The page (specs/app.md, "What the user sees") --------------------------------------------
+
+
+def test_the_page_is_named_after_the_body() -> None:
+    """The one place the shared page differs per embodiment: its title and heading name the body the
+    app was launched with (specs/embodiment.md, `display_name`)."""
+    ui = build_ui(_system(embodiment=FakeEmbodiment()))
+    assert ui.blocks.title == "WICA Interaction — fake body"
+
+    # With no body at all the page still opens, under a neutral name.
+    assert build_ui(_system()).blocks.title == "WICA Interaction — WICA"

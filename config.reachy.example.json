@@ -4,7 +4,7 @@
       "provider": "anthropic",
       "model": "claude-sonnet-5",
       "api_key_env": "WICA_ANTHROPIC_API_KEY",
-      "system_prompt_file": "prompts/assistant.md"
+      "system_prompt_file": "prompts/reachy.md"
     }
   },
   "asr": {

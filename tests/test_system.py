@@ -1,0 +1,823 @@
+"""Functional tests for the app's wiring + lifecycle (`system.py`).
+
+Deterministic, no browser/mic/camera/network/body: the agent runs against WICA's `fake` provider (a
+scripted model), the body is a `FakeEmbodiment` that only records, the ASR engine is an injected
+fake, and only the wiring `run_app` does — minus the Gradio page — is exercised: `build_system`,
+then `wire` with a `TranscriptLog` (and a `ReactionLog`) the test builds itself, playing the UI's
+role exactly as `build_ui` would, then `_start`. Covers the two input paths (typed text and a closed
+ASR segment) reaching the agent and its `say` reaching the embodiment's voice (proving the output
+Command is set), the model's free text reaching the transcript (proving the sink is set), an action
+Command routing back to the body (proving `wire` registers `embodiment.commands()`), the persona
+sections seeded at startup, the vision path, and the degrade and teardown paths.
+
+The lifecycle is tested here *once*, over a fake body; each real embodiment pins its own protocol
+members in `tests/<embodiment>/test_embodiment.py` (specs/testing.md).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import time
+from pathlib import Path
+from typing import Any, cast
+
+import gradio as gr
+import numpy as np
+import pytest
+from asr_engine.config import ASREngineConfig
+from asr_engine.engine import ASREngine
+from asr_engine.segmenter import SpeechSegment
+from vision_modules.hand import DetectedHand
+from wica.config import WicaConfig
+from wica.contrib.gradio import ReactionLog, TranscriptLog
+
+from tests.fakes import FakeASREngine, FakeEmbodiment, scripted_wica_config
+from wica_interaction import system as system_module
+from wica_interaction.app_ui import display_entry
+from wica_interaction.config import AppConfig, VisionConfig
+from wica_interaction.embodiment import Embodiment
+from wica_interaction.gesture_input import GestureModels
+from wica_interaction.system import (
+    AppSystem,
+    _degraded_system,
+    _serve,
+    _shutdown,
+    _start,
+    build_system,
+    run_app,
+    wire,
+)
+
+
+def _config(
+    *,
+    script: list[dict],
+    vision: VisionConfig | None = None,
+    persona: str = "You are a test double.",
+) -> AppConfig:
+    """An `AppConfig` whose WICA section is the `fake` provider running *script*.
+
+    The ASR section is unused here (tests inject fakes), so it is `None` behind a cast. `vision`
+    is off unless given (the gesture input is built only with a section).
+    """
+    return AppConfig(
+        wica=scripted_wica_config(script, persona=persona),
+        asr_engine=cast(ASREngineConfig, None),
+        vision=vision,
+    )
+
+
+def _say_once(text: str) -> list[dict]:
+    return [
+        {"tool_calls": [{"name": "say", "args": {"text": text}}]},
+        {"tool_calls": [{"name": "noop", "args": {}}]},
+    ]
+
+
+def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def _build(
+    embodiment: FakeEmbodiment,
+    *,
+    script: list[dict],
+    asr: FakeASREngine | None = None,
+    vision: VisionConfig | None = None,
+    persona: str = "You are a test double.",
+    models: GestureModels | None = None,
+) -> AppSystem:
+    """`build_system` over the fake body and a fake ASR engine — what every test below starts from."""
+    return build_system(
+        _config(script=script, vision=vision, persona=persona),
+        embodiment,
+        asr_engine=cast(ASREngine, asr if asr is not None else FakeASREngine()),
+        gesture_models=models,
+    )
+
+
+def _wire(system: AppSystem) -> tuple[TranscriptLog, ReactionLog]:
+    """Play the UI's role: build the two contrib presenters over the agent (exactly what `build_ui`
+    creates) and wire the transcript's sink + the Commands, as `run_app` does before starting."""
+    transcript = TranscriptLog(system.wica, display_entry)
+    reactions = ReactionLog(system.wica, display_entry)
+    wire(system, transcript)
+    return transcript, reactions
+
+
+def _reaction_captured(reactions: ReactionLog) -> bool:
+    """Whether a reasoning step sent a prompt, read off the reaction history the UI's panel polls."""
+    return reactions.snapshot().count > 0
+
+
+def _user_items(transcript: TranscriptLog) -> list[str]:
+    return [
+        m["content"] for m in transcript.snapshot().conversation if m["role"] == "user"
+    ]
+
+
+# --- The body: entered, wired, torn down ---------------------------------------------------------
+
+
+def test_typed_text_drives_agent_and_speaks_through_the_body() -> None:
+    """A typed turn becomes `speech_input`, the agent reasons, its `say` reaches the body's voice."""
+    embodiment = FakeEmbodiment()
+    system = _build(embodiment, script=_say_once("hello there"))
+    try:
+        assert embodiment.entered  # build_system entered the body on the app loop
+        assert embodiment.loop is system.loop  # …on the loop the agent runs on
+        assert system.embodiment is embodiment and system.bridge is not None
+        _wire(
+            system
+        )  # sets `say` as the output Command — without it the model could not speak
+        _start(system)
+        # The typed-text box writes the same World update a closed ASR segment makes.
+        system.submit_speech("hi")
+        assert _wait_until(lambda: embodiment.said == ["hello there"])
+    finally:
+        _shutdown(system)
+
+
+def test_a_body_without_a_voice_sets_no_output_command() -> None:
+    """`voice is None` means the model's free text is its voice: nothing is set as the output
+    Command, and the agent still reasons."""
+    embodiment = FakeEmbodiment(voice=False)
+    system = _build(embodiment, script=_say_once("would have spoken"))
+    try:
+        assert system.embodiment is not None and system.embodiment.voice is None
+        _, reactions = _wire(system)
+        _start(system)
+        assert system.wica is not None
+        assert system.wica.agent.output_command_name is None
+        system.submit_speech("hello")
+        assert _wait_until(lambda: _reaction_captured(reactions))
+        assert embodiment.said == []
+    finally:
+        _shutdown(system)
+
+
+def test_free_text_lands_in_the_transcript_sink() -> None:
+    """The model's free text for a step reaches the transcript's output sink as the 💭 item — the
+    one observable proof that `wire` set the sink on the agent."""
+    embodiment = FakeEmbodiment()
+    script = [
+        {"text": "thinking out loud"},
+        {"tool_calls": [{"name": "noop", "args": {}}]},
+    ]
+    system = _build(embodiment, script=script)
+    try:
+        transcript, _ = _wire(system)
+        _start(system)
+        system.submit_speech("what are you thinking")
+
+        def sink_item_shown() -> bool:
+            return any(
+                m.get("metadata", {}).get("title") == "💭 output sink"
+                and m["content"] == "thinking out loud"
+                for m in transcript.snapshot().conversation
+            )
+
+        assert _wait_until(sink_item_shown)
+    finally:
+        _shutdown(system)
+
+
+def test_wire_without_agent_is_a_noop() -> None:
+    """With no agent there is nothing to wire into: `wire` returns quietly (the banner already says
+    why), so `run_app` stays linear in degraded mode."""
+    system = _degraded_system("config unreadable")
+    wire(system, TranscriptLog(None, display_entry))  # must not raise
+    assert system.wica is None
+
+
+def test_the_bodys_action_commands_are_registered_and_route_back_to_it() -> None:
+    """A turn where the agent issues the body's action command reaches the body — proving `wire`
+    registered each of `embodiment.commands()`."""
+    embodiment = FakeEmbodiment()
+    script = [
+        {"tool_calls": [{"name": "wave", "args": {}}]},
+        {"tool_calls": [{"name": "noop", "args": {}}]},
+    ]
+    system = _build(embodiment, script=script)
+    try:
+        _wire(system)
+        _start(system)
+        assert system.wica is not None and "wave" in system.wica.agent.commands
+        system.submit_speech("say hi with your hand")
+        assert _wait_until(lambda: embodiment.waved == 1)
+    finally:
+        _shutdown(system)
+
+
+def test_a_body_with_no_actions_registers_none() -> None:
+    embodiment = FakeEmbodiment(commands=())
+    system = _build(embodiment, script=[{"tool_calls": [{"name": "noop", "args": {}}]}])
+    try:
+        _wire(system)
+        assert system.wica is not None
+        assert "wave" not in system.wica.agent.commands
+        # The voice is still set — as the output Command, not one of the invokable ones.
+        assert system.wica.agent.output_command_name == "say"
+    finally:
+        _shutdown(system)
+
+
+def test_prompt_addendum_is_seeded_into_the_persona() -> None:
+    """Whatever the body wants the model to know before its first turn (the robot's emotion names)
+    is appended verbatim to the resolved persona, ahead of WICA's own primer."""
+    embodiment = FakeEmbodiment(
+        prompt_addendum="\n\n## Test section\n\nhello from the body"
+    )
+    system = _build(embodiment, script=[{"tool_calls": [{"name": "noop", "args": {}}]}])
+    try:
+        assert system.wica is not None
+        prompt = system.wica.agent.system_prompt
+        assert prompt.startswith("You are a test double.")
+        assert "\n\n## Test section\n\nhello from the body" in prompt
+    finally:
+        _shutdown(system)
+
+
+def test_missing_lines_from_enter_reach_the_banner() -> None:
+    """A component of the body that degraded inside `enter()` is one banner line; the body is up."""
+    embodiment = FakeEmbodiment(
+        missing=["TTS: key unset", "Audio processing: no binding"]
+    )
+    system = _build(embodiment, script=[{"tool_calls": [{"name": "noop", "args": {}}]}])
+    try:
+        assert system.embodiment is embodiment
+        assert "TTS: key unset" in system.missing
+        assert "Audio processing: no binding" in system.missing
+    finally:
+        _shutdown(system)
+
+
+def test_the_mic_is_what_the_asr_engine_reads() -> None:
+    """The engine is built over `embodiment.mic` (a `None` there means it opens its own default
+    device), and its capture health reaches the ASR panel through the bridge's status."""
+    mic = cast(Any, object())  # an opaque AudioSource: only identity matters here
+    embodiment = FakeEmbodiment(mic=mic, mic_error="mic stream ended")
+    system = _build(embodiment, script=[])
+    try:
+        assert system.embodiment is not None
+        assert system.embodiment.mic is mic
+        assert system.bridge is not None
+        assert system.bridge.status()["capture_error"] == "mic stream ended"
+    finally:
+        _shutdown(system)
+
+
+def test_empty_typed_text_is_ignored() -> None:
+    """Whitespace-only typed input never wakes the agent. Proven by ordering against a real turn, not
+    by sleeping on an absence: the empties go in first, and by the time the real turn's reply lands the
+    transcript shows that real turn as the only input the agent ever reacted to."""
+    embodiment = FakeEmbodiment()
+    system = _build(embodiment, script=_say_once("real reply"))
+    try:
+        transcript, _ = _wire(system)
+        _start(system)
+        system.submit_speech("   ")
+        system.submit_speech("")
+        system.submit_speech("a real turn")
+        assert _wait_until(lambda: embodiment.said == ["real reply"])
+        # Any trigger (an erroneous empty one included) is recorded before its step's reply, so the
+        # transcript is complete for inputs by now.
+        assert _user_items(transcript) == ['🗣️ "a real turn"']
+    finally:
+        _shutdown(system)
+
+
+# --- Speech in -----------------------------------------------------------------------------------
+
+
+def _final_segment(transcript: str) -> SpeechSegment:
+    return SpeechSegment(
+        transcript=transcript, is_final=True, end_reason="utterance", utterances=[]
+    )
+
+
+def _emit_segment(
+    system: AppSystem, fake_asr: FakeASREngine, segment: SpeechSegment
+) -> None:
+    """Emit *segment* the way the real ASREngine does: await its `on_speech_segment` callback (which
+    the bridge wired to itself) on the app loop."""
+    assert system.loop is not None
+    assert (
+        fake_asr.on_speech_segment is not None
+    )  # the bridge claimed the engine's callback
+    asyncio.run_coroutine_threadsafe(
+        fake_asr.on_speech_segment(segment), system.loop
+    ).result(2.0)
+
+
+def test_closed_segment_reaches_agent_like_typed_text() -> None:
+    """A closed ASR segment emitted by the engine flows engine callback → bridge → World and wakes the
+    agent, whose `say` reaches the body's voice — the same outcome as a typed turn."""
+    embodiment = FakeEmbodiment()
+    fake_asr = FakeASREngine()
+    system = _build(embodiment, script=_say_once("segment reply"), asr=fake_asr)
+    try:
+        _wire(system)
+        _start(system)
+        _emit_segment(system, fake_asr, _final_segment("please reply"))
+        assert _wait_until(lambda: embodiment.said == ["segment reply"])
+    finally:
+        _shutdown(system)
+
+
+def test_empty_final_segment_wakes_agent() -> None:
+    """A final that closed on silence (empty transcript) still reaches the agent, so it can react to
+    the user saying nothing — unlike an empty typed line, which is ignored."""
+    embodiment = FakeEmbodiment()
+    fake_asr = FakeASREngine()
+    system = _build(embodiment, script=_say_once("you went quiet"), asr=fake_asr)
+    try:
+        _wire(system)
+        _start(system)
+        _emit_segment(system, fake_asr, _final_segment(""))
+        assert _wait_until(lambda: embodiment.said == ["you went quiet"])
+    finally:
+        _shutdown(system)
+
+
+# --- Degraded start ------------------------------------------------------------------------------
+
+
+def test_a_body_that_fails_to_enter_degrades_but_the_agent_still_reasons() -> None:
+    """A body that cannot come up is captured in `missing` under its own name; nothing that needs it
+    is built, and WICA still runs on typed text."""
+    embodiment = FakeEmbodiment(raise_on_enter="no daemon reachable")
+    # No asr_engine injected: with no body there is no mic, so no bridge is built at all.
+    system = build_system(
+        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]), embodiment
+    )
+    try:
+        assert system.embodiment is None  # the failed enter degraded it to None
+        assert system.bridge is None  # no body ⇒ no mic ⇒ no speech-in
+        assert any(
+            m.startswith("fake body:") and "no daemon reachable" in m
+            for m in system.missing
+        )
+        # The fake agent built fine, and still reasons over typed input: a step runs (a prompt is
+        # captured).
+        assert system.wica is not None
+        _, reactions = _wire(system)
+        assert system.wica.agent.output_command_name is None  # no body ⇒ no voice …
+        assert "wave" not in system.wica.agent.commands  # … and no action commands
+        _start(system)
+        system.submit_speech("are you there")
+        assert _wait_until(lambda: _reaction_captured(reactions))
+    finally:
+        _shutdown(system)
+
+
+def test_no_body_means_no_prompt_addendum() -> None:
+    """Without a body there is nothing to seed: the agent builds over the plain persona."""
+    embodiment = FakeEmbodiment(
+        raise_on_enter="no body", prompt_addendum="\n\n## Test section\n\nhi"
+    )
+    system = build_system(
+        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]), embodiment
+    )
+    try:
+        assert system.wica is not None
+        assert "Test section" not in system.wica.agent.system_prompt
+    finally:
+        _shutdown(system)
+
+
+def _asr_degrade_config() -> AppConfig:
+    """A real ASR config referencing an unset env var (so `ASREngine` construction raises), with a
+    fake WICA agent — the ASR side alone should degrade."""
+    asr = ASREngineConfig.from_dict(
+        {"module": {"type": "deepgram_v2", "api_key_env": "WICA_TEST_UNSET_ASR_KEY"}}
+    )
+    return AppConfig(wica=scripted_wica_config([], persona="double"), asr_engine=asr)
+
+
+def test_missing_asr_key_degrades_but_the_body_survives(monkeypatch: Any) -> None:
+    """With the body up but the ASR key unset, ASR degrades (bridge None) while the voice survives."""
+    monkeypatch.delenv("WICA_TEST_UNSET_ASR_KEY", raising=False)
+    embodiment = FakeEmbodiment()
+    # No asr_engine injected: build_system builds a real ASREngine over the mic, which raises.
+    system = build_system(_asr_degrade_config(), embodiment)
+    try:
+        assert embodiment.entered
+        assert system.embodiment is not None  # the body is up …
+        assert system.embodiment.voice is not None  # … so the voice is wired …
+        assert system.bridge is None  # … while ASR degraded
+        assert any(m.startswith("ASR:") for m in system.missing)
+        assert not any(m.startswith("fake body:") for m in system.missing)
+    finally:
+        _shutdown(system)
+
+
+def test_bad_system_prompt_file_degrades(tmp_path: Path) -> None:
+    """A `system_prompt_file` that doesn't exist lands in the banner as an `Agent:` line (the app's
+    own persona read raises WICA's ConfigError, before Wica.init) rather than crashing; the rest of
+    the system still builds."""
+    wica = WicaConfig.from_dict(
+        {
+            "agent": {
+                "provider": "fake",
+                "model": "scripted",
+                "system_prompt_file": str(tmp_path / "no-such-prompt.md"),
+            }
+        }
+    )
+    config = AppConfig(wica=wica, asr_engine=cast(ASREngineConfig, None))
+    embodiment = FakeEmbodiment()
+    system = build_system(
+        config, embodiment, asr_engine=cast(ASREngine, FakeASREngine())
+    )
+    try:
+        assert system.wica is None
+        assert any(
+            m.startswith("Agent:") and "no-such-prompt.md" in m for m in system.missing
+        )
+        assert system.embodiment is not None  # the body is unaffected
+    finally:
+        _shutdown(system)
+    assert embodiment.exited
+
+
+# --- Teardown -------------------------------------------------------------------------------------
+
+
+def test_shutdown_stops_asr_before_the_body_exits() -> None:
+    """Teardown stops the ASR bridge (cancelling the mic pump) *before* the body is released, then
+    exits it — the order specs/app.md lists."""
+    log: list[str] = []
+    embodiment = FakeEmbodiment(log=log)
+    fake_asr = FakeASREngine(log=log)
+    system = _build(
+        embodiment,
+        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        asr=fake_asr,
+    )
+    _start(system)
+    assert fake_asr.started  # capture was live before teardown
+
+    _shutdown(system)
+
+    assert not fake_asr.started
+    assert embodiment.exited
+    assert log == ["asr.stop", "embodiment.exit"]
+    assert system.wica is not None and not system.wica.is_running
+
+
+class _NeverLaunched:
+    """Stands in for the built page in `_serve`: `_start` raises first, so `launch` must never run."""
+
+    def launch(self) -> None:
+        raise AssertionError("launch() must not be reached when _start raises")
+
+
+def _loop_stopped(system: AppSystem) -> bool:
+    """Wait for the app loop's thread to leave run_forever (loop.stop is scheduled, not immediate)."""
+    loop = system.loop
+    assert loop is not None
+    return _wait_until(lambda: not loop.is_running())
+
+
+def test_start_failure_still_tears_down_the_body() -> None:
+    """A raise while starting — after build_system has entered the body — still exits it and stops
+    the loop, instead of leaking both (the UI is never launched)."""
+    embodiment = FakeEmbodiment()
+    system = _build(
+        embodiment,
+        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        asr=FakeASREngine(raise_on_start="mic unavailable"),
+    )
+    assert embodiment.entered
+
+    with pytest.raises(RuntimeError, match="mic unavailable"):
+        _serve(system, cast(gr.Blocks, _NeverLaunched()))
+
+    assert embodiment.exited
+    assert _loop_stopped(system)
+    assert system.wica is not None and not system.wica.is_running
+
+
+def test_shutdown_isolates_a_failing_step() -> None:
+    """An ASR stop that raises is logged and skipped past: the body still exits, the loop stops."""
+    embodiment = FakeEmbodiment()
+    system = _build(
+        embodiment,
+        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        asr=FakeASREngine(raise_on_stop="provider socket broke"),
+    )
+    _start(system)
+
+    _shutdown(system)  # must not raise
+
+    assert embodiment.exited
+    assert _loop_stopped(system)
+
+
+def test_shutdown_bounds_a_hung_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ASR stop that never returns is abandoned after the per-step timeout; teardown continues."""
+    monkeypatch.setattr(system_module, "_SHUTDOWN_TIMEOUT_S", 0.1)
+    embodiment = FakeEmbodiment()
+    system = _build(
+        embodiment,
+        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        asr=FakeASREngine(hang_on_stop=True),
+    )
+    _start(system)
+
+    _shutdown(system)
+
+    assert embodiment.exited
+    assert _loop_stopped(system)
+
+
+def test_shutdown_skips_never_started_bridge() -> None:
+    """A bridge that was built but never started (nothing ran _start) is not stopped at teardown —
+    the running-guard holds — while the body is still released."""
+    log: list[str] = []
+    embodiment = FakeEmbodiment(log=log)
+    system = _build(
+        embodiment,
+        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        asr=FakeASREngine(log=log),
+    )
+
+    _shutdown(system)
+
+    assert log == ["embodiment.exit"]  # no "asr.stop"
+    assert _loop_stopped(system)
+
+
+# --- The entry point ------------------------------------------------------------------------------
+
+
+def test_run_app_requires_a_config_path(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A bare run (no --config) exits with usage guidance before loading anything — it never falls
+    back to a default file (the committed examples are templates to copy and adapt, not configs meant
+    to run unmodified)."""
+    monkeypatch.setattr(sys, "argv", ["wica-interaction-fake"])
+    loaded: list[str] = []
+
+    def _load(path: str) -> tuple[AppConfig, Embodiment]:
+        loaded.append(path)
+        raise AssertionError("load must not be reached")
+
+    with pytest.raises(SystemExit) as exc:
+        run_app(description="a fake body", load=_load)
+
+    assert exc.value.code == 2
+    assert "--config" in capsys.readouterr().err
+    assert loaded == []  # no body was ever constructed
+
+
+def test_run_app_degrades_a_bad_config_into_the_banner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `ValueError` from the embodiment's own loader opens the UI with the message in the banner
+    rather than a traceback: nothing is built, nothing is served."""
+    monkeypatch.setattr(sys, "argv", ["wica-interaction-fake", "--config", "nope.json"])
+    seen: list[AppSystem] = []
+    monkeypatch.setattr(system_module, "build_ui", lambda s: _ui_double(s, seen))
+    monkeypatch.setattr(system_module, "_serve", lambda _s, _b: None)
+
+    def _load(path: str) -> tuple[AppConfig, Embodiment]:
+        raise ValueError(f"could not read config file {path!r}")
+
+    run_app(description="a fake body", load=_load)
+
+    assert len(seen) == 1
+    assert seen[0].wica is None and seen[0].embodiment is None
+    assert seen[0].missing == ["could not read config file 'nope.json'"]
+
+
+def _ui_double(system: AppSystem, seen: list[AppSystem]) -> Any:
+    """Stand in for `build_ui`: record the system and hand back the handle `run_app` expects."""
+    seen.append(system)
+
+    class _Ui:
+        blocks = cast(gr.Blocks, None)
+        transcript = TranscriptLog(system.wica, display_entry)
+
+    return _Ui()
+
+
+# --- Vision in: the hand-sign input (specs/gesture-input.md, "App integration") ----------------
+
+
+_HAND_FRAME = np.full((48, 64, 3), 200, dtype=np.uint8)
+
+
+class _ScriptedDetector:
+    """One centered hand in any non-black frame."""
+
+    def detect(self, image_bgr: np.ndarray, ts: float) -> tuple[DetectedHand, ...]:
+        if int(image_bgr[0, 0, 0]) == 0:
+            return ()
+        return (DetectedHand(box=(0.25, 0.25, 0.75, 0.75), score=0.95),)
+
+    def close(self) -> None:
+        pass
+
+
+class _ScriptedClassifier:
+    """Scores one label (`fist` ⇒ the `stop` sign by default) against the unmapped `call`, so a low
+    score means "no sign at all", not another sign."""
+
+    labels = ("fist", "call")
+
+    def __init__(self, fist: float, label: str = "fist") -> None:
+        self.fist = fist
+        self.label = label
+
+    def classify(self, image_bgr: np.ndarray) -> dict[str, float]:
+        return {self.label: self.fist, "call": 1.0 - self.fist}
+
+    def close(self) -> None:
+        pass
+
+
+def _vision_system(
+    embodiment: FakeEmbodiment, classifier: _ScriptedClassifier, script: list[dict]
+) -> AppSystem:
+    return _build(
+        embodiment,
+        script=script,
+        vision=VisionConfig(enabled=True, fps=100.0),
+        models=GestureModels(detector=_ScriptedDetector(), classifier=classifier),
+    )
+
+
+def _camera_reads(embodiment: FakeEmbodiment) -> int:
+    return sum(camera.reads for camera in embodiment.cameras)
+
+
+def _sign_steps(reactions: ReactionLog, hand: int) -> int:
+    """How many reasoning steps a sign on *hand* triggered, read off the reaction labels (each step
+    is labelled by its trigger through `display_entry`)."""
+    return sum(
+        f"✋ hand {hand}:" in label and "no sign" not in label
+        for label, _ in reactions.snapshot().choices
+    )
+
+
+def test_a_sign_wakes_the_agent_with_every_hand_in_its_prompt() -> None:
+    """The body's camera → pipeline → `hand_gesture_1` → one reasoning step whose prompt names the
+    sign that hand shows (and says the other hand shows none); the sign held over many frames wakes
+    the agent only once, and it going away does not wake it at all."""
+    embodiment = FakeEmbodiment(frames=_HAND_FRAME)
+    classifier = _ScriptedClassifier(fist=0.9)
+    system = _vision_system(embodiment, classifier, _say_once("okay, stopping"))
+    try:
+        assert system.gesture is not None
+        assert system.wica is not None
+        # One entry per hand the pipeline can publish (`max_hands`, 2 by default).
+        assert system.wica.world.is_registered("hand_gesture_1")
+        assert system.wica.world.is_registered("hand_gesture_2")
+        assert not system.wica.world.is_registered("hand_gesture_3")
+        # And the vocabulary is in the prompt, seeded from gesture_input at startup.
+        assert "## Hand signs" in system.wica.agent.system_prompt
+        _, reactions = _wire(system)
+        _start(system)
+        assert _wait_until(lambda: embodiment.said == ["okay, stopping"])
+        assert system.wica.world.get("hand_gesture_1") == "stop"
+        assert system.wica.world.get("hand_gesture_2") is None
+        prompt = reactions.prompt_text(0)
+        assert prompt is not None
+        assert 'hand 1 is showing the "stop" sign' in prompt
+        assert "hand 2 is not showing a sign" in prompt
+
+        # Still shown, many frames later: no second step for it (the `say` finishing re-triggers one
+        # step of its own — WICA's completion re-trigger — which is labelled by the say, not a sign).
+        reads_then = _camera_reads(embodiment)
+        assert _wait_until(lambda: _camera_reads(embodiment) >= reads_then + 10)
+        assert _sign_steps(reactions, 1) == 1
+
+        # Gone: the entry updates (silently), the agent is not woken.
+        classifier.fist = 0.1
+        assert _wait_until(lambda: system.wica.world.get("hand_gesture_1") is None)  # type: ignore[union-attr]
+        reads_then = _camera_reads(embodiment)
+        assert _wait_until(lambda: _camera_reads(embodiment) >= reads_then + 10)
+        assert _sign_steps(reactions, 1) == 1
+        assert not any("no sign" in label for label, _ in reactions.snapshot().choices)
+        assert embodiment.said == ["okay, stopping"]
+    finally:
+        _shutdown(system)
+
+
+def test_another_sign_wakes_the_agent_again() -> None:
+    """A hand switching sign with no sign-less frame between is a second trigger: `sign_shown` fires
+    on `stop → five` too, and the new prompt carries the new sign."""
+    embodiment = FakeEmbodiment(frames=_HAND_FRAME)
+    classifier = _ScriptedClassifier(fist=0.9)
+    # One step per trigger, each speaking: the second is the one the new sign wakes.
+    script = [
+        {"tool_calls": [{"name": "say", "args": {"text": "okay, stopping"}}]},
+        {"tool_calls": [{"name": "say", "args": {"text": "five it is"}}]},
+    ]
+    system = _vision_system(embodiment, classifier, script)
+    try:
+        assert system.wica is not None
+        _, reactions = _wire(system)
+        _start(system)
+        assert _wait_until(lambda: embodiment.said == ["okay, stopping"])
+        classifier.label = "palm"  # stop → five, no gap
+        assert _wait_until(
+            lambda: system.wica.world.get("hand_gesture_1") == "five"  # type: ignore[union-attr]
+        )
+        assert _wait_until(lambda: embodiment.said == ["okay, stopping", "five it is"])
+        assert system.wica.world.get("hand_gesture_1") == "five"
+        assert _sign_steps(reactions, 1) == 2
+    finally:
+        _shutdown(system)
+
+
+def test_vision_is_off_without_a_config_section() -> None:
+    system = _build(FakeEmbodiment(), script=[])
+    try:
+        assert system.gesture is None
+        assert system.wica is not None
+        assert not system.wica.world.is_registered("hand_gesture_1")
+        assert "## Hand signs" not in system.wica.agent.system_prompt
+        assert not any(m.startswith("Vision:") for m in system.missing)
+    finally:
+        _shutdown(system)
+
+
+def test_vision_section_present_but_disabled_builds_nothing() -> None:
+    """`enabled: false` (the default) with the body up: no gesture input, no `hand_gesture_<n>`
+    entry, no hand-signs section — the section can sit in the file, tuned, without vision running."""
+    system = _build(FakeEmbodiment(), script=[], vision=VisionConfig(fps=100.0))
+    try:
+        assert system.gesture is None
+        assert system.wica is not None
+        assert not system.wica.world.is_registered("hand_gesture_1")
+        assert "## Hand signs" not in system.wica.agent.system_prompt
+        assert not any(m.startswith("Vision:") for m in system.missing)
+    finally:
+        _shutdown(system)
+
+
+def test_vision_max_hands_and_fps_reach_the_gesture_input() -> None:
+    """The configured hand cap and rate are what the pipeline (and the body's camera) run with, not
+    the library's defaults."""
+    embodiment = FakeEmbodiment(frames=_HAND_FRAME)
+    system = _build(
+        embodiment,
+        script=[],
+        vision=VisionConfig(enabled=True, max_hands=1, fps=20.0),
+        models=GestureModels(
+            detector=_ScriptedDetector(), classifier=_ScriptedClassifier(fist=0.9)
+        ),
+    )
+    try:
+        assert system.gesture is not None
+        assert system.gesture.status()["max_hands"] == 1
+        assert system.gesture.status()["target_fps"] == 20.0
+        # The camera the body handed over was asked for the same rate.
+        assert [camera.fps() for camera in embodiment.cameras] == [20.0]
+    finally:
+        _shutdown(system)
+
+
+def test_vision_needs_a_body() -> None:
+    """No body ⇒ no camera ⇒ no gesture input and no `hand_gesture_<n>` entry (the agent is never
+    told about hands it cannot see); the banner carries only the body's line."""
+    system = build_system(
+        _config(script=[], vision=VisionConfig(enabled=True)),
+        FakeEmbodiment(raise_on_enter="no body"),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+    )
+    try:
+        assert system.gesture is None
+        assert system.wica is not None
+        assert not system.wica.world.is_registered("hand_gesture_1")
+        assert "## Hand signs" not in system.wica.agent.system_prompt
+        assert [m for m in system.missing if m.startswith("Vision:")] == []
+    finally:
+        _shutdown(system)
+
+
+def test_shutdown_stops_vision_before_the_body_exits() -> None:
+    embodiment = FakeEmbodiment(frames=_HAND_FRAME)
+    system = _vision_system(embodiment, _ScriptedClassifier(fist=0.1), [])
+    try:
+        _wire(system)
+        _start(system)
+        assert system.gesture is not None and system.gesture.running
+        assert _wait_until(lambda: _camera_reads(embodiment) > 0)
+    finally:
+        _shutdown(system)
+    assert system.gesture is not None and not system.gesture.running
+    assert embodiment.exited
+    reads_then = _camera_reads(embodiment)
+    time.sleep(0.05)
+    assert _camera_reads(embodiment) == reads_then  # nothing reads the released camera

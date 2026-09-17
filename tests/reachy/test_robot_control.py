@@ -6,7 +6,7 @@ Tests drive the public ``RobotControl`` coroutines the way WICA's Commands will,
 changes and records the moves it is handed, so the motor precondition is genuinely enforced (not
 mocked). They assert on the non-raising Command contract — a readable string in every case, never an
 exception — and on the side effects the fake records, rather than on exact wording. See
-specs/robot-control.md ("Testing").
+specs/reachy-embodiment.md ("Testing").
 
 The verbs use ``asyncio.to_thread`` internally, so each coroutine is driven with ``asyncio.run`` to
 provide a running loop (no async-test plugin required). ``api.robot`` is only available while entered
@@ -18,7 +18,7 @@ play is observed here as its sidecar sound reaching the fake's media layer (``me
 as a discrete "move" command.
 
 Head tracking is deliberately not exercised here: it is no longer an agent-facing command (the
-bridge's motion loop drives it automatically, like presence and breathing) — see specs/robot-control.md.
+bridge's motion loop drives it automatically, like presence and breathing) — see specs/reachy-embodiment.md.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from reachy_mini_bridge.api import ReachyMiniApi
 from reachy_mini_bridge.fake_reachy_mini import FakeReachyMini
 from wica import Command
 
-from wica_interaction.robot_control import (
+from wica_interaction.reachy.robot_control import (
     RobotControl,
     emotions_prompt_section,
 )

@@ -1,10 +1,10 @@
 ---
 code:
-  - src/wica_interaction/app.py
+  - src/wica_interaction/system.py
   - src/wica_interaction/app_ui.py
-  - prompts/assistant.md
+  - prompts/reachy.md
 tests:
-  - tests/test_app.py
+  - tests/test_system.py
   - tests/test_app_ui.py
 ---
 

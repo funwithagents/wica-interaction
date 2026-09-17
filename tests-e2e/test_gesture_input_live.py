@@ -1,25 +1,22 @@
 """Live tier: the hand-sign input over the REAL models (MediaPipe hand landmarker + the HaGRID
-ViT), fed `vision-modules`' bundled fixture photos through a fake robot api.
+ViT), fed `vision-modules`' bundled fixture photos through a scripted camera source.
 
-No robot: the fake api's `get_camera_frame()` serves one fixed photo, the way the real bridge would
-serve one camera frame. The models download on first run (~340 MB); a checkout without the sibling
-fixtures skips, and a model that cannot be loaded (no network on first run, a missing extra) is
-reported by the pipeline as a stage error and turned into a skip here rather than a failure.
+No camera and no body: the source serves one fixed photo the way a real embodiment's camera would
+serve one frame. The models download on first run (~340 MB); a checkout without the sibling fixtures
+skips, and a model that cannot be loaded (no network on first run, a missing extra) is reported by
+the pipeline as a stage error and turned into a skip here rather than a failure.
 """
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import time
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import cv2
 import numpy as np
 import pytest
-from reachy_mini_bridge.api import ReachyMiniApi
 
 from wica_interaction.gesture_input import GestureInput
 
@@ -42,23 +39,34 @@ def _fixture(name: str) -> np.ndarray:
     return image
 
 
-class FakeCameraApi:
-    def __init__(self, frame: np.ndarray) -> None:
+class ScriptedCameraSource:
+    """The embodiment's camera, scripted: one fixed photo at the configured rate. Duplicated from
+    the fast tier's own fake — the two tiers do not import each other (specs/testing.md)."""
+
+    capture_error: str | None = None
+
+    def __init__(self, frame: np.ndarray, *, fps: float = 5.0) -> None:
         self.frame = frame
+        self._interval = 1.0 / fps
+        self._closed = threading.Event()
+        self._closed.set()
 
-    async def get_camera_frame(self) -> np.ndarray | None:
-        return self.frame
+    def open(self) -> None:
+        self._closed.clear()
 
+    def read(self) -> np.ndarray | None:
+        while not self._closed.is_set():
+            self._closed.wait(self._interval)
+            if self._closed.is_set():
+                break
+            return self.frame
+        return None
 
-@pytest.fixture
-def loop() -> Iterator[asyncio.AbstractEventLoop]:
-    loop = asyncio.new_event_loop()
-    thread = threading.Thread(target=loop.run_forever, daemon=True)
-    thread.start()
-    yield loop
-    loop.call_soon_threadsafe(loop.stop)
-    thread.join(timeout=2.0)
-    loop.close()
+    def close(self) -> None:
+        self._closed.set()
+
+    def fps(self) -> float:
+        return 1.0 / self._interval
 
 
 def _wait_until(predicate: Any, timeout: float) -> bool:
@@ -70,15 +78,12 @@ def _wait_until(predicate: Any, timeout: float) -> bool:
     return predicate()
 
 
-def _run(
-    loop: asyncio.AbstractEventLoop, frame: np.ndarray
-) -> tuple[list[Delivery], dict]:
+def _run(frame: np.ndarray) -> tuple[list[Delivery], dict]:
     """Run the real pipeline over *frame* until the classifier has produced a result (or a stage
     error), then return the deliveries and the final status."""
     deliveries: list[Delivery] = []
     gesture = GestureInput(
-        cast(ReachyMiniApi, FakeCameraApi(frame)),
-        loop,
+        ScriptedCameraSource(frame),
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         threshold=0.55,
         fps=5.0,
@@ -115,23 +120,18 @@ def _run(
         ("hand_three2.jpg", "three"),
     ],
 )
-def test_real_models_deliver_each_photos_sign(
-    loop: asyncio.AbstractEventLoop, photo: str, sign: str
-) -> None:
+def test_real_models_deliver_each_photos_sign(photo: str, sign: str) -> None:
     """The real classifier's label, through the app's `SIGNS` table, is the value hand 1 carries."""
-    deliveries, status = _run(loop, _fixture(photo))
+    deliveries, status = _run(_fixture(photo))
     assert deliveries == [(1, sign)], status
 
 
-def test_real_models_deliver_nothing_with_no_hand(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
+def test_real_models_deliver_nothing_with_no_hand() -> None:
     """No hand ⇒ the hand stage publishes present=False results; the classifier publishes empty
     ones (confidence stays 0.0), so wait on the hand stage's output instead."""
     deliveries: list[Delivery] = []
     gesture = GestureInput(
-        cast(ReachyMiniApi, FakeCameraApi(_fixture("no_hand.jpg"))),
-        loop,
+        ScriptedCameraSource(_fixture("no_hand.jpg")),
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         fps=5.0,
     )
