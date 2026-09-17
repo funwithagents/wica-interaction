@@ -39,9 +39,9 @@ def _composed(system_prompt_file: str = "prompts/assistant.md") -> dict:
         "reachy": {
             "tts": {
                 "module": {
-                    "type": "elevenlabs",
-                    "api_key_env": "ELEVENLABS_API_KEY",
-                    "voice_id": "JBFqnCBsd6RMkjVDRZzb",
+                    "type": "pocket",
+                    "voice": "george",
+                    "device": "auto",
                 },
                 "player": {"device": None},
             }
@@ -74,9 +74,9 @@ def test_happy_path_builds_both_engine_configs_and_a_bridge_config(
     assert isinstance(cfg.reachy, ReachyMiniConfig)
     assert cfg.reachy.backend == "real"
     assert cfg.reachy.tts is not None
-    assert cfg.reachy.tts["module"]["type"] == "elevenlabs"
+    assert cfg.reachy.tts["module"]["type"] == "pocket"
     # The module block is carried through verbatim, extra fields intact.
-    assert cfg.reachy.tts["module"]["voice_id"] == "JBFqnCBsd6RMkjVDRZzb"
+    assert cfg.reachy.tts["module"]["voice"] == "george"
 
 
 def test_system_prompt_file_is_located_against_config_dir(tmp_path: Path) -> None:
@@ -136,7 +136,9 @@ def test_loads_with_credentials_unset(
     # The composed file references keys by env-var name; with those vars unset, loading must still
     # succeed (no env read at load — the "app opens without credentials" contract). Neither WICA's
     # loader, ASR's, nor the bridge's reads an env var at load time.
-    for var in ("WICA_ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "DEEPGRAM_API_KEY"):
+    # The default voice (pocket) is a local model with no key, so only the agent and ASR
+    # providers have an env var to clear here.
+    for var in ("WICA_ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
     cfg = load_config(_write(tmp_path, _composed()))

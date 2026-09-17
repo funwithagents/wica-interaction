@@ -529,18 +529,24 @@ def test_missing_asr_key_degrades_but_robot_voice_survive(monkeypatch: Any) -> N
         _shutdown(system)
 
 
+# A tts-engine module type that is not in its registry, so `load_module` rejects it. Used to fail
+# the bridge's synthesizer build deterministically: unlike an unset `api_key_env`, this needs no
+# provider SDK installed (a provider module raises on its own lazy import before it ever reads the
+# env var, so which failure you get would depend on which extra happens to be installed) and no
+# model download. The degrade contract is about *any* failed voice build, not one provider's.
+_UNKNOWN_TTS_MODULE = "no_such_tts_module"
+
+
 def _tts_degrade_config() -> AppConfig:
-    """A real `reachy.tts` block referencing an unset env var (so the bridge's synthesizer build
-    fails), with a fake WICA agent and the bridge's `fake` robot backend — only the voice should
-    degrade (the bridge itself, not this app, builds and records the failed synthesizer)."""
+    """A `reachy.tts` block naming an unknown module type (so the bridge's synthesizer build fails),
+    with a fake WICA agent and the bridge's `fake` robot backend — only the voice should degrade
+    (the bridge itself, not this app, builds and records the failed synthesizer)."""
     wica = WicaConfig.from_dict(
         {"agent": {"provider": "fake", "model": "scripted", "system_prompt": "double"}}
     )
     reachy = ReachyMiniConfig(
         backend="fake",
-        tts={
-            "module": {"type": "elevenlabs", "api_key_env": "WICA_TEST_UNSET_TTS_KEY"}
-        },
+        tts={"module": {"type": _UNKNOWN_TTS_MODULE}},
     )
     return AppConfig(
         wica=wica,
@@ -549,10 +555,9 @@ def _tts_degrade_config() -> AppConfig:
     )
 
 
-def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
-    """With the TTS key unset, the robot still comes up (mic/ASR/actions intact) and `say` reports a
-    readable TTS error instead of the whole robot being reported missing."""
-    monkeypatch.delenv("WICA_TEST_UNSET_TTS_KEY", raising=False)
+def test_failed_voice_build_degrades_only_the_voice() -> None:
+    """With the voice failing to build, the robot still comes up (mic/ASR/actions intact) and `say`
+    reports a readable TTS error instead of the whole robot being reported missing."""
     fake_asr = FakeASREngine()
     # No `api=` injected: build_system builds the real fake-backend api, whose `tts` block fails to
     # build — the bridge records that as `synthesizer_error` instead of raising.
@@ -561,10 +566,10 @@ def test_missing_tts_key_degrades_only_the_voice(monkeypatch: Any) -> None:
         assert system.api is not None  # the robot is up …
         assert system.voice is not None  # … so the voice exists (say is registered) …
         assert system.bridge is not None  # … and so does the mic-fed ASR bridge
-        # The failure is reported on the TTS axis, naming the env var — not as a robot failure.
+        # The failure is reported on the TTS axis, carrying the bridge's own recorded error (not a
+        # canned string) — and not as a robot failure.
         assert any(
-            m.startswith("TTS:") and "WICA_TEST_UNSET_TTS_KEY" in m
-            for m in system.missing
+            m.startswith("TTS:") and _UNKNOWN_TTS_MODULE in m for m in system.missing
         )
         assert not any(m.startswith("Robot:") for m in system.missing)
         # say degrades to a readable string on the app loop (VoiceOutput maps the BridgeError).

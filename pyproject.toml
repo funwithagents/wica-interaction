@@ -14,13 +14,12 @@ dependencies = [
     "asr-engine[deepgram]",
     # The robot: high-level interaction verbs (say, mic stream, play_emotion, head tracking, motors)
     # over a real/sim/fake Reachy Mini. The bridge owns its own config (ReachyMiniConfig) and builds
-    # the voice itself from the `reachy.tts` block; the `tts` extra pulls the tts-engine-backed
-    # SpeechSynthesizer it uses to route speech to the robot speaker.
-    "reachy-mini-bridge[tts]",
-    # The bridge's `tts` extra pulls only core tts-engine; providers are extras there too. The
-    # `elevenlabs` extra matches the committed config.example.json (reachy.tts type "elevenlabs").
-    # Nothing in this app imports tts-engine — this entry exists only to select the extra.
-    "tts-engine[elevenlabs]",
+    # the voice itself from the `reachy.tts` block, on a tts-engine it carries as a base dependency.
+    # Its TTS providers are extras mirroring tts-engine's own one-to-one, so the extra to install is
+    # named by `reachy.tts.module.type`: `tts-pocket` matches the committed config.example.json
+    # (type "pocket") — the local model, no key and no network at synthesis time. Switching the
+    # config to the cloud provider means swapping this for `[tts-elevenlabs]`.
+    "reachy-mini-bridge[tts-pocket]",
     # The anthropic extra pulls langchain-anthropic so the committed config.example.json (provider
     # "anthropic") runs with just an API key set. Switch provider by editing the config and swapping
     # that extra (see wica's optional-dependencies: openai, huggingface-hub). The gradio extra is not
@@ -54,11 +53,16 @@ dev = [
 
 [tool.uv.sources]
 # First-party sibling repos, consumed as local path dependencies during development (a pinned git
-# URL later, per specs/project.md). They live in the parent folder. tts-engine is not a direct
-# dependency only to select its provider extra (reachy-mini-bridge[tts] pulls the package); its
-# editable source matches the bridge's own.
+# URL later, per specs/project.md). They live in the parent folder. There is deliberately no
+# tts-engine entry: the bridge names it by GitHub URL as a *direct reference* in its own metadata,
+# which uv sources cannot redirect from here — a path entry would either be ignored (sources reach
+# only this project's own dependencies, not transitive ones) or, if tts-engine were re-declared
+# directly, fail the resolve with "conflicting URLs for package `tts-engine`". So tts-engine
+# resolves from GitHub and the lock pins its commit; `uv lock --upgrade-package tts-engine` picks
+# up newer ones. To drive a local checkout here, add an uncommitted
+# `[tool.uv] override-dependencies = ["tts-engine[pocket] @ file:///abs/path/to/tts-engine"]`
+# (the extra must be repeated there — an override replaces the whole requirement).
 wica = { path = "../wica-framework", editable = true }
-tts-engine = { path = "../tts-engine", editable = true }
 asr-engine = { path = "../asr-engine", editable = true }
 reachy-mini-bridge = { path = "../reachy-mini-bridge", editable = true }
 vision-modules = { path = "../vision-modules", editable = true }
