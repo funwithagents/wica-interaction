@@ -9,13 +9,18 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     # Speech in: the app runs its own ASR over the robot's echo-cancelled mic stream (the bridge
-    # embeds no ASR — see reachy-mini-bridge specs/audio.md).
-    "asr-engine",
+    # embeds no ASR — see reachy-mini-bridge specs/audio.md). Providers are extras upstream; the
+    # `deepgram` extra matches the committed config.example.json (asr type "deepgram_v2").
+    "asr-engine[deepgram]",
     # The robot: high-level interaction verbs (say, mic stream, play_emotion, head tracking, motors)
     # over a real/sim/fake Reachy Mini. The bridge owns its own config (ReachyMiniConfig) and builds
     # the voice itself from the `reachy.tts` block; the `tts` extra pulls the tts-engine-backed
     # SpeechSynthesizer it uses to route speech to the robot speaker.
     "reachy-mini-bridge[tts]",
+    # The bridge's `tts` extra pulls only core tts-engine; providers are extras there too. The
+    # `elevenlabs` extra matches the committed config.example.json (reachy.tts type "elevenlabs").
+    # Nothing in this app imports tts-engine — this entry exists only to select the extra.
+    "tts-engine[elevenlabs]",
     # The anthropic extra pulls langchain-anthropic so the committed config.example.json (provider
     # "anthropic") runs with just an API key set. Switch provider by editing the config and swapping
     # that extra (see wica's optional-dependencies: openai, huggingface-hub). The gradio extra is not
@@ -50,7 +55,8 @@ dev = [
 [tool.uv.sources]
 # First-party sibling repos, consumed as local path dependencies during development (a pinned git
 # URL later, per specs/project.md). They live in the parent folder. tts-engine is not a direct
-# dependency (reachy-mini-bridge[tts] pulls it); its editable source matches the bridge's own.
+# dependency only to select its provider extra (reachy-mini-bridge[tts] pulls the package); its
+# editable source matches the bridge's own.
 wica = { path = "../wica-framework", editable = true }
 tts-engine = { path = "../tts-engine", editable = true }
 asr-engine = { path = "../asr-engine", editable = true }
