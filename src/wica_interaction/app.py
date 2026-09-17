@@ -63,12 +63,12 @@ from wica.contrib.gradio import TranscriptLog
 
 from wica_interaction.app_ui import build_ui
 from wica_interaction.asr_bridge import AsrBridge, RobotMicSource
-from wica_interaction.config import AppConfig, load_config
 from wica_interaction.gesture_input import (
     GestureInput,
     GestureModels,
     sign_shown,
 )
+from wica_interaction.reachy.config import ReachyConfig, load_config
 from wica_interaction.robot_control import (
     RobotControl,
     emotions_prompt_section,
@@ -140,7 +140,7 @@ class AppSystem:
 
 
 def build_system(
-    config: AppConfig,
+    config: ReachyConfig,
     *,
     api: ReachyMiniApi | None = None,
     asr_engine: ASREngine | None = None,
@@ -221,7 +221,7 @@ def build_system(
     # resolved *here* (not inside Wica.init) so the emotion names can be appended to it. ----------
     wica: Wica | None = None
     try:
-        wica = Wica.init(_seeded_wica_config(config.wica, emotions), loop=loop)
+        wica = Wica.init(_seeded_wica_config(config.app.wica, emotions), loop=loop)
     except MissingEnvError as exc:
         missing.append(f"Agent: environment variable {exc.env_var!r} is not set")
     except ConfigError as exc:
@@ -267,7 +267,7 @@ def build_system(
     elif robot is not None:
         try:
             mic = RobotMicSource(robot)
-            asr = ASREngine(config.asr_engine, audio_source=mic)
+            asr = ASREngine(config.app.asr_engine, audio_source=mic)
             bridge = AsrBridge(asr, on_final_segment=_deliver_speech, mic=mic)
         except ValueError as exc:
             missing.append(f"ASR: {exc}")
@@ -278,7 +278,7 @@ def build_system(
     # cannot see. Construction loads no model and touches no camera (both happen on start()), so a
     # failure here is a programming/config error — still a banner line, never a crash. -----------
     gesture: GestureInput | None = None
-    vision = config.vision
+    vision = config.app.vision
     if vision is not None and vision.enabled and robot is not None and wica is not None:
         world = wica.world
 

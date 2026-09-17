@@ -43,6 +43,7 @@ from wica_interaction.app import (
 from wica_interaction.app_ui import display_entry
 from wica_interaction.config import AppConfig, VisionConfig
 from wica_interaction.gesture_input import GestureModels
+from wica_interaction.reachy.config import ReachyConfig
 
 
 class FakeReachyMiniApi:
@@ -159,7 +160,7 @@ def _config(
     script: list[dict],
     reachy: ReachyMiniConfig | None = None,
     vision: VisionConfig | None = None,
-) -> AppConfig:
+) -> ReachyConfig:
     """An `AppConfig` whose WICA section is the `fake` provider running *script*.
 
     The ASR section is unused here (tests inject fakes), so it is `None` behind a cast. `vision`
@@ -175,11 +176,9 @@ def _config(
             }
         }
     )
-    return AppConfig(
-        wica=wica,
-        asr_engine=cast(ASREngineConfig, None),
+    return ReachyConfig(
+        app=AppConfig(wica=wica, asr_engine=cast(ASREngineConfig, None), vision=vision),
         reachy=reachy if reachy is not None else ReachyMiniConfig(backend="fake"),
-        vision=vision,
     )
 
 
@@ -493,7 +492,7 @@ def test_robot_connect_failure_degrades_but_agent_still_reasons() -> None:
         _shutdown(system)
 
 
-def _asr_degrade_config() -> AppConfig:
+def _asr_degrade_config() -> ReachyConfig:
     """A real ASR config referencing an unset env var (so `ASREngine` construction raises), with a fake
     WICA agent and (in the test) an injected fake robot — the ASR side alone should degrade."""
     wica = WicaConfig.from_dict(
@@ -502,9 +501,8 @@ def _asr_degrade_config() -> AppConfig:
     asr = ASREngineConfig.from_dict(
         {"module": {"type": "deepgram_v2", "api_key_env": "WICA_TEST_UNSET_ASR_KEY"}}
     )
-    return AppConfig(
-        wica=wica,
-        asr_engine=asr,
+    return ReachyConfig(
+        app=AppConfig(wica=wica, asr_engine=asr),
         reachy=ReachyMiniConfig(backend="fake"),
     )
 
@@ -537,7 +535,7 @@ def test_missing_asr_key_degrades_but_robot_voice_survive(monkeypatch: Any) -> N
 _UNKNOWN_TTS_MODULE = "no_such_tts_module"
 
 
-def _tts_degrade_config() -> AppConfig:
+def _tts_degrade_config() -> ReachyConfig:
     """A `reachy.tts` block naming an unknown module type (so the bridge's synthesizer build fails),
     with a fake WICA agent and the bridge's `fake` robot backend — only the voice should degrade
     (the bridge itself, not this app, builds and records the failed synthesizer)."""
@@ -548,9 +546,10 @@ def _tts_degrade_config() -> AppConfig:
         backend="fake",
         tts={"module": {"type": _UNKNOWN_TTS_MODULE}},
     )
-    return AppConfig(
-        wica=wica,
-        asr_engine=cast(ASREngineConfig, None),  # a fake engine is injected
+    return ReachyConfig(
+        app=AppConfig(
+            wica=wica, asr_engine=cast(ASREngineConfig, None)
+        ),  # a fake engine is injected
         reachy=reachy,
     )
 
@@ -680,9 +679,8 @@ def test_bad_system_prompt_file_degrades(tmp_path: Path) -> None:
             }
         }
     )
-    config = AppConfig(
-        wica=wica,
-        asr_engine=cast(ASREngineConfig, None),
+    config = ReachyConfig(
+        app=AppConfig(wica=wica, asr_engine=cast(ASREngineConfig, None)),
         reachy=ReachyMiniConfig(backend="fake"),
     )
     fake_api = FakeReachyMiniApi()
@@ -761,7 +759,7 @@ def test_main_requires_a_config_path(
     back to a default file (the committed example is a template to copy and adapt, not one meant to
     run unmodified)."""
     monkeypatch.setattr(sys, "argv", ["reachy-mini-interaction-wica"])
-    built: list[AppConfig] = []
+    built: list[ReachyConfig] = []
     monkeypatch.setattr(app, "build_system", lambda config, **_kw: built.append(config))
 
     with pytest.raises(SystemExit) as exc:

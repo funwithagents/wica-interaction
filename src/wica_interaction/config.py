@@ -1,10 +1,13 @@
-"""Composed application config: one JSON file with `wica`/`asr` (+ optional `reachy`) sections.
+"""The **shared** sections of the composed config: `wica`, `asr` and the optional `vision`.
 
-Each section holds exactly the document its owner's own loader expects, and is handed to that
-loader's `from_dict` constructor so all field-level validation and defaults come from the owner, not
-from here. `wica` and `asr` are engine sections; `reachy` is the whole robot backend, including the
-voice (`reachy.tts`) — a verbatim `reachy-mini-bridge` config, delegated to
-`reachy_mini_bridge.config.ReachyMiniConfig.from_dict`. See specs/configuration.md.
+One JSON file stands the app up, and this module owns the part every embodiment has in common —
+reading the file, rejecting a section no embodiment declares, and turning the shared sections into
+the ``AppConfig`` the lifecycle (system.py) is built from. Each section holds exactly the document
+its owner's own loader expects and is handed to that loader's ``from_dict`` constructor, so all
+field-level validation and defaults come from the owner, not from here; ``vision`` is the one
+schema the app owns itself (`vision-modules` has no config document). Each embodiment's own loader
+(`computer/config.py`, `reachy/config.py`) reads the file once, calls ``load_app_config`` with its
+section set, and parses its own sections alongside. See specs/configuration.md.
 """
 
 from __future__ import annotations
@@ -15,8 +18,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from asr_engine.config import ASREngineConfig
-from reachy_mini_bridge.config import ReachyMiniConfig
 from wica.config import WicaConfig
+
+# The top-level keys every embodiment's config may carry, whatever its body; each embodiment's
+# loader passes these plus its own to `load_app_config` (specs/configuration.md, "Loading").
+SHARED_SECTIONS = frozenset({"wica", "asr", "vision"})
 
 _REQUIRED_SECTIONS = ("wica", "asr")
 
@@ -87,29 +93,25 @@ def _is_number(value: Any) -> bool:
 
 @dataclass
 class AppConfig:
-    """The whole app's config: one live engine config per section, plus the robot (and voice), plus
-    the optional vision section (`None`, or `enabled` false ⇒ no gesture input)."""
+    """The shared sections — what the lifecycle (system.py) is built from, whatever the embodiment.
+
+    One live engine config per section, plus the optional vision section (`None`, or `enabled` false
+    ⇒ no gesture input). Each embodiment's own config object holds this as its ``app`` field and adds
+    its own sections next to it (specs/configuration.md).
+    """
 
     wica: WicaConfig
     asr_engine: ASREngineConfig
-    reachy: ReachyMiniConfig
     vision: VisionConfig | None = None
 
 
-def load_config(path: str) -> AppConfig:
-    """Load the composed app config at *path* into an ``AppConfig``.
+def read_config_file(path: str) -> dict[str, Any]:
+    """Read and JSON-parse the config file at *path* into the raw object its loader validates.
 
-    Reads one JSON object with the required `wica` and `asr` sections (and the optional `reachy` and
-    `vision` sections) and delegates each to its own ``from_dict`` constructor (no temp files). WICA's section is
-    located against the config file's own directory so a relative ``system_prompt_file`` resolves
-    there, exactly as ``WicaConfig.from_json`` would. No env var or prompt file is read here — that
-    stays deferred to engine build — so this loads even with credentials unset. The optional `reachy`
-    section is a verbatim ``reachy-mini-bridge`` config (absent ⇒ that bridge's own defaults: the
-    `real` backend, no voice).
-
-    Raises ``ValueError`` if the file is missing, is not a JSON object, or lacks a required section.
-    Field-level errors propagate from the engine loaders unchanged (the bridge's ``ConfigError`` is a
-    ``ValueError`` subclass, so this holds for `reachy` too).
+    The first of the two loading layers (specs/configuration.md): every embodiment's ``load_config``
+    calls this once, then hands the result to ``load_app_config`` plus its own section parsers, so
+    the file is read exactly once. Raises ``ValueError`` if it is missing, unreadable, not valid
+    JSON, or not a JSON object — the one error type ``run_app`` catches to open in degraded mode.
     """
     try:
         with open(path, encoding="utf-8") as f:
@@ -126,6 +128,32 @@ def load_config(path: str) -> AppConfig:
         # ValueError (not TypeError) keeps one uniform error surface for any malformed config file.
         raise ValueError(f"config file {path!r} must contain a JSON object")  # noqa: TRY004
 
+    return data
+
+
+def load_app_config(
+    data: dict[str, Any], *, path: str, sections: frozenset[str]
+) -> AppConfig:
+    """Validate the shared part of an already-parsed config object into an ``AppConfig``.
+
+    *sections* is every top-level key the calling embodiment accepts — ``SHARED_SECTIONS`` plus its
+    own — so a key outside it is rejected here rather than silently ignored: a reachy file handed to
+    the computer command fails on ``'reachy'``. Then each shared section is delegated to its owner's
+    ``from_dict`` (no temp files): WICA's is located against the config file's own directory so a
+    relative ``system_prompt_file`` resolves there, exactly as ``WicaConfig.from_json`` would. No env
+    var or prompt file is read here — that stays deferred to engine build — so this loads even with
+    credentials unset.
+
+    Raises ``ValueError`` for an unknown section or a missing required one; field-level errors
+    propagate from the owners' loaders unchanged.
+    """
+    unknown = sorted(set(data) - sections)
+    if unknown:
+        raise ValueError(
+            f"config file {path!r}: unknown section(s): "
+            f"{', '.join(repr(k) for k in unknown)}"
+        )
+
     missing = [key for key in _REQUIRED_SECTIONS if key not in data]
     if missing:
         raise ValueError(
@@ -133,14 +161,11 @@ def load_config(path: str) -> AppConfig:
             f"{', '.join(repr(k) for k in missing)}"
         )
 
-    base_dir = os.path.dirname(path)
-
     return AppConfig(
-        wica=WicaConfig.from_dict(data["wica"], base_dir=base_dir),
+        wica=WicaConfig.from_dict(data["wica"], base_dir=os.path.dirname(path)),
         asr_engine=ASREngineConfig.from_dict(
-            _engine_block(data["asr"], name="asr", path=path)
+            engine_block(data["asr"], name="asr", path=path)
         ),
-        reachy=_reachy_config(data.get("reachy"), path=path),
         vision=(
             VisionConfig.from_dict(data["vision"], path=path)
             if data.get("vision") is not None
@@ -149,18 +174,11 @@ def load_config(path: str) -> AppConfig:
     )
 
 
-def _reachy_config(section: Any, *, path: str) -> ReachyMiniConfig:
-    """Parse the optional `reachy` section (absent ⇒ the bridge's own defaults), delegated to the
-    bridge's loader for every field-level validation rule."""
-    if section is None:
-        return ReachyMiniConfig()
-    if not isinstance(section, dict):
-        raise ValueError(f"config file {path!r}: section 'reachy' must be an object")  # noqa: TRY004
-    return ReachyMiniConfig.from_dict(section)
+def engine_block(section: Any, *, name: str, path: str) -> dict[str, Any]:
+    """Return the `engine` block of an engine section, or raise a clear error about its shape.
 
-
-def _engine_block(section: Any, *, name: str, path: str) -> dict[str, Any]:
-    """Return the `engine` block of an engine section, or raise a clear error about its shape."""
+    Public because every embodiment's loader calls it for its own engine sections (the computer's
+    ``tts``), the same way this module calls it for ``asr``."""
     if not isinstance(section, dict) or "engine" not in section:
         raise ValueError(
             f"config file {path!r}: section {name!r} must be an object with an 'engine' block"

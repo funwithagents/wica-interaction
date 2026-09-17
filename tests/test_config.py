@@ -1,4 +1,10 @@
-"""Functional tests for the composed app config loader (specs/configuration.md)."""
+"""Functional tests for the shared part of the composed app config (specs/configuration.md).
+
+Drives the two loading layers every embodiment reuses — ``read_config_file`` (the file rules) and
+``load_app_config`` (the shared sections, and the unknown-section rule scoped by the caller's
+section set). The sections an embodiment adds are tested with that embodiment
+(``tests/reachy/test_config.py``, ``tests/computer/test_config.py``).
+"""
 
 from __future__ import annotations
 
@@ -7,14 +13,22 @@ from pathlib import Path
 
 import pytest
 from asr_engine.config import ASREngineConfig
-from reachy_mini_bridge.config import ReachyMiniConfig
 from wica.config import WicaConfig
 
-from wica_interaction.config import AppConfig, VisionConfig, load_config
+from wica_interaction.config import (
+    SHARED_SECTIONS,
+    AppConfig,
+    VisionConfig,
+    load_app_config,
+    read_config_file,
+)
+
+# What a reachy-flavoured caller passes: the shared names plus its own section.
+_SECTIONS = SHARED_SECTIONS | {"reachy"}
 
 
-def _composed(system_prompt_file: str = "prompts/assistant.md") -> dict:
-    """A full, valid composed config using env-reference keys (no literals, no env reads at load)."""
+def _composed(system_prompt_file: str = "prompts/reachy.md") -> dict:
+    """A full, valid shared config using env-reference keys (no literals, no env reads at load)."""
     return {
         "wica": {
             "agent": {
@@ -36,16 +50,6 @@ def _composed(system_prompt_file: str = "prompts/assistant.md") -> dict:
                 "segmentation": {"end_of_speech_timeout_s": 2.0},
             }
         },
-        "reachy": {
-            "tts": {
-                "module": {
-                    "type": "pocket",
-                    "voice": "george",
-                    "device": "auto",
-                },
-                "player": {"device": None},
-            }
-        },
     }
 
 
@@ -55,10 +59,16 @@ def _write(tmp_path: Path, config: dict, name: str = "app.json") -> str:
     return str(path)
 
 
-def test_happy_path_builds_both_engine_configs_and_a_bridge_config(
-    tmp_path: Path,
-) -> None:
-    cfg = load_config(_write(tmp_path, _composed()))
+def _load(
+    tmp_path: Path, config: dict, *, sections: frozenset[str] = _SECTIONS
+) -> AppConfig:
+    """Read + validate, the way an embodiment's own ``load_config`` does."""
+    path = _write(tmp_path, config)
+    return load_app_config(read_config_file(path), path=path, sections=sections)
+
+
+def test_happy_path_builds_both_engine_configs(tmp_path: Path) -> None:
+    cfg = _load(tmp_path, _composed())
 
     assert isinstance(cfg, AppConfig)
 
@@ -70,26 +80,16 @@ def test_happy_path_builds_both_engine_configs_and_a_bridge_config(
     assert cfg.asr_engine.module.type == "deepgram_v2"
     assert cfg.asr_engine.dictation_default_segmentation_mode == "timeout"
 
-    # The `reachy` section is a verbatim bridge config, delegated to ReachyMiniConfig.from_dict.
-    assert isinstance(cfg.reachy, ReachyMiniConfig)
-    assert cfg.reachy.backend == "real"
-    assert cfg.reachy.tts is not None
-    assert cfg.reachy.tts["module"]["type"] == "pocket"
-    # The module block is carried through verbatim, extra fields intact.
-    assert cfg.reachy.tts["module"]["voice"] == "george"
-
 
 def test_system_prompt_file_is_located_against_config_dir(tmp_path: Path) -> None:
     # A relative system_prompt_file must resolve against the config file's own directory,
     # proving base_dir was threaded into WicaConfig.from_dict. Compare *resolved* paths:
     # WICA calls Path.resolve(), which canonicalizes symlinks (macOS /var -> /private/var).
-    cfg = load_config(
-        _write(tmp_path, _composed(system_prompt_file="prompts/assistant.md"))
-    )
+    cfg = _load(tmp_path, _composed(system_prompt_file="prompts/reachy.md"))
 
     located = cfg.wica.agent.system_prompt_file
     assert located is not None
-    expected = (tmp_path / "prompts" / "assistant.md").resolve()
+    expected = (tmp_path / "prompts" / "reachy.md").resolve()
     assert Path(located).resolve() == expected
     # Located, not read: the file need not exist.
     assert not expected.exists()
@@ -97,28 +97,28 @@ def test_system_prompt_file_is_located_against_config_dir(tmp_path: Path) -> Non
 
 def test_missing_file_raises_value_error(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="could not read config file"):
-        load_config(str(tmp_path / "does-not-exist.json"))
+        read_config_file(str(tmp_path / "does-not-exist.json"))
 
 
 def test_invalid_json_raises_value_error(tmp_path: Path) -> None:
     path = tmp_path / "app.json"
     path.write_text("{not valid json", encoding="utf-8")
     with pytest.raises(ValueError, match="invalid JSON"):
-        load_config(str(path))
+        read_config_file(str(path))
 
 
 def test_non_object_top_level_raises_value_error(tmp_path: Path) -> None:
     path = tmp_path / "app.json"
     path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
     with pytest.raises(ValueError, match="must contain a JSON object"):
-        load_config(str(path))
+        read_config_file(str(path))
 
 
 def test_missing_section_names_the_missing_key(tmp_path: Path) -> None:
     config = _composed()
     del config["asr"]
     with pytest.raises(ValueError, match="missing required section.*'asr'"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 def test_section_without_engine_block_raises(tmp_path: Path) -> None:
@@ -127,110 +127,33 @@ def test_section_without_engine_block_raises(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError, match="section 'asr' must be an object with an 'engine' block"
     ):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
+
+
+def test_unknown_top_level_section_names_it(tmp_path: Path) -> None:
+    # The whole point of the `sections` argument: a section the calling embodiment does not declare
+    # is an error, not a silent no-op — a reachy file handed to the computer command fails here.
+    config = {**_composed(), "reachy": {"backend": "fake"}}
+    with pytest.raises(ValueError, match="unknown section.*'reachy'"):
+        _load(tmp_path, config, sections=SHARED_SECTIONS)
+
+
+def test_section_inside_the_callers_set_is_accepted(tmp_path: Path) -> None:
+    # The same file, with 'reachy' in the section set, loads — the embodiment parses it itself.
+    cfg = _load(tmp_path, {**_composed(), "reachy": {"backend": "fake"}})
+    assert cfg.wica.agent.provider == "anthropic"
 
 
 def test_loads_with_credentials_unset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The composed file references keys by env-var name; with those vars unset, loading must still
-    # succeed (no env read at load — the "app opens without credentials" contract). Neither WICA's
-    # loader, ASR's, nor the bridge's reads an env var at load time.
-    # The default voice (pocket) is a local model with no key, so only the agent and ASR
-    # providers have an env var to clear here.
+    # succeed (no env read at load — the "app opens without credentials" contract).
     for var in ("WICA_ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
-    cfg = load_config(_write(tmp_path, _composed()))
+    cfg = _load(tmp_path, _composed())
     assert cfg.wica.agent.api_key_env == "WICA_ANTHROPIC_API_KEY"
-
-
-@pytest.mark.parametrize("backend", ["real", "sim", "fake"])
-def test_reachy_backend_round_trips(tmp_path: Path, backend: str) -> None:
-    config = _composed()
-    config["reachy"]["backend"] = backend
-    cfg = load_config(_write(tmp_path, config))
-    assert cfg.reachy.backend == backend
-
-
-def test_reachy_daemon_block_is_parsed(tmp_path: Path) -> None:
-    config = _composed()
-    config["reachy"]["backend"] = "sim"
-    config["reachy"]["daemon"] = {"spawn": "auto", "headless": False}
-    cfg = load_config(_write(tmp_path, config))
-    assert cfg.reachy.daemon.spawn == "auto"
-    assert cfg.reachy.daemon.headless is False
-
-
-def test_reachy_audio_profile_is_carried(tmp_path: Path) -> None:
-    config = _composed()
-    config["reachy"]["audio"] = {"xvf3800": [["AEC_ENABLE", [1]]]}
-    cfg = load_config(_write(tmp_path, config))
-    assert cfg.reachy.audio.xvf3800 == [["AEC_ENABLE", [1]]]
-
-
-def test_reachy_absent_defaults_to_the_bridges_own_defaults(tmp_path: Path) -> None:
-    config = _composed()
-    config.pop("reachy", None)
-    cfg = load_config(_write(tmp_path, config))
-    assert cfg.reachy == ReachyMiniConfig()
-    assert cfg.reachy.backend == "real"
-    assert cfg.reachy.tts is None
-
-
-def test_reachy_empty_object_defaults_the_same_way(tmp_path: Path) -> None:
-    config = _composed()
-    config["reachy"] = {}
-    cfg = load_config(_write(tmp_path, config))
-    assert cfg.reachy == ReachyMiniConfig()
-
-
-def test_invalid_reachy_backend_raises(tmp_path: Path) -> None:
-    config = _composed()
-    config["reachy"]["backend"] = "hologram"
-    with pytest.raises(ValueError, match="'backend' must be one of"):
-        load_config(_write(tmp_path, config))
-
-
-def test_unknown_reachy_key_raises(tmp_path: Path) -> None:
-    config = _composed()
-    config["reachy"]["bogus"] = True
-    with pytest.raises(ValueError, match="unknown key"):
-        load_config(_write(tmp_path, config))
-
-
-def test_daemon_spawn_on_fake_backend_raises(tmp_path: Path) -> None:
-    # The bridge spawns a daemon for `sim` (MuJoCo) and `real` (a USB-attached robot); only the
-    # in-package `fake` has none, so that is the combination its loader rejects.
-    config = _composed()
-    config["reachy"]["backend"] = "fake"
-    config["reachy"]["daemon"] = {"spawn": "auto"}
-    with pytest.raises(ValueError, match="requires backend 'sim' or 'real'"):
-        load_config(_write(tmp_path, config))
-
-
-def test_daemon_spawn_on_real_backend_is_accepted(tmp_path: Path) -> None:
-    config = _composed()
-    config["reachy"]["backend"] = "real"
-    config["reachy"]["daemon"] = {"spawn": "auto"}
-    loaded = load_config(_write(tmp_path, config))
-    assert loaded.reachy.backend == "real"
-    assert loaded.reachy.daemon.spawn == "auto"
-
-
-def test_reachy_not_an_object_raises(tmp_path: Path) -> None:
-    config = _composed()
-    config["reachy"] = "real"
-    with pytest.raises(ValueError, match="section 'reachy' must be an object"):
-        load_config(_write(tmp_path, config))
-
-
-def test_reachy_section_is_optional_but_required_sections_stay(tmp_path: Path) -> None:
-    # `reachy` missing is fine; a missing *required* section still raises even with reachy set.
-    config = _composed()
-    del config["wica"]
-    with pytest.raises(ValueError, match="missing required section.*'wica'"):
-        load_config(_write(tmp_path, config))
 
 
 def test_engine_validation_error_propagates(tmp_path: Path) -> None:
@@ -238,24 +161,24 @@ def test_engine_validation_error_propagates(tmp_path: Path) -> None:
     config = _composed()
     config["asr"]["engine"]["dictation_default_segmentation_mode"] = "nonsense"
     with pytest.raises(ValueError, match="dictation_default_segmentation_mode"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 # --- The optional `vision` section (specs/configuration.md, "The `vision` section") ------------
 
 
 def test_vision_absent_means_off(tmp_path: Path) -> None:
-    cfg = load_config(_write(tmp_path, _composed()))
+    cfg = _load(tmp_path, _composed())
     assert cfg.vision is None
 
 
 def test_vision_null_means_off(tmp_path: Path) -> None:
-    cfg = load_config(_write(tmp_path, {**_composed(), "vision": None}))
+    cfg = _load(tmp_path, {**_composed(), "vision": None})
     assert cfg.vision is None
 
 
 def test_vision_empty_object_takes_the_defaults(tmp_path: Path) -> None:
-    cfg = load_config(_write(tmp_path, {**_composed(), "vision": {}}))
+    cfg = _load(tmp_path, {**_composed(), "vision": {}})
     assert cfg.vision == VisionConfig(
         enabled=False, threshold=0.55, fps=5.0, max_hands=2, device=None
     )
@@ -269,7 +192,7 @@ def test_vision_fields_are_carried(tmp_path: Path) -> None:
         "max_hands": 1,
         "device": "cpu",
     }
-    cfg = load_config(_write(tmp_path, {**_composed(), "vision": section}))
+    cfg = _load(tmp_path, {**_composed(), "vision": section})
     assert cfg.vision == VisionConfig(
         enabled=True, threshold=0.7, fps=10.0, max_hands=1, device="cpu"
     )
@@ -297,14 +220,14 @@ def test_vision_invalid_value_names_the_field(
     tmp_path: Path, section: dict, field: str
 ) -> None:
     with pytest.raises(ValueError, match=field):
-        load_config(_write(tmp_path, {**_composed(), "vision": section}))
+        _load(tmp_path, {**_composed(), "vision": section})
 
 
 def test_vision_unknown_key_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="'mirror'"):
-        load_config(_write(tmp_path, {**_composed(), "vision": {"mirror": True}}))
+        _load(tmp_path, {**_composed(), "vision": {"mirror": True}})
 
 
 def test_vision_not_an_object_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="'vision' must be an object"):
-        load_config(_write(tmp_path, {**_composed(), "vision": "on"}))
+        _load(tmp_path, {**_composed(), "vision": "on"})
