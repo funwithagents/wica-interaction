@@ -7,9 +7,7 @@ tests:
 
 # Configuration
 
-**Status:** Updated
-
-> **Updated (2026-09-17):** the loader splits into a **shared** part (`wica`, `asr`, `vision` → `AppConfig`, in `config.py`) and one loader **per embodiment** (`computer/config.py`, `reachy/config.py`) that adds its own sections. Until the [merge plan](../plans/202609172311_wica-interaction-merge.md) lands, the code is the reachy-only `AppConfig(wica, asr_engine, reachy, vision)`.
+**Status:** Implemented
 
 ## Purpose
 

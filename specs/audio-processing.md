@@ -8,7 +8,7 @@ tests:
 
 # Audio processing
 
-**Status:** Stable
+**Status:** Implemented
 
 ## Purpose
 

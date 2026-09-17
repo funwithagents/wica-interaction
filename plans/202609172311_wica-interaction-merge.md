@@ -1,6 +1,6 @@
 # Merge vocal-interaction-wica into this repo as `wica-interaction`, one app with two embodiments
 
-**Status:** Todo
+**Status:** Done
 
 Implements [specs/embodiment.md](../specs/embodiment.md), [specs/computer-embodiment.md](../specs/computer-embodiment.md), [specs/reachy-embodiment.md](../specs/reachy-embodiment.md), [specs/audio-processing.md](../specs/audio-processing.md) (all `Stable`) and the `Updated` design of [app.md](../specs/app.md), [configuration.md](../specs/configuration.md), [asr-bridge.md](../specs/asr-bridge.md), [gesture-input.md](../specs/gesture-input.md), [project.md](../specs/project.md), [testing.md](../specs/testing.md). It delivers one repo, `wica-interaction`, whose one app runs in two **embodiments** — the computer it runs on, or a Reachy Mini robot — each launched by its own command. It leaves out anything the two apps do not do today (the webcam is the one addition the merge makes possible), a Nao embodiment, and publishing.
 

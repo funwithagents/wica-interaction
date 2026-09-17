@@ -9,7 +9,7 @@ tests:
 
 # Embodiment
 
-**Status:** Stable
+**Status:** Implemented
 
 ## Purpose
 

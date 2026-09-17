@@ -11,9 +11,7 @@ tests:
 
 # App
 
-**Status:** Updated
-
-> **Updated (2026-09-17):** the wiring + lifecycle becomes **embodiment-agnostic** (`system.py`, written against the [Embodiment](embodiment.md) protocol) with one thin entry point per embodiment (`computer/app.py`, `reachy/app.py`); the robot-specific build steps, the persona's action rules and the `tts_output`/`robot_control` modules move to [reachy-embodiment.md](reachy-embodiment.md). Until the [merge plan](../plans/202609172311_wica-interaction-merge.md) lands, the code is the reachy-only `app.py`.
+**Status:** Implemented
 
 > **Code layout.** [system.py](../src/wica_interaction/system.py) holds the **wiring + lifecycle** (`build_system`, the `AppSystem` snapshot, `wire`, `_start`, `_shutdown`, `run_app`); [app_ui.py](../src/wica_interaction/app_ui.py) the **Gradio presentation layer** (the `display_entry` hook, `build_ui` returning an `AppUi` handle, the ASR/Vision live views its timer polls); each embodiment's `app.py` is a `main()` of a few lines that loads its config, constructs its embodiment, and calls `run_app`. The three framework-observability panels — Conversation, World state, Reaction — are WICA's reusable `wica.contrib.gradio` components (the `wica[gradio]` extra — [gradio-contrib.md](../../wica-framework/specs/gradio-contrib.md)), which `build_ui` places. `system` imports `build_ui` from `app_ui`; `app_ui` depends on `system` only for the `AppSystem` type, so there is no import cycle.
 

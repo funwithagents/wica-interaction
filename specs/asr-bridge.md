@@ -7,9 +7,7 @@ tests:
 
 # ASR bridge
 
-**Status:** Updated
-
-> **Updated (2026-09-17):** the bridge no longer knows the robot. `RobotMicSource` moves to the [Reachy Mini embodiment](reachy-embodiment.md); the engine's source comes from `embodiment.mic` ([embodiment.md](embodiment.md)) and the bridge takes a `mic_error` callable for its status line. The segment → World rule and dictation are unchanged. Code catches up in the [merge plan](../plans/202609172311_wica-interaction-merge.md).
+**Status:** Implemented
 
 ## Purpose
 

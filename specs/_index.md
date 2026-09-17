@@ -4,24 +4,22 @@ An interaction application built on the **WICA** agentic framework, which handle
 
 > **New here?** Read [_overview.md](_overview.md) first for the global vision — what the app is, the end-to-end data flow, the embodiments, and how the specs below fit together.
 
-> **In transition (2026-09-17).** The repo is being merged with its sibling `vocal-interaction-wica` and renamed `wica-interaction` — see the [merge plan](../plans/202609172311_wica-interaction-merge.md). The `Updated` specs below describe the target design while their code catches up.
-
 ## Specs
 
 <!-- One row per concept spec. Keep the Status column in sync with each spec's `**Status:**` line. -->
 
 | Spec | Description | Status |
 |---|---|---|
-| [project.md](project.md) | Project structure and tooling: Python version, packaging with uv, the `wica-interaction` package with one subpackage per embodiment, the base + extras dependency shape, the sibling path dependencies, one entry point per embodiment | Updated |
-| [testing.md](testing.md) | Testing strategy: two-tier `tests/`/`tests-e2e/` split mirroring the package (embodiment subfolders), shared fakes, the lifecycle tested once over a fake embodiment, skip-without-credentials live tier | Updated |
-| [configuration.md](configuration.md) | The one composed config JSON: the shared `wica`/`asr`/`vision` sections (`AppConfig`, each delegated to its owner's loader) plus the sections each embodiment's own loader adds and validates | Updated |
-| [embodiment.md](embodiment.md) | The `Embodiment` protocol the lifecycle is written against — enter/exit, voice, mic, camera, commands, prompt addendum — member by member: who calls it, when, what each body returns | Stable |
-| [computer-embodiment.md](computer-embodiment.md) | The agent on the machine it runs on: `TTSEngine` voice through the speakers, the local mic (optionally through audio processing), a webcam for hand signs, no actions; the `wica-interaction-computer` entry point and persona | Stable |
-| [reachy-embodiment.md](reachy-embodiment.md) | The agent in a Reachy Mini: `say`/mic/camera through one `ReachyMiniApi`, the robot action commands (`RobotControl`), the emotion names seeded into the prompt, the robot persona's action rules; the `wica-interaction-reachy` entry point | Stable |
-| [audio-processing.md](audio-processing.md) | The computer embodiment's mic processing: one WebRTC coordinator doing echo cancellation (TTS far-end reference) and noise suppression, independently, opt-in and degrading gracefully | Stable |
-| [asr-bridge.md](asr-bridge.md) | Speech-in: the ASR engine over the embodiment's mic → World `speech_input` (final only), live partial view, capture health from the embodiment, and the agent's dictation command | Updated |
-| [gesture-input.md](gesture-input.md) | Vision-in: the embodiment's camera through `vision-modules`' hand + gesture pipeline → a hand-sign vocabulary (`stop`, `like`, `dislike`, `ok`, `mute`, `one`…`five`) as one `hand_gesture_<n>` entry per hand, triggering the agent whenever a sign is shown; the "Hand signs" persona section seeded at startup | Updated |
-| [app.md](app.md) | The Gradio app: the embodiment-agnostic build → UI → wire → start → close lifecycle (`system.py`), the panels, the typed-text funnel, degraded start, one thin entry point per embodiment | Updated |
+| [project.md](project.md) | Project structure and tooling: Python version, packaging with uv, the `wica-interaction` package with one subpackage per embodiment, the base + extras dependency shape, the sibling path dependencies, one entry point per embodiment | Implemented |
+| [testing.md](testing.md) | Testing strategy: two-tier `tests/`/`tests-e2e/` split mirroring the package (embodiment subfolders), shared fakes, the lifecycle tested once over a fake embodiment, skip-without-credentials live tier | Implemented |
+| [configuration.md](configuration.md) | The one composed config JSON: the shared `wica`/`asr`/`vision` sections (`AppConfig`, each delegated to its owner's loader) plus the sections each embodiment's own loader adds and validates | Implemented |
+| [embodiment.md](embodiment.md) | The `Embodiment` protocol the lifecycle is written against — enter/exit, voice, mic, camera, commands, prompt addendum — member by member: who calls it, when, what each body returns | Implemented |
+| [computer-embodiment.md](computer-embodiment.md) | The agent on the machine it runs on: `TTSEngine` voice through the speakers, the local mic (optionally through audio processing), a webcam for hand signs, no actions; the `wica-interaction-computer` entry point and persona | Implemented |
+| [reachy-embodiment.md](reachy-embodiment.md) | The agent in a Reachy Mini: `say`/mic/camera through one `ReachyMiniApi`, the robot action commands (`RobotControl`), the emotion names seeded into the prompt, the robot persona's action rules; the `wica-interaction-reachy` entry point | Implemented |
+| [audio-processing.md](audio-processing.md) | The computer embodiment's mic processing: one WebRTC coordinator doing echo cancellation (TTS far-end reference) and noise suppression, independently, opt-in and degrading gracefully | Implemented |
+| [asr-bridge.md](asr-bridge.md) | Speech-in: the ASR engine over the embodiment's mic → World `speech_input` (final only), live partial view, capture health from the embodiment, and the agent's dictation command | Implemented |
+| [gesture-input.md](gesture-input.md) | Vision-in: the embodiment's camera through `vision-modules`' hand + gesture pipeline → a hand-sign vocabulary (`stop`, `like`, `dislike`, `ok`, `mute`, `one`…`five`) as one `hand_gesture_<n>` entry per hand, triggering the agent whenever a sign is shown; the "Hand signs" persona section seeded at startup | Implemented |
+| [app.md](app.md) | The Gradio app: the embodiment-agnostic build → UI → wire → start → close lifecycle (`system.py`), the panels, the typed-text funnel, degraded start, one thin entry point per embodiment | Implemented |
 | _(add concept specs here — see [_spec-template.md](_spec-template.md))_ | | |
 
 Each spec also opens with a YAML **frontmatter** block declaring the `code:` and `tests:` files it governs — the spec → code/tests mapping the spec-drift checks use to scope what they compare. Keep it current when files move, and see [AGENTS.md](../AGENTS.md) ("Spec frontmatter") for the full convention. A spec that is not yet `Implemented` may name the files it *will* govern.

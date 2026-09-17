@@ -10,9 +10,7 @@ tests:
 
 # Gesture input
 
-**Status:** Updated
-
-> **Updated (2026-09-17):** frames come from the **embodiment's camera** (a `CameraSource` injected into `GestureInput`), not from the robot api: `RobotCameraSource` moves to [reachy-embodiment.md](reachy-embodiment.md) and the computer gains a `WebcamSource` ([computer-embodiment.md](computer-embodiment.md)); the persona's "Hand signs" section is seeded at startup from this module rather than written in the prompt file. Open question 4 (vision without the robot) is resolved by that. Code catches up in the [merge plan](../plans/202609172311_wica-interaction-merge.md).
+**Status:** Implemented
 
 ## Purpose
 

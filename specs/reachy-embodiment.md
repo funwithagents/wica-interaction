@@ -13,7 +13,7 @@ tests:
 
 # Reachy Mini embodiment
 
-**Status:** Stable
+**Status:** Implemented
 
 ## Purpose
 

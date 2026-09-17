@@ -1,6 +1,7 @@
 ---
 code:
   - tests/conftest.py
+  - tests/fakes.py
   - tests-e2e/conftest.py
   - tests-e2e/support.py
 tests:
@@ -8,9 +9,7 @@ tests:
 
 # Testing
 
-**Status:** Updated
-
-> **Updated (2026-09-17):** the `tests/` tier gains the `computer/` and `reachy/` subfolders mirroring the embodiment subpackages, a shared `fakes.py`, and the lifecycle tests move from `test_app.py` to `test_system.py` over a `FakeEmbodiment`. Code catches up in the [merge plan](../plans/202609172311_wica-interaction-merge.md).
+**Status:** Implemented
 
 ## Purpose
 

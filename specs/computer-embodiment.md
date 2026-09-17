@@ -11,7 +11,7 @@ tests:
 
 # Computer embodiment
 
-**Status:** Stable
+**Status:** Implemented
 
 ## Purpose
 

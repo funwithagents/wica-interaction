@@ -7,9 +7,7 @@ tests:
 
 # Project
 
-**Status:** Updated
-
-> **Updated (2026-09-17):** the project becomes **`wica-interaction`** (package `wica_interaction`, one entry point per embodiment) with the former `vocal-interaction-wica` app ported in as the computer embodiment; runtime dependencies split into extras. Code catches up in the [merge plan](../plans/202609172311_wica-interaction-merge.md).
+**Status:** Implemented
 
 ## Purpose
 
