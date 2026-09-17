@@ -13,14 +13,17 @@ application callables; the sink and the output Command are set afterwards):
 
 - ``build_system(config)`` — pure build, no Gradio, no wiring: owns the loop, builds the one
   ``ReachyMiniApi`` (which builds its own voice from ``config.reachy.tts``) and enters it on the loop,
-  ``Wica.init``s the agent and registers the ``speech_input`` entry, builds the ASR bridge. Its
-  ``api=`` / ``asr_engine=`` kwargs are test seams for injecting fakes.
+  fetches the robot's emotion names once and folds them into the persona (an inline-prompt variant
+  of the WICA config — see ``_seeded_wica_config``), ``Wica.init``s the agent and registers the
+  ``speech_input`` entry, builds the ASR bridge. Its ``api=`` / ``asr_engine=`` kwargs are test seams
+  for injecting fakes.
 - ``build_ui(system)`` — the Gradio page (in [app_ui.py](app_ui.py)); it owns the contrib presenters
   (``TranscriptLog`` / ``ReactionLog``, subscribed to the agent's Events in their constructors) and hands
   the transcript back on an ``AppUi`` handle.
 - ``wire(system, transcript)`` — Gradio-free: sets the transcript's ``output_sink`` and the voice's
-  ``say`` as the output Command on the agent, registers the dictation + robot Commands. Tests call it
-  with a ``TranscriptLog`` they build themselves, playing the UI's role.
+  ``say`` as the output Command on the agent, registers the dictation + robot Commands (the latter
+  from ``RobotControl(api, emotions=…).commands()``, so ``play_emotion``'s description names the
+  emotions). Tests call it with a ``TranscriptLog`` they build themselves, playing the UI's role.
 - ``main()`` — parse ``--config``, build, build the UI, wire, then ``_serve``: start + launch inside a
   ``try`` whose ``finally`` runs ``_shutdown`` (isolated, time-bounded steps; the bridge is stopped
   before the api exits).
@@ -43,14 +46,19 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import gradio as gr
 from asr_engine.engine import ASREngine
 from reachy_mini_bridge.api import ReachyMiniApi
 from wica import Content, TextPart, Wica
-from wica.config import ConfigError, MissingEnvError
+from wica.config import (
+    ConfigError,
+    MissingEnvError,
+    WicaConfig,
+    resolve_system_prompt,
+)
 from wica.contrib.gradio import TranscriptLog
 
 from reachy_mini_interaction_wica.app_ui import build_ui
@@ -62,7 +70,10 @@ from reachy_mini_interaction_wica.gesture_input import (
     GestureModels,
     fist_raised,
 )
-from reachy_mini_interaction_wica.robot_control import RobotControl
+from reachy_mini_interaction_wica.robot_control import (
+    RobotControl,
+    emotions_prompt_section,
+)
 from reachy_mini_interaction_wica.tts_output import VoiceOutput
 
 logger = logging.getLogger(__name__)
@@ -113,6 +124,10 @@ class AppSystem:
     # Vision-in: the fist gesture input over the robot camera; None without a `vision` config
     # section or without the robot (its camera). See specs/gesture-input.md.
     gesture: GestureInput | None
+    # The robot's emotion names, fetched once at build (specs/robot-control.md, "The agent knows the
+    # emotion names from the start"); None without the robot or when the library failed to load.
+    # Seeded into the system prompt here and into `play_emotion`'s description by `wire`.
+    emotions: tuple[str, ...] | None
     missing: list[str]
     # The typed-text hatch: writes the same `speech_input` World update a closed ASR segment makes (so
     # both flow through the identical reason → say → sink path), but ignores empty/whitespace input —
@@ -132,8 +147,10 @@ def build_system(
 
     Owns a fresh event loop (run in a daemon thread) and injects it into ``Wica.init`` so the ASR
     engine and the robot api share the loop the Agent runs on. Builds in dependency order — robot api →
-    voice → wica → bridge — so every component is fully formed when the frozen ``AppSystem`` is
-    assembled at the end. The one ``ReachyMiniApi`` is built from ``config.reachy`` (which builds its
+    emotion names → voice → wica → bridge — so every component is fully formed when the frozen
+    ``AppSystem`` is assembled at the end. The emotion names are fetched once (``api.list_emotions()``
+    on the loop; a failure is a ``Robot: emotions unavailable`` banner line) and seeded into the
+    persona before ``Wica.init`` (see ``_seeded_wica_config``), which is why they precede the agent. The one ``ReachyMiniApi`` is built from ``config.reachy`` (which builds its
     own voice from the config's ``tts`` block, degrading to no voice rather than raising on a build
     failure) and **entered on the loop** here (bringing up the daemon when configured, the robot
     connection, and the media session), because both ``say`` and the mic stream ride it. Construction
@@ -179,19 +196,34 @@ def build_system(
             elif robot.synthesizer_error is not None:
                 missing.append(f"TTS: {robot.synthesizer_error}")
 
+    # --- The emotion names: one fetch per session, so the model knows them before its first turn.
+    # Only with the robot up; a failed library load (on the real backend, a HuggingFace dataset
+    # read) degrades to a banner line and no names — the prompt then carries no emotion section and
+    # play_emotion keeps its plain docstring. -----------------------------------------------------
+    emotions: tuple[str, ...] | None = None
+    if robot is not None:
+        try:
+            emotions = tuple(
+                asyncio.run_coroutine_threadsafe(robot.list_emotions(), loop).result()
+            )
+        except Exception as exc:  # noqa: BLE001 - a library load failure degrades, it never crashes
+            missing.append(f"Robot: emotions unavailable: {exc}")
+
     # --- Speech out: the robot-backed voice, or None when the robot is unavailable --------------
     voice = VoiceOutput(robot) if robot is not None else None
 
     # --- The agent, on the app-owned loop. No callables here: the sink and the output Command are
-    # set in `wire`, once the UI's transcript exists (build, then wire, then start). ---------------
+    # set in `wire`, once the UI's transcript exists (build, then wire, then start). The persona is
+    # resolved *here* (not inside Wica.init) so the emotion names can be appended to it. ----------
     wica: Wica | None = None
     try:
-        wica = Wica.init(config.wica, loop=loop)
+        wica = Wica.init(_seeded_wica_config(config.wica, emotions), loop=loop)
     except MissingEnvError as exc:
         missing.append(f"Agent: environment variable {exc.env_var!r} is not set")
     except ConfigError as exc:
-        # After MissingEnvError (its subclass). Wica.init reads `system_prompt_file` and raises this
-        # when the file is missing/unreadable — a config typo degrades to the banner, not a traceback.
+        # After MissingEnvError (its subclass). resolve_system_prompt (in _seeded_wica_config) reads
+        # `system_prompt_file` and raises this when the file is missing/unreadable — a config typo
+        # degrades to the banner, not a traceback.
         missing.append(f"Agent: {exc}")
     except ImportError as exc:
         # The configured provider's extra isn't installed (a setup gap, not a missing key). Surface
@@ -281,8 +313,27 @@ def build_system(
         bridge=bridge,
         voice=voice,
         gesture=gesture,
+        emotions=emotions,
         missing=missing,
         submit_speech=submit_speech,
+    )
+
+
+def _seeded_wica_config(
+    config: WicaConfig, emotions: tuple[str, ...] | None
+) -> WicaConfig:
+    """The WICA config `Wica.init` gets: *config* with its persona resolved here and, when there are
+    emotion names, `emotions_prompt_section` appended — as an inline `system_prompt` (the
+    `system_prompt_file` cleared, since the two are exclusive). WICA's `resolve_system_prompt`
+    prefers the inline form, so the seeded text is what its prompt composition sees, verbatim. The
+    prompt-file read happens here, so an unreadable file raises `ConfigError` from this call (the
+    caller degrades it the same way it always did). See specs/app.md, build step 4."""
+    persona = resolve_system_prompt(config.agent)
+    if emotions:
+        persona += emotions_prompt_section(emotions)
+    return replace(
+        config,
+        agent=replace(config.agent, system_prompt=persona, system_prompt_file=None),
     )
 
 
@@ -305,17 +356,12 @@ def wire(system: AppSystem, transcript: TranscriptLog) -> None:
     if system.bridge is not None:
         wica.register_command(system.bridge.start_dictation)
         wica.register_command(system.bridge.stop_dictation)
-    # Robot action commands, over the same api as the voice: emotions, motors. Head tracking is not
-    # agent-facing — the bridge's motion loop drives it automatically. Only when the robot is up (no
-    # api ⇒ nothing to act through); the agent still speaks/reasons without.
+    # Robot action commands, over the same api as the voice: the emotion (its description naming
+    # the names fetched at build) and the motors. Head tracking is not agent-facing — the bridge's
+    # motion loop drives it automatically. Only when the robot is up (no api ⇒ nothing to act
+    # through); the agent still speaks/reasons without.
     if system.api is not None:
-        controls = RobotControl(system.api)
-        for command in (
-            controls.list_emotions,
-            controls.play_emotion,
-            controls.get_motors_state,
-            controls.set_motors_state,
-        ):
+        for command in RobotControl(system.api, emotions=system.emotions).commands():
             wica.register_command(command)
 
 
@@ -341,6 +387,7 @@ def _degraded_system(message: str) -> AppSystem:
         bridge=None,
         voice=None,
         gesture=None,
+        emotions=None,
         missing=[message],
         submit_speech=lambda _text: None,
     )

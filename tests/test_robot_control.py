@@ -30,8 +30,15 @@ from typing import Any
 
 from reachy_mini_bridge.api import ReachyMiniApi
 from reachy_mini_bridge.fake_reachy_mini import FakeReachyMini
+from wica import Command
 
-from reachy_mini_interaction_wica.robot_control import RobotControl
+from reachy_mini_interaction_wica.robot_control import (
+    RobotControl,
+    emotions_prompt_section,
+)
+
+# The fake's stubbed library (see ReachyMiniApi._FAKE_EMOTIONS) — what the app would fetch at startup.
+_FAKE_NAMES = ("happy", "sad", "curious")
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -39,15 +46,18 @@ def run[T](coro: Coroutine[Any, Any, T]) -> T:
 
 
 @contextmanager
-def _control() -> Iterator[tuple[RobotControl, FakeReachyMini]]:
+def _control(
+    emotions: tuple[str, ...] | None = None,
+) -> Iterator[tuple[RobotControl, FakeReachyMini]]:
     """A ``RobotControl`` over a freshly entered ``fake`` api, plus the underlying fake robot to assert
-    on. Exits the api on the way out, matching how the app itself uses it."""
+    on. Exits the api on the way out, matching how the app itself uses it. *emotions* plays the
+    startup snapshot the app fetches (None: the names are unknown)."""
     api = ReachyMiniApi("fake")
     run(api.__aenter__())
     try:
         robot = api.robot
         assert isinstance(robot, FakeReachyMini)
-        yield RobotControl(api), robot
+        yield RobotControl(api, emotions=emotions), robot
     finally:
         run(api.__aexit__(None, None, None))
 
@@ -56,13 +66,65 @@ def _recorded(robot: FakeReachyMini, name: str) -> list[dict[str, Any]]:
     return [args for cmd, args in robot.commands if cmd == name]
 
 
-def test_list_emotions_returns_the_libraries_names() -> None:
-    with _control() as (control, _):
-        result = run(control.list_emotions())
+def _description(command: Command | Any) -> str:
+    """What the model reads as the command's description — a Command's tool description, or a
+    bare callable's docstring (what WICA derives it from)."""
+    if isinstance(command, Command):
+        return command.tool.description
+    return command.__doc__ or ""
 
-        # The fake's stubbed library (see ReachyMiniApi._FAKE_EMOTIONS).
-        for name in ("happy", "sad", "curious"):
-            assert name in result
+
+def test_commands_seed_the_emotion_names_into_play_emotion_and_drop_list_emotions() -> (
+    None
+):
+    """With the startup snapshot, `play_emotion` is registered as a Command whose description names
+    every valid emotion (the model reads them where it picks the tool); there is no `list_emotions`
+    to spend a turn on; the motor commands come through as bound methods."""
+    with _control(_FAKE_NAMES) as (control, _):
+        commands = control.commands()
+
+        by_name = {
+            (c.name if isinstance(c, Command) else c.__name__): c for c in commands
+        }
+        assert set(by_name) == {"play_emotion", "get_motors_state", "set_motors_state"}
+        description = _description(by_name["play_emotion"])
+        for name in _FAKE_NAMES:
+            assert name in description
+        assert "motors" in description  # the precondition survives the override
+
+
+def test_commands_without_a_snapshot_fall_back_to_the_docstring() -> None:
+    """Unknown names (the library failed to load): `play_emotion` keeps its plain docstring, which
+    must not send the model to a `list_emotions` that no longer exists."""
+    with _control(None) as (control, _):
+        by_name = {
+            (c.name if isinstance(c, Command) else c.__name__): c
+            for c in control.commands()
+        }
+        description = _description(by_name["play_emotion"])
+        assert "list_emotions" not in description
+        assert "Valid names" not in description  # no invented list
+
+
+def test_emotions_prompt_section_names_every_emotion_and_the_command() -> None:
+    section = emotions_prompt_section(_FAKE_NAMES)
+    for name in _FAKE_NAMES:
+        assert name in section
+    assert "play_emotion" in section
+
+
+def test_seeded_play_emotion_command_routes_to_the_robot() -> None:
+    """The description override wraps the same bound method: invoking the Command's tool plays
+    the emotion on the robot exactly as the bare method does."""
+    with _control(_FAKE_NAMES) as (control, robot):
+        run(control.set_motors_state("enabled"))
+        play = control.commands()[0]
+        assert isinstance(play, Command)
+
+        result = run(play.tool.ainvoke({"name": "curious"}))
+
+        assert "failed" not in str(result)
+        assert _recorded(robot, "media.play_sound") == [{"sound_file": "curious.ogg"}]
 
 
 def test_play_known_emotion_succeeds_and_moves_the_robot_once_enabled() -> None:
@@ -85,7 +147,21 @@ def test_play_unknown_emotion_is_reported_not_raised() -> None:
         result = run(control.play_emotion("nonexistent"))
 
         assert "failed" in result  # a readable failure string, no exception
+        assert "list_emotions" not in result  # no such command to send the model to
         assert _recorded(robot, "media.play_sound") == []  # nothing was played
+
+
+def test_play_unknown_emotion_names_the_valid_ones_when_known() -> None:
+    """With the startup snapshot, the failure reply repeats the valid names so the model can
+    correct itself in the next turn without any round trip."""
+    with _control(_FAKE_NAMES) as (control, _):
+        run(control.set_motors_state("enabled"))
+
+        result = run(control.play_emotion("nonexistent"))
+
+        assert "failed" in result
+        for name in _FAKE_NAMES:
+            assert name in result
 
 
 def test_movement_needs_motors_enabled_and_does_not_move_while_off() -> None:

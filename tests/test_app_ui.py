@@ -86,6 +86,7 @@ def _system_with_mic(capture_error: str | None) -> AppSystem:
         bridge=bridge,
         voice=None,
         gesture=None,
+        emotions=None,
         missing=[],
         submit_speech=lambda _text: None,
     )
@@ -134,6 +135,7 @@ def _system_with_gesture(gesture: _Gesture | None) -> AppSystem:
         bridge=None,
         voice=None,
         gesture=cast(GestureInput, gesture) if gesture is not None else None,
+        emotions=None,
         missing=[],
         submit_speech=lambda _text: None,
     )

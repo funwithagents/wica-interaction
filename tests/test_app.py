@@ -49,18 +49,28 @@ class FakeReachyMiniApi:
     """The slice of `ReachyMiniApi` the app touches: an async-context robot whose `say` records.
 
     `build_system` enters it on the loop (`__aenter__`); `VoiceOutput.say` calls `say`. Set
-    `raise_on_enter` to simulate a robot that fails to connect (the broad degrade path). Pass `log`
-    (shared with `FakeASREngine`) to record teardown steps in order.
+    `raise_on_enter` to simulate a robot that fails to connect (the broad degrade path), and
+    `raise_on_list_emotions` for a robot whose emotions library fails to load. Pass `log` (shared
+    with `FakeASREngine`) to record teardown steps in order.
     """
 
+    # What the startup fetch returns — the same names as the bridge's `fake` library.
+    emotions = ("happy", "sad", "curious")
+
     def __init__(
-        self, *, raise_on_enter: str | None = None, log: list[str] | None = None
+        self,
+        *,
+        raise_on_enter: str | None = None,
+        raise_on_list_emotions: str | None = None,
+        log: list[str] | None = None,
     ) -> None:
         self.said: list[str] = []
         self.played: list[str] = []
         self.entered = False
         self.exited = False
+        self.emotion_fetches = 0
         self._raise_on_enter = raise_on_enter
+        self._raise_on_list_emotions = raise_on_list_emotions
         self._log = log
 
     async def __aenter__(self) -> Self:
@@ -92,6 +102,12 @@ class FakeReachyMiniApi:
 
     async def play_emotion(self, name: str) -> None:
         self.played.append(name)
+
+    async def list_emotions(self) -> list[str]:
+        self.emotion_fetches += 1
+        if self._raise_on_list_emotions is not None:
+            raise RuntimeError(self._raise_on_list_emotions)
+        return list(self.emotions)
 
 
 class FakeASREngine:
@@ -283,6 +299,90 @@ def test_robot_action_command_is_registered_and_routes_to_the_robot() -> None:
         _start(system)
         system.submit_speech("show me happy")
         assert _wait_until(lambda: fake_api.played == ["happy"])
+    finally:
+        _shutdown(system)
+
+
+def _play_emotion_description(system: AppSystem) -> str:
+    """The `play_emotion` tool description the model is bound to."""
+    assert system.wica is not None
+    return system.wica.agent.commands["play_emotion"].tool.description
+
+
+def test_emotion_names_are_seeded_into_the_prompt_and_the_play_emotion_tool() -> None:
+    """The names are fetched once at build and reach the model before its first turn, in both places
+    it reads them: the composed system prompt (after the persona) and `play_emotion`'s description.
+    There is no `list_emotions` Command any more."""
+    fake_api = FakeReachyMiniApi()
+    system = build_system(
+        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]),
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+    )
+    try:
+        assert fake_api.emotion_fetches == 1
+        assert system.emotions == fake_api.emotions
+        assert system.wica is not None
+        prompt = system.wica.agent.system_prompt
+        # The persona comes first, the seeded section after it, and both precede WICA's primer.
+        assert prompt.startswith("You are a test double.")
+        section_at = prompt.index("Your emotions")
+        for name in fake_api.emotions:
+            assert prompt.index(name) > section_at
+        _wire(system)
+        _start(system)
+        assert "list_emotions" not in system.wica.agent.commands
+        description = _play_emotion_description(system)
+        for name in fake_api.emotions:
+            assert name in description
+    finally:
+        _shutdown(system)
+
+
+def test_failed_emotion_fetch_degrades_to_a_banner_line() -> None:
+    """A robot whose emotions library fails to load still comes up: the banner says so on the Robot
+    axis, the prompt carries no emotion section, and `play_emotion` is still registered (with its
+    plain docstring) — the rest of the robot is unaffected."""
+    fake_api = FakeReachyMiniApi(raise_on_list_emotions="dataset download failed")
+    system = build_system(
+        _config(script=_say_once("still here")),
+        api=cast(ReachyMiniApi, fake_api),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+    )
+    try:
+        assert system.emotions is None
+        assert any(
+            m.startswith("Robot:") and "dataset download failed" in m
+            for m in system.missing
+        )
+        assert system.api is not None and system.voice is not None  # the robot is up
+        assert system.wica is not None
+        assert "Your emotions" not in system.wica.agent.system_prompt
+        _wire(system)
+        _start(system)
+        assert "Valid names" not in _play_emotion_description(system)
+        system.submit_speech("hello")
+        assert _wait_until(lambda: fake_api.said == ["still here"])
+    finally:
+        _shutdown(system)
+
+
+def test_no_robot_means_no_emotion_section() -> None:
+    """Without the robot there is nothing to fetch from: the agent still builds, over the plain
+    persona, and no emotion section is invented."""
+    fake_api = FakeReachyMiniApi(raise_on_enter="no daemon reachable")
+    system = build_system(
+        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]),
+        api=cast(ReachyMiniApi, fake_api),
+    )
+    try:
+        assert fake_api.emotion_fetches == 0
+        assert system.emotions is None
+        assert system.wica is not None
+        assert "Your emotions" not in system.wica.agent.system_prompt
+        assert not any(
+            "emotions" in m for m in system.missing
+        )  # only the Robot: enter line
     finally:
         _shutdown(system)
 
@@ -563,8 +663,9 @@ def test_start_failure_still_tears_down_robot() -> None:
 
 
 def test_bad_system_prompt_file_degrades(tmp_path: Path) -> None:
-    """A `system_prompt_file` that doesn't exist lands in the banner as an `Agent:` line (WICA raises
-    ConfigError from Wica.init) rather than crashing; the rest of the system still builds."""
+    """A `system_prompt_file` that doesn't exist lands in the banner as an `Agent:` line (the app's
+    own persona read raises WICA's ConfigError, before Wica.init) rather than crashing; the rest of
+    the system still builds."""
     wica = WicaConfig.from_dict(
         {
             "agent": {
