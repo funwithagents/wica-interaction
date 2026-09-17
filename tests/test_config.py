@@ -255,15 +255,21 @@ def test_vision_null_means_off(tmp_path: Path) -> None:
 def test_vision_empty_object_takes_the_defaults(tmp_path: Path) -> None:
     cfg = load_config(_write(tmp_path, {**_composed(), "vision": {}}))
     assert cfg.vision == VisionConfig(
-        enabled=False, threshold=0.55, fps=5.0, device=None
+        enabled=False, threshold=0.55, fps=5.0, max_hands=2, device=None
     )
 
 
 def test_vision_fields_are_carried(tmp_path: Path) -> None:
-    section = {"enabled": True, "threshold": 0.7, "fps": 10, "device": "cpu"}
+    section = {
+        "enabled": True,
+        "threshold": 0.7,
+        "fps": 10,
+        "max_hands": 1,
+        "device": "cpu",
+    }
     cfg = load_config(_write(tmp_path, {**_composed(), "vision": section}))
     assert cfg.vision == VisionConfig(
-        enabled=True, threshold=0.7, fps=10.0, device="cpu"
+        enabled=True, threshold=0.7, fps=10.0, max_hands=1, device="cpu"
     )
 
 
@@ -277,6 +283,11 @@ def test_vision_fields_are_carried(tmp_path: Path) -> None:
         ({"threshold": True}, "vision.threshold"),
         ({"fps": 0}, "vision.fps"),
         ({"fps": -5}, "vision.fps"),
+        ({"max_hands": 0}, "vision.max_hands"),
+        ({"max_hands": 1.5}, "vision.max_hands"),
+        ({"max_hands": 2.0}, "vision.max_hands"),
+        ({"max_hands": True}, "vision.max_hands"),
+        ({"max_hands": "two"}, "vision.max_hands"),
         ({"device": 3}, "vision.device"),
     ],
 )

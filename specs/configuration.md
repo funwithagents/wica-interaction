@@ -76,14 +76,15 @@ Absent `reachy` section ⇒ `ReachyMiniConfig()` (the `real` backend, upstream d
 ### The `vision` section — the app's own small schema
 
 ```json
-"vision": { "enabled": false, "threshold": 0.55, "fps": 5, "device": null }
+"vision": { "enabled": false, "threshold": 0.55, "fps": 5, "max_hands": 2, "device": null }
 ```
 
-Enables the fist gesture input ([gesture-input.md](gesture-input.md)). Unlike the other sections, this one is **not** delegated to a sibling loader: `vision-modules` is a library with constructor kwargs and no config document of its own, so the app owns this schema in `config.py` as a frozen `VisionConfig(enabled, threshold, fps, device)` with a `from_dict(data, path=…)` that validates it:
+Enables the fist gesture input ([gesture-input.md](gesture-input.md)). Unlike the other sections, this one is **not** delegated to a sibling loader: `vision-modules` is a library with constructor kwargs and no config document of its own, so the app owns this schema in `config.py` as a frozen `VisionConfig(enabled, threshold, fps, max_hands, device)` with a `from_dict(data, path=…)` that validates it:
 
 - `enabled` — the switch; a boolean, default **`false`**. The section can stay in the file, tuned, with vision off; turning it on is a one-key edit.
 - `threshold` — the gesture classifier's validation threshold (a hand's label is its top class only at or above it); a number in `[0, 1]`, default **`0.55`**.
 - `fps` — one rate for the camera poll, the hand stage, and the classifier; a number `> 0`, default **`5`**.
+- `max_hands` — how many hands the hand stage detects, publishes, and the classifier classifies per frame (a fist on any of them is the stop sign); an integer `>= 1` (not a bool, not a float), default **`2`**, the library's default — see [gesture-input.md](gesture-input.md), "The pipeline", for why 2 and when to drop to 1.
 - `device` — the classifier's torch device (`"mps"`, `"cuda"`, `"cpu"`); `null`/absent lets the library pick (`mps` → `cuda` → `cpu`).
 
 **Vision is off unless `enabled` is `true`** — an absent section, `null`, `{}`, or `enabled: false` all mean: no camera is polled, no model is downloaded, and the `hand_gesture` entry is not registered. It is an explicit opt-in because its first run downloads ~340 MB of models. `{"enabled": true}` ⇒ on, with the other defaults. Not an object, an unknown key, or an out-of-range value raises `ValueError` from `load_config`, naming the file and the field, like every other section.

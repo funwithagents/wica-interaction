@@ -884,6 +884,23 @@ def test_vision_section_present_but_disabled_builds_nothing() -> None:
         _shutdown(system)
 
 
+def test_vision_max_hands_reaches_the_gesture_input() -> None:
+    """The configured hand cap is what the pipeline runs with, not the library's default."""
+    system = build_system(
+        _config(script=[], vision=VisionConfig(enabled=True, max_hands=1)),
+        api=cast(ReachyMiniApi, FakeReachyMiniApi()),
+        asr_engine=cast(ASREngine, FakeASREngine()),
+        gesture_models=GestureModels(
+            detector=_ScriptedDetector(), classifier=_ScriptedClassifier(fist=0.9)
+        ),
+    )
+    try:
+        assert system.gesture is not None
+        assert system.gesture.status()["max_hands"] == 1
+    finally:
+        _shutdown(system)
+
+
 def test_vision_needs_the_robot() -> None:
     """No robot ⇒ no camera ⇒ no gesture input and no `hand_gesture` entry (the agent is never
     told about a fist it cannot see); the banner carries only the robot line."""

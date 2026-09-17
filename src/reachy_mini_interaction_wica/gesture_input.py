@@ -2,11 +2,11 @@
 
 The vision half of the app's perception. ``RobotCameraSource`` polls the bridge's
 ``get_camera_frame()`` as a ``vision-modules`` ``FrameSource``; ``GestureInput`` runs the library's
-hand stage + HaGRID gesture classifier over it and reduces each result to one value — ``"fist"`` when
-the first hand's validated label is ``fist``, else ``None`` — delivering it to the injected
-``on_gesture`` callback **on change only**. The app wires that callback to
-``world.update("hand_gesture", value)`` on an entry whose trigger predicate, ``fist_raised``, wakes
-the agent only on ``None → fist``. The library perceives, this module decides; nothing here touches
+hand stage + HaGRID gesture classifier over it (up to ``max_hands`` hands per frame) and reduces
+each result to one value — ``"fist"`` when any hand's validated label is ``fist``, else ``None`` —
+delivering it to the injected ``on_gesture`` callback **on change only**. The app wires that
+callback to ``world.update("hand_gesture", value)`` on an entry whose trigger predicate,
+``fist_raised``, wakes the agent only on ``None → fist``. The library perceives, this module decides; nothing here touches
 WICA. See specs/gesture-input.md.
 """
 
@@ -185,10 +185,12 @@ class GestureInput:
 
     Graph: ``RobotCameraSource → StreamProvider → HandStage → GestureClassifier``, every stage at
     ``fps``, plus a watcher thread (also at ``fps``) that reduces each new classifier result to
-    ``"fist"`` / ``None`` and calls ``on_gesture`` only when that value changes from the last one
+    ``"fist"`` (a fist on any published hand) / ``None`` and calls ``on_gesture`` only when that
+    value changes from the last one
     delivered (starting at ``None``, matching the World entry's initial value). ``threshold`` is the
     library's own validation rule — a hand's label is its top class only at or above it — so this
-    module adds no second one. ``start``/``stop`` are synchronous and idempotent (threads, like the
+    module adds no second one. ``max_hands`` is always passed to the hand stage (never the library's
+    default), so what the robot looks at is the app's setting. ``start``/``stop`` are synchronous and idempotent (threads, like the
     library's ``Pipeline``); ``status()`` is the cheap read the UI timer polls.
     """
 
@@ -200,6 +202,7 @@ class GestureInput:
         on_gesture: OnGesture,
         threshold: float = 0.55,
         fps: float = 5.0,
+        max_hands: int = 2,
         device: str | None = None,
         models: GestureModels | None = None,
         fps_window_s: float = _FPS_WINDOW_S,
@@ -207,6 +210,7 @@ class GestureInput:
         models = models if models is not None else GestureModels()
         self._on_gesture = on_gesture
         self._target_fps = fps
+        self._max_hands = max_hands
         self._interval = 1.0 / fps
         self._fps_window_s = fps_window_s
         self._stream_meter = _FpsMeter()
@@ -215,7 +219,10 @@ class GestureInput:
         self._source = RobotCameraSource(api, loop, fps=fps)
         self._provider = StreamProvider(self._source, mirror=False)
         self._hands = HandStage(
-            self._provider, target_fps=fps, detector=models.detector
+            self._provider,
+            target_fps=fps,
+            max_hands=max_hands,
+            detector=models.detector,
         )
         self._gestures = GestureClassifier(
             self._hands,
@@ -229,8 +236,8 @@ class GestureInput:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._gesture: str | None = None  # last delivered value
-        self._label: str | None = None  # first hand's raw top class, latest result
-        self._confidence = 0.0
+        # Every hand of the latest result, in the library's slot order: (validated label, top score).
+        self._seen: tuple[tuple[str | None, float], ...] = ()
 
     def start(self) -> None:
         """Start the pipeline (upstream-first) and the watcher. A second call is a no-op."""
@@ -257,21 +264,24 @@ class GestureInput:
         return self._thread is not None
 
     def status(self) -> dict:
-        """What the Vision line renders: the last delivered value, the raw latest label/score, the
+        """What the Vision line renders: the last delivered value, each hand's latest label/score (slot
+        order — entry *i* stays the same physical hand while it is in view), the hand cap, the
         target rate and each node's achieved rate — the camera stream, the hand stage, the
         classifier (``None`` until a full sampling window has passed) — the camera's capture health,
         and the last stage error (the classifier's first — a failed model load lands there),
         ``None`` when healthy."""
         with self._lock:
-            gesture, label, confidence = self._gesture, self._label, self._confidence
+            gesture, seen = self._gesture, self._seen
             stream_fps = self._stream_meter.fps
             hand_fps, classifier_fps = self._hand_meter.fps, self._classifier_meter.fps
         error = self._gestures.last_error or self._hands.last_error
         return {
             "running": self.running,
             "gesture": gesture,
-            "label": label,
-            "confidence": confidence,
+            "hands": [
+                {"label": label, "confidence": confidence} for label, confidence in seen
+            ],
+            "max_hands": self._max_hands,
             "target_fps": self._target_fps,
             "stream_fps": stream_fps,
             "hand_fps": hand_fps,
@@ -335,12 +345,14 @@ class GestureInput:
             result = self._gestures.latest()
             if result is not None and result.frame_id != seen:
                 seen = result.frame_id
-                hand = result.first
-                label = hand.label if hand is not None else None
-                confidence = hand.confidence if hand is not None else 0.0
-                value = FIST if label == FIST else None
+                seen_hands = tuple(
+                    (hand.label, hand.confidence) for hand in result.hands
+                )
+                # Any hand counts: slot 0 is merely the hand that appeared first, not the one that
+                # matters, and two fists are still one stop sign.
+                value = FIST if any(label == FIST for label, _ in seen_hands) else None
                 with self._lock:
-                    self._label, self._confidence = label, confidence
+                    self._seen = seen_hands
                     changed = value != self._gesture
                     if changed:
                         self._gesture = value

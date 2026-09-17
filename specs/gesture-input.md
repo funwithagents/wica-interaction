@@ -15,14 +15,14 @@ tests:
 
 ## Purpose
 
-The **vision-in** half of the app — the first perception besides speech. The robot's own camera is run through the [`vision-modules`](../../vision-modules/README.md) hand pipeline (hand detection + HaGRID gesture classification), and one gesture is turned into a WICA Input: a **raised fist**, the person's "stop" sign. Holding up a fist wakes the agent, which the persona tells to stop whatever it is doing. Every other gesture, and no hand at all, is "no fist".
+The **vision-in** half of the app — the first perception besides speech. The robot's own camera is run through the [`vision-modules`](../../vision-modules/README.md) hand pipeline (hand detection + HaGRID gesture classification, up to `max_hands` hands per frame), and one gesture is turned into a WICA Input: a **raised fist**, the person's "stop" sign. Holding up a fist — with either hand — wakes the agent, which the persona tells to stop whatever it is doing. Every other gesture, and no hand at all, is "no fist".
 
 `vision-modules` *perceives* and this module *decides*: the library reports a label per frame with a score; this module owns the threshold, the "fist or not" reduction, the change detection, and the rule for which changes wake the agent. It is the one place that knows how a stream of per-frame classifications maps onto "the person is showing the stop sign", so the rest of the app (the WICA agent, the UI) never touches the vision pipeline directly.
 
 Two consumers read from it, as for speech ([asr-bridge.md](asr-bridge.md)):
 
 - **The WICA World** — the current fist state is the `hand_gesture` entry the agent reads in every prompt, and a fist being *raised* triggers a reasoning step.
-- **The Gradio UI** — the current label/confidence and the pipeline's health are displayed (see [app.md](app.md), "Vision line").
+- **The Gradio UI** — each published hand's current label/confidence and the pipeline's health are displayed (see [app.md](app.md), "Vision line").
 
 ## Decided
 
@@ -69,7 +69,8 @@ RobotCameraSource ─▶ StreamProvider ─▶ HandStage ─▶ GestureClassifie
    (poll at fps)      (no mirror)       (fps)          (fps, threshold)     (fps)
 ```
 
-- `HandStage(provider, target_fps=fps, detector=…)` — default `max_hands=1`, default padding; the shipped MediaPipe detector unless one is injected.
+- `HandStage(provider, target_fps=fps, max_hands=max_hands, detector=…)` — `max_hands` from the config ([configuration.md](configuration.md), `vision.max_hands`, default **2**, the library's own default), default padding, rank (`"area"`) and hysteresis; the shipped MediaPipe detector unless one is injected. The app always passes `max_hands` explicitly, so a change of the library's default never silently changes what the robot looks at.
+  - **Why 2 by default.** `max_hands` is also MediaPipe's tracking capacity ([vision-modules hand.md](../../vision-modules/specs/hand.md), "One count"): with 1, the detector locks onto the first hand it sees and a second hand is not even considered until the first is lost — so a person whose relaxed hand was tracked first could raise a fist with the other and never be seen. With 2, both hands of the person are detected, published and classified. The price is up to one more ViT pass per frame while two hands are in view; if that starves the classifier on a slow machine (the Vision line's achieved rate shows it), `max_hands: 1` is the fallback.
 - `GestureClassifier(hands, target_fps=fps, threshold=threshold, device=device, classifier=…)` — the shipped HaGRID ViT unless one is injected. `threshold` is the library's own validation rule: a hand's `label` is its top class **only when its score reaches the threshold**, else `None`. The app's default is **0.55** ([configuration.md](configuration.md), `vision.threshold`), and the module adds no second threshold of its own.
 - **Models load lazily**, on each stage's worker thread, at the first frame (that is the library's rule — see [vision-modules pipeline.md](../../vision-modules/specs/pipeline.md)). The first run downloads the MediaPipe bundle and the ~340 MB ViT; until they are ready the classifier publishes nothing and the status shows no label. A load failure (no network on first run, a missing extra) is recorded by the library in the stage's `last_error` and the graph keeps running; this module surfaces it in `status()["error"]` — vision never crashes the app.
 - **Nothing here touches the World or WICA.** The `on_gesture` callback is injected, like `AsrBridge`'s `on_final_segment`, so the module is unit-testable with a recording callback, a fake api, and scripted detector/classifier seams (no camera, no model).
@@ -78,14 +79,13 @@ RobotCameraSource ─▶ StreamProvider ─▶ HandStage ─▶ GestureClassifie
 
 The watcher thread samples `gestures.latest()` at `fps`, once per new `frame_id`, and reduces each `Gesture` result to one value:
 
-| Classifier result (first hand) | Value |
+| Classifier result (every published hand) | Value |
 |---|---|
 | no hand in frame (`present=False`) | `None` |
-| a hand whose `label` is `None` (top score below threshold) | `None` |
-| a hand whose `label` is any class other than `fist` | `None` |
-| a hand whose `label` is `"fist"` | `"fist"` |
+| no hand's `label` is `"fist"` (each is `None` — top score below threshold, or no crop — or another class) | `None` |
+| **any** hand's `label` is `"fist"` | `"fist"` |
 
-Only the **first** hand counts (the detector's highest-scoring one, and `max_hands=1` anyway). Only `fist` is recognised for now: the other 17 HaGRID classes are deliberately folded into "no fist" rather than exposed, so the World holds a stop signal, not a gesture vocabulary (extending to more gestures is open question 1).
+**Any** hand counts, not only `hands[0]`. The library keeps `hands[i]` on the same physical hand while it stays in view (slot stability), so `first` is simply the hand that appeared first, not the one that matters — a fist in slot 1 next to a relaxed hand in slot 0 is still a stop sign. Two fists are one stop sign: the value is a flag, not a count, so which hand (or how many) holds the fist changes nothing delivered — a fist moving from one hand to the other without a fist-free frame in between is `fist → fist`, no delivery. Only `fist` is recognised for now: the other 17 HaGRID classes are deliberately folded into "no fist" rather than exposed, so the World holds a stop signal, not a gesture vocabulary (extending to more gestures is open question 1).
 
 ### Change detection and the trigger rule (the core decision)
 
@@ -154,6 +154,7 @@ class GestureInput:
         on_gesture: OnGesture,
         threshold: float = 0.55,
         fps: float = 5.0,
+        max_hands: int = 2,
         device: str | None = None,
         models: GestureModels | None = None,
     ) -> None: ...
@@ -174,12 +175,13 @@ class GestureInput:
     ) -> str: ...  # the crop(s) the classifier last classified
     def status(
         self,
-    ) -> dict: ...  # {"running", "gesture", "label", "confidence", "target_fps", "stream_fps", "hand_fps", "classifier_fps", "capture_error", "error"}
+    ) -> dict: ...  # {"running", "gesture", "hands", "max_hands", "target_fps", "stream_fps", "hand_fps", "classifier_fps", "capture_error", "error"}
 ```
 
 - `start()` / `stop()` are **synchronous** (threads, like the library's `Pipeline`), called from the app's main/Gradio thread, never from the loop. `stop()` joins every thread; `close()` hooks release the models. Both are idempotent.
-- `status()` is a cheap read the UI timer polls: `gesture` is the last *delivered* value (`"fist"` / `None`), `label` / `confidence` the first hand's raw top class and score from the latest classifier result (`None` / `0.0` with no hand or no result yet), `target_fps` the configured rate, `stream_fps` / `hand_fps` / `classifier_fps` each node's **achieved** rate (below), `capture_error` the camera source's, and `error` the message of the last exception a stage recorded (`hands.last_error` or `gestures.last_error`, the classifier's first), `None` when healthy.
+- `status()` is a cheap read the UI timer polls: `gesture` is the last *delivered* value (`"fist"` / `None`), `hands` one `{"label", "confidence"}` per hand in the latest classifier result, **in the library's slot order** (so entry *i* stays the same physical hand while it is in view) — each hand's validated top class (`None` below threshold or with no crop) and raw top score (`0.0` with no crop); an empty list with no hand or no result yet — `max_hands` the configured cap, `target_fps` the configured rate, `stream_fps` / `hand_fps` / `classifier_fps` each node's **achieved** rate (below), `capture_error` the camera source's, and `error` the message of the last exception a stage recorded (`hands.last_error` or `gestures.last_error`, the classifier's first), `None` when healthy.
 - **Achieved rates, the hand demo's way.** A stage's real rate is capped by its upstream and by the model's speed, so `target_fps` is a ceiling, not a fact. Every node's `published_count` increments exactly once per publish — the two stages' and the `StreamProvider`'s alike (the library's exact counter for this — `frame_id` would not do, it is inherited from the camera frame) — so the watcher samples the three counters once per window (`fps_window_s`, default 1 s) and keeps (Δcount / Δtime) as that node's rate; `None` until two samples exist. The stream's rate is the rate the robot camera actually delivered frames at (a `None` frame is not a publish), against the configured poll rate — the provider's `source_fps` would only echo `RobotCameraSource.fps()`, the poll rate, since the bridge reports no camera rate. The UI shows each next to its configured rate, so a camera returning nothing, or a classifier starved by a slow model, is visible at a glance.
+- `max_hands` must be `>= 1` (the library's `HandStage` raises `ValueError` otherwise; the config validates it first).
 - `device` is forwarded to the classifier: `None` lets the library pick (`mps` → `cuda` → `cpu`).
 - **Snapshots, the hand demo's way.** `save_detector_snapshot(folder)` / `save_classifier_snapshot(folder)` write what the hand stage / the classifier **last consumed** — the full camera frame it detected on, the hand crop(s) it classified — through the library's `save_input(stage, path)` ([vision-modules snapshot.md](../../vision-modules/specs/snapshot.md)), under `<folder>/snapshot_<stage name>_<YYYYMMDDHHMMSS>.jpg` (`snapshot_path`; the classifier's crops get `_<i>` before the suffix, one per hand). They run on the **caller's** thread (the Gradio click handler), as the library requires — never on a worker — and **never raise**: a `ValueError` (nothing consumed yet, an unsupported suffix), `TypeError`, or `OSError` (an unwritable folder) comes back as a `⚠️ <stage>: …` status line, a classifier input with no hand as `⚠️ …: no crop to save`, and a success as `Saved \`<path>\`, …`. The UI shows that line under the buttons (see [app.md](app.md), "Vision line").
 
@@ -198,7 +200,8 @@ Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with 
 - Frames with a hand the classifier scores `fist` at ≥ threshold deliver `"fist"` exactly once, even across many frames.
 - Then frames with no hand deliver `None` once; a hand back at `fist` delivers `"fist"` again (`None → fist → None → fist` ⇒ three deliveries).
 - A `fist` score below the threshold delivers nothing; a hand classified as any other label delivers nothing (both stay `None`).
-- `status()` reports the raw `label` / `confidence` even when the value is `None` (a sub-threshold fist shows `label=None`, `confidence=0.5`).
+- `status()` reports each hand's raw `label` / `confidence` even when the value is `None` (a sub-threshold fist shows `hands == [{"label": None, "confidence": 0.5}]`).
+- **Two hands** (a scripted detector returning two boxes, a classifier scoring each crop by its position): a fist on the *second* hand only delivers `"fist"`, and `hands` lists both in slot order; the fist moving to the other hand delivers nothing more; both hands relaxed delivers `None`. With `max_hands=1` the same frame publishes one hand.
 - With a short `fps_window_s`, `stream_fps` / `hand_fps` / `classifier_fps` go from `None` to a positive rate once frames flow, and `target_fps` is the configured rate.
 - Snapshots: before any frame both save methods return a `⚠️` line and write nothing; once frames flow, the detector snapshot writes `snapshot_HandStage_<ts>.jpg` (the full frame) and the classifier snapshot `snapshot_GestureClassifier_<ts>_0.jpg` (the crop), each reporting `Saved …`; with no hand in frame the classifier snapshot reports `no crop to save`; an unwritable folder reports the `OSError` instead of raising.
 - `RobotCameraSource`: `None` frames from the api are skipped (the provider keeps running and later frames arrive); a raising `get_camera_frame` sets `capture_error`, a later success clears it; `close()` makes `read()` return `None` promptly.

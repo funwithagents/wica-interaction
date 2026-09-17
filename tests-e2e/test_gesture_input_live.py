@@ -85,7 +85,9 @@ def _run(
 
         def classified_or_failed() -> bool:
             status = gesture.status()
-            return status["error"] is not None or status["confidence"] > 0.0
+            return status["error"] is not None or any(
+                hand["confidence"] > 0.0 for hand in status["hands"]
+            )
 
         assert _wait_until(classified_or_failed, _MODEL_TIMEOUT_S), (
             "the pipeline produced neither a classification nor an error"
@@ -104,7 +106,7 @@ def test_real_models_deliver_fist_for_the_fist_photo(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     deliveries, status = _run(loop, _fixture("hand_fist.jpg"))
-    assert status["label"] == FIST, status
+    assert FIST in [hand["label"] for hand in status["hands"]], status
     assert deliveries == [FIST]
 
 
@@ -112,7 +114,7 @@ def test_real_models_deliver_nothing_for_a_non_fist_photo(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     deliveries, status = _run(loop, _fixture("hand_palm.jpg"))
-    assert status["label"] != FIST, status
+    assert FIST not in [hand["label"] for hand in status["hands"]], status
     assert deliveries == []
 
 
@@ -139,6 +141,6 @@ def test_real_models_deliver_nothing_with_no_hand(
         status = gesture.status()
         if status["error"] is not None:
             pytest.skip(f"vision models unavailable: {status['error']}")
-        assert status["label"] is None and deliveries == []
+        assert status["hands"] == [] and deliveries == []
     finally:
         gesture.stop()

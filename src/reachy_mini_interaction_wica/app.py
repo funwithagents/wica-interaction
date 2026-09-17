@@ -299,6 +299,7 @@ def build_system(
                 on_gesture=_deliver_gesture,
                 threshold=vision.threshold,
                 fps=vision.fps,
+                max_hands=vision.max_hands,
                 device=vision.device,
                 models=gesture_models,
             )

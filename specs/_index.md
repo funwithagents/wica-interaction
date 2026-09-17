@@ -17,7 +17,7 @@ An interaction application for the **Reachy Mini** robot, built on the **WICA** 
 | [tts-output.md](tts-output.md) | Speech-out: the `say` output Command — the agent's voice, spoken through the robot speaker via the bridge | Implemented |
 | [robot-control.md](robot-control.md) | Robot commands: WICA commands wrapping `reachy-mini-bridge` verbs — play an emotion (the names seeded into the prompt at startup, no `list_emotions`), get/set motor state (head tracking is bridge-managed, not agent-facing) | Implemented |
 | [app.md](app.md) | The Gradio app: data flow, WICA's contrib observability panels + the app's ASR panel and Vision line, the build → UI → wire → start composition of ASR/vision/robot behind WICA on one event loop | Implemented |
-| [gesture-input.md](gesture-input.md) | Vision-in: the robot camera through `vision-modules`' hand + gesture pipeline → the `hand_gesture` fist input (0.55 threshold, 5 fps), triggering the agent only on `None → fist`; the persona's stop-sign rule | Implemented |
+| [gesture-input.md](gesture-input.md) | Vision-in: the robot camera through `vision-modules`' hand + gesture pipeline → the `hand_gesture` fist input (0.55 threshold, 5 fps, a fist on any of up to 2 hands), triggering the agent only on `None → fist`; the persona's stop-sign rule | Implemented |
 | _(add concept specs here — see [_spec-template.md](_spec-template.md))_ | | |
 
 Each spec also opens with a YAML **frontmatter** block declaring the `code:` and `tests:` files it governs — the spec → code/tests mapping the spec-drift checks use to scope what they compare. Keep it current when files move, and see [AGENTS.md](../AGENTS.md) ("Spec frontmatter") for the full convention.

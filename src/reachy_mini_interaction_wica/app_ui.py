@@ -110,26 +110,32 @@ def _fps(value: float | None) -> str:
     return f"{value:.1f} fps" if value is not None else "— fps"
 
 
+def _hand(label: str | None, confidence: float) -> str:
+    """One hand on the Vision line: its validated label and score, the raw score of a hand whose top
+    class missed the threshold (unvalidated), or "no crop" for a hand at the frame edge."""
+    if label is None and confidence == 0.0:
+        return "no crop"
+    return f"{label if label is not None else 'below threshold'} ({confidence:.2f})"
+
+
 def tick_vision(system: AppSystem) -> str:
-    """Refresh the Vision line: whether the gesture input runs, the first hand's raw top label and
-    score (or "no hand"), the last delivered fist state, each node's achieved rate next to the
+    """Refresh the Vision line: whether the gesture input runs, every hand's raw top label and score
+    in slot order (or "no hand") under the configured cap, the last delivered fist state, each node's achieved rate next to the
     configured one — the camera stream's poll rate, the two stages' target (the hand demo's
     readout) — and any camera / stage error."""
     gesture = system.gesture
     if gesture is None:
         return "_Vision off (`vision.enabled` is false, or no robot camera)._"
     status = gesture.status()
-    if status["label"] is None and status["confidence"] == 0.0:
-        seen = "no hand"
-    else:
-        # A hand whose top class missed the threshold still shows its raw score, unvalidated.
-        label = status["label"] if status["label"] is not None else "below threshold"
-        seen = f"{label} ({status['confidence']:.2f})"
+    seen = ", ".join(
+        f"#{i} {_hand(hand['label'], hand['confidence'])}"
+        for i, hand in enumerate(status["hands"], start=1)
+    )
     fist = "✊ fist raised" if status["gesture"] == FIST else "no fist"
     target = status["target_fps"]
     status_md = (
         f"**Vision:** {'running' if status['running'] else 'stopped'} · "
-        f"**hand:** {seen} · **stop sign:** {fist} · "
+        f"**hands (max {status['max_hands']}):** {seen or 'no hand'} · **stop sign:** {fist} · "
         f"**stream:** {_fps(status['stream_fps'])} (poll {target:g}) · "
         f"**hand stage:** {_fps(status['hand_fps'])} (target {target:g}) · "
         f"**classifier:** {_fps(status['classifier_fps'])} (target {target:g})"

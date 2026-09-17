@@ -112,8 +112,8 @@ class _Gesture:
         base = {
             "running": True,
             "gesture": None,
-            "label": None,
-            "confidence": 0.0,
+            "hands": [],
+            "max_hands": 2,
             "target_fps": 5.0,
             "stream_fps": None,
             "hand_fps": None,
@@ -154,7 +154,8 @@ def test_vision_line_without_gesture_input_says_off() -> None:
 
 def test_vision_line_shows_hand_label_score_and_stop_sign() -> None:
     no_hand = tick_vision(_system_with_gesture(_Gesture()))
-    assert "running" in no_hand and "no hand" in no_hand and "no fist" in no_hand
+    assert "running" in no_hand and "no fist" in no_hand
+    assert "hands (max 2): no hand" in no_hand.replace("**", "")
     # Before the first sampling window the achieved rates are a placeholder, the target shows.
     assert "stream: — fps (poll 5)" in no_hand.replace("**", "")
     assert "hand stage: — fps (target 5)" in no_hand.replace("**", "")
@@ -170,13 +171,37 @@ def test_vision_line_shows_hand_label_score_and_stop_sign() -> None:
     assert "classifier: 2.5 fps (target 5)" in rates
 
     fist = tick_vision(
-        _system_with_gesture(_Gesture(gesture="fist", label="fist", confidence=0.87))
+        _system_with_gesture(
+            _Gesture(gesture="fist", hands=[{"label": "fist", "confidence": 0.87}])
+        )
     )
-    assert "fist (0.87)" in fist and "✊ fist raised" in fist
+    assert "#1 fist (0.87)" in fist and "✊ fist raised" in fist
 
     # A hand whose top class missed the threshold: the raw score shows, unvalidated, no fist.
-    weak = tick_vision(_system_with_gesture(_Gesture(label=None, confidence=0.5)))
-    assert "below threshold (0.50)" in weak and "no fist" in weak
+    weak = tick_vision(
+        _system_with_gesture(_Gesture(hands=[{"label": None, "confidence": 0.5}]))
+    )
+    assert "#1 below threshold (0.50)" in weak and "no fist" in weak
+
+
+def test_vision_line_lists_every_hand_in_slot_order() -> None:
+    """Two hands: each shows under its slot number — a relaxed first hand, a fist on the second, a
+    hand at the frame edge with no crop — under the configured cap."""
+    line = tick_vision(
+        _system_with_gesture(
+            _Gesture(
+                gesture="fist",
+                max_hands=3,
+                hands=[
+                    {"label": "palm", "confidence": 0.91},
+                    {"label": "fist", "confidence": 0.77},
+                    {"label": None, "confidence": 0.0},
+                ],
+            )
+        )
+    ).replace("**", "")
+    assert "hands (max 3): #1 palm (0.91), #2 fist (0.77), #3 no crop" in line
+    assert "✊ fist raised" in line
 
 
 def test_vision_line_flags_camera_and_stage_errors() -> None:

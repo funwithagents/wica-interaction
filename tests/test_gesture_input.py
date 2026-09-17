@@ -146,8 +146,9 @@ def test_fist_is_delivered_once_across_many_frames(
         )  # many more frames went by
         assert deliveries == [FIST]
         assert gesture.status()["gesture"] == FIST
-        assert gesture.status()["label"] == FIST
-        assert gesture.status()["confidence"] == pytest.approx(0.9)
+        assert gesture.status()["hands"] == [
+            {"label": FIST, "confidence": pytest.approx(0.9)}
+        ]
     finally:
         gesture.stop()
 
@@ -164,7 +165,7 @@ def test_lowered_and_raised_again_deliver_each_change(
         assert _wait_until(lambda: deliveries == [FIST])
         api.frame = _EMPTY_FRAME  # the hand leaves the frame
         assert _wait_until(lambda: deliveries == [FIST, None])
-        assert gesture.status()["label"] is None
+        assert gesture.status()["hands"] == []
         api.frame = _HAND_FRAME  # ...and comes back as a fist
         assert _wait_until(lambda: deliveries == [FIST, None, FIST])
     finally:
@@ -181,9 +182,13 @@ def test_sub_threshold_fist_delivers_nothing_but_shows_its_score(
     gesture.start()
     try:
         # The classifier processed frames (the score shows up), yet nothing was delivered.
-        assert _wait_until(lambda: gesture.status()["confidence"] == pytest.approx(0.5))
-        status = gesture.status()
-        assert status["label"] is None and status["gesture"] is None
+        assert _wait_until(
+            lambda: (
+                gesture.status()["hands"]
+                == [{"label": None, "confidence": pytest.approx(0.5)}]
+            )
+        )
+        assert gesture.status()["gesture"] is None
         assert deliveries == []
     finally:
         gesture.stop()
@@ -211,7 +216,9 @@ def test_other_gestures_are_no_fist(loop: asyncio.AbstractEventLoop) -> None:
     gesture = _input(loop, api, classifier, deliveries)
     gesture.start()
     try:
-        assert _wait_until(lambda: gesture.status()["label"] == "palm")
+        assert _wait_until(
+            lambda: [h["label"] for h in gesture.status()["hands"]] == ["palm"]
+        )
         assert deliveries == []
         classifier.scores = _scores("fist", 0.9)  # the palm becomes a fist
         assert _wait_until(lambda: deliveries == [FIST])
@@ -219,6 +226,114 @@ def test_other_gestures_are_no_fist(loop: asyncio.AbstractEventLoop) -> None:
             "one", 0.9
         )  # ...then another gesture: the fist is down
         assert _wait_until(lambda: deliveries == [FIST, None])
+    finally:
+        gesture.stop()
+
+
+# --- Two hands ------------------------------------------------------------------------------------
+
+# Two hands side by side: the left half of the frame is one hand, the right half the other. The
+# left box is the bigger one, so it takes slot 0 when both first appear (the library's area rank).
+_LEFT, _RIGHT = 100, 200
+_TWO_HANDS_FRAME = np.zeros((48, 64, 3), dtype=np.uint8)
+_TWO_HANDS_FRAME[:, :32] = _LEFT
+_TWO_HANDS_FRAME[:, 32:] = _RIGHT
+
+
+class TwoHandDetector:
+    """Always the same two hands: a big one on the left, a smaller one on the right."""
+
+    def detect(self, image_bgr: np.ndarray, ts: float) -> tuple[DetectedHand, ...]:
+        return (
+            DetectedHand(box=(0.60, 0.30, 0.90, 0.70), score=0.9),  # right, smaller
+            DetectedHand(box=(0.05, 0.20, 0.45, 0.80), score=0.8),  # left, bigger
+        )
+
+    def close(self) -> None:
+        pass
+
+
+class PerHandClassifier(ScriptedClassifier):
+    """Scores each crop by which hand it is (the crop's center pixel): `scores` for the left hand,
+    `right_scores` for the right one."""
+
+    def __init__(self, left: dict[str, float], right: dict[str, float]) -> None:
+        super().__init__(left)
+        self.right_scores = right
+
+    def classify(self, image_bgr: np.ndarray) -> dict[str, float]:
+        h, w = image_bgr.shape[:2]
+        if int(image_bgr[h // 2, w // 2, 0]) == _RIGHT:
+            return dict(self.right_scores)
+        return dict(self.scores)
+
+
+def _two_hand_input(
+    loop: asyncio.AbstractEventLoop,
+    classifier: PerHandClassifier,
+    deliveries: list[str | None],
+    *,
+    max_hands: int,
+) -> GestureInput:
+    return GestureInput(
+        cast(ReachyMiniApi, FakeCameraApi(frame=_TWO_HANDS_FRAME)),
+        loop,
+        on_gesture=deliveries.append,
+        fps=_FPS,
+        max_hands=max_hands,
+        models=GestureModels(detector=TwoHandDetector(), classifier=classifier),
+    )
+
+
+def test_a_fist_on_the_second_hand_is_the_stop_sign(
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Any hand counts, not only slot 0: a relaxed left hand next to a right fist delivers `"fist"`;
+    the fist switching hands is still one stop sign (no delivery); both relaxed delivers `None`."""
+    deliveries: list[str | None] = []
+    classifier = PerHandClassifier(_scores("palm", 0.9), _scores("fist", 0.8))
+    gesture = _two_hand_input(loop, classifier, deliveries, max_hands=2)
+    gesture.start()
+    try:
+        assert _wait_until(lambda: deliveries == [FIST])
+        status = gesture.status()
+        assert status["max_hands"] == 2
+        # Slot order: the bigger left hand first, then the right one holding the fist.
+        assert status["hands"] == [
+            {"label": "palm", "confidence": pytest.approx(0.9)},
+            {"label": FIST, "confidence": pytest.approx(0.8)},
+        ]
+
+        classifier.right_scores = _scores(
+            "palm", 0.9
+        )  # ...set atomically with the next line
+        classifier.scores = _scores("fist", 0.8)  # the fist moves to the left hand
+        assert _wait_until(
+            lambda: [h["label"] for h in gesture.status()["hands"]] == [FIST, "palm"]
+        )
+        assert deliveries == [FIST]  # fist → fist: nothing new
+
+        classifier.scores = _scores("palm", 0.9)
+        assert _wait_until(lambda: deliveries == [FIST, None])
+    finally:
+        gesture.stop()
+
+
+def test_max_hands_caps_what_is_classified(loop: asyncio.AbstractEventLoop) -> None:
+    """With `max_hands=1` only the bigger (left, relaxed) hand is published: the right fist is
+    never seen, so nothing is delivered."""
+    deliveries: list[str | None] = []
+    classifier = PerHandClassifier(_scores("palm", 0.9), _scores("fist", 0.8))
+    gesture = _two_hand_input(loop, classifier, deliveries, max_hands=1)
+    gesture.start()
+    try:
+        assert _wait_until(
+            lambda: [h["label"] for h in gesture.status()["hands"]] == ["palm"]
+        )
+        time.sleep(0.1)  # many more frames at 100 fps
+        assert gesture.status()["max_hands"] == 1
+        assert len(gesture.status()["hands"]) == 1
+        assert deliveries == []
     finally:
         gesture.stop()
 
