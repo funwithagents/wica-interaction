@@ -240,20 +240,22 @@ deepgram = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asr-engine", extras = ["deepgram", "mcp"], marker = "extra == 'all'" },
+    { name = "asr-engine", extras = ["deepgram", "mcp", "kyutai-mlx", "kyutai-torch"], marker = "extra == 'all'" },
     { name = "deepgram-sdk", marker = "extra == 'deepgram'" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = "<2" },
+    { name = "moshi", marker = "extra == 'kyutai-torch'", specifier = ">=0.2.11" },
+    { name = "moshi-mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'kyutai-mlx'", specifier = ">=0.3" },
     { name = "numpy" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "uvicorn", marker = "extra == 'mcp'" },
 ]
-provides-extras = ["deepgram", "mcp", "all"]
+provides-extras = ["deepgram", "mcp", "kyutai-mlx", "kyutai-torch", "all"]
 
 [package.metadata.requires-dev]
 demo = [{ name = "gradio" }]
 dev = [
-    { name = "asr-engine", extras = ["all"] },
+    { name = "asr-engine", extras = ["deepgram", "mcp", "kyutai-mlx"] },
     { name = "pyright", specifier = ">=1.1.411" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -4595,8 +4597,8 @@ all = [
     { name = "vision-modules", extra = ["hand"] },
     { name = "wica", extra = ["anthropic"] },
 ]
-anthropic = [
-    { name = "wica", extra = ["anthropic"] },
+asr-deepgram = [
+    { name = "asr-engine", extra = ["deepgram"] },
 ]
 audio-processing = [
     { name = "aec-audio-processing" },
@@ -4604,9 +4606,6 @@ audio-processing = [
 ]
 computer = [
     { name = "tts-engine" },
-]
-deepgram = [
-    { name = "asr-engine", extra = ["deepgram"] },
 ]
 reachy = [
     { name = "reachy-mini-bridge" },
@@ -4619,6 +4618,9 @@ tts-pocket = [
 ]
 vision = [
     { name = "vision-modules", extra = ["hand"] },
+]
+wica-anthropic = [
+    { name = "wica", extra = ["anthropic"] },
 ]
 
 [package.dev-dependencies]
@@ -4634,7 +4636,7 @@ dev = [
 requires-dist = [
     { name = "aec-audio-processing", marker = "extra == 'audio-processing'", specifier = ">=1.0.1" },
     { name = "asr-engine", editable = "../asr-engine" },
-    { name = "asr-engine", extras = ["deepgram"], marker = "extra == 'deepgram'", editable = "../asr-engine" },
+    { name = "asr-engine", extras = ["deepgram"], marker = "extra == 'asr-deepgram'", editable = "../asr-engine" },
     { name = "gradio", specifier = ">=6" },
     { name = "numpy" },
     { name = "reachy-mini-bridge", marker = "extra == 'reachy'", editable = "../reachy-mini-bridge" },
@@ -4644,11 +4646,11 @@ requires-dist = [
     { name = "tts-engine", extras = ["pocket"], marker = "extra == 'tts-pocket'", editable = "../tts-engine" },
     { name = "vision-modules", editable = "../vision-modules" },
     { name = "vision-modules", extras = ["hand"], marker = "extra == 'vision'", editable = "../vision-modules" },
-    { name = "wica", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "../wica-framework" },
+    { name = "wica", extras = ["anthropic"], marker = "extra == 'wica-anthropic'", editable = "../wica-framework" },
     { name = "wica", extras = ["gradio"], editable = "../wica-framework" },
-    { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision", "anthropic", "deepgram", "tts-elevenlabs", "tts-pocket"], marker = "extra == 'all'", editable = "." },
+    { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision", "wica-anthropic", "asr-deepgram", "tts-elevenlabs", "tts-pocket"], marker = "extra == 'all'", editable = "." },
 ]
-provides-extras = ["computer", "audio-processing", "reachy", "vision", "anthropic", "deepgram", "tts-elevenlabs", "tts-pocket", "all"]
+provides-extras = ["computer", "audio-processing", "reachy", "vision", "wica-anthropic", "asr-deepgram", "tts-elevenlabs", "tts-pocket", "all"]
 
 [package.metadata.requires-dev]
 dev = [

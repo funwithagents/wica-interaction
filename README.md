@@ -37,13 +37,13 @@ What every embodiment needs is a base dependency; what only one embodiment, prov
 | `audio-processing` | `aec-audio-processing`, `samplerate` | the computer's echo cancellation / noise suppression |
 | `reachy` | `reachy-mini-bridge` | the Reachy Mini embodiment (pulls the upstream `reachy-mini` SDK) |
 | `vision` | `vision-modules[hand]` | the hand-sign input, either embodiment |
-| `anthropic` | `wica[anthropic]` | the agent provider the example configs select |
-| `deepgram` | `asr-engine[deepgram]` | the ASR provider the example configs select |
+| `wica-anthropic` | `wica[anthropic]` | the agent provider the example configs select |
+| `asr-deepgram` | `asr-engine[deepgram]` | the ASR provider the example configs select |
 | `tts-elevenlabs` | `tts-engine[elevenlabs]` | the cloud voice — both embodiments |
 | `tts-pocket` | `tts-engine[pocket]` | the local voice (torch + a first-run weight download) — both embodiments |
 | `all` | every extra above | the dev environment (`uv sync --dev` installs it) |
 
-A computer-only install, for instance, is `uv sync --no-dev --extra computer --extra anthropic --extra deepgram --extra tts-elevenlabs` — no robot SDK anywhere in the graph.
+A computer-only install, for instance, is `uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --extra tts-elevenlabs` — no robot SDK anywhere in the graph.
 
 ## Development
 

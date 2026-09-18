@@ -30,15 +30,15 @@ reachy = ["reachy-mini-bridge"]
 # The hand-sign input: MediaPipe + the torch/transformers HaGRID classifier, either embodiment.
 vision = ["vision-modules[hand]"]
 # The agent provider the example configs select.
-anthropic = ["wica[anthropic]"]
+wica-anthropic = ["wica[anthropic]"]
 # The ASR provider the example configs select.
-deepgram = ["asr-engine[deepgram]"]
+asr-deepgram = ["asr-engine[deepgram]"]
 # The two voices, for *both* embodiments (the bridge builds the robot's voice from the same
 # tts-engine): the cloud provider, and the local model (torch + a first-run weight download).
 tts-elevenlabs = ["tts-engine[elevenlabs]"]
 tts-pocket = ["tts-engine[pocket]"]
 all = [
-    "wica-interaction[computer,audio-processing,reachy,vision,anthropic,deepgram,tts-elevenlabs,tts-pocket]",
+    "wica-interaction[computer,audio-processing,reachy,vision,wica-anthropic,asr-deepgram,tts-elevenlabs,tts-pocket]",
 ]
 
 [project.scripts]
