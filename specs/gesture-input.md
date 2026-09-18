@@ -49,14 +49,14 @@ No mirroring (`StreamProvider(source, mirror=False)`): the classifier sees the f
 
 ### The pipeline
 
-Exactly the hand demo's graph, with the robot as source and one consumer:
+Exactly the hand demo's graph, with the embodiment's camera as source and one consumer:
 
 ```
 CameraSource ─▶ StreamProvider ─▶ HandStage ─▶ GestureClassifier ─▶ watcher ─▶ on_gesture(hand, sign)
  (paced at fps)   (no mirror)       (fps)          (fps, threshold)     (fps)
 ```
 
-- `HandStage(provider, target_fps=fps, max_hands=max_hands, detector=…)` — `max_hands` from the config ([configuration.md](configuration.md), `vision.max_hands`, default **2**, the library's own default), default padding, rank (`"area"`) and hysteresis; the shipped MediaPipe detector unless one is injected. The app always passes `max_hands` explicitly, so a change of the library's default never silently changes what the robot looks at.
+- `HandStage(provider, target_fps=fps, max_hands=max_hands, detector=…)` — `max_hands` from the config ([configuration.md](configuration.md), `vision.max_hands`, default **2**, the library's own default), default padding, rank (`"area"`) and hysteresis; the shipped MediaPipe detector unless one is injected. The app always passes `max_hands` explicitly, so a change of the library's default never silently changes what the camera looks at.
   - **Why 2 by default.** `max_hands` is also MediaPipe's tracking capacity ([vision-modules hand.md](../../vision-modules/specs/hand.md), "One count"): with 1, the detector locks onto the first hand it sees and a second hand is not even considered until the first is lost — so a person whose relaxed hand was tracked first could sign with the other and never be seen. With 2, both hands of the person are detected, published and classified — and each gets its own World entry (below), so `max_hands` is also the number of `hand_gesture_<n>` entries. The price is up to one more ViT pass per frame while two hands are in view; if that starves the classifier on a slow machine (the Vision line's achieved rate shows it), `max_hands: 1` is the fallback.
 - `GestureClassifier(hands, target_fps=fps, threshold=threshold, device=device, classifier=…)` — the shipped HaGRID ViT unless one is injected. `threshold` is the library's own validation rule: a hand's `label` is its top class **only when its score reaches the threshold**, else `None`. The app's default is **0.55** ([configuration.md](configuration.md), `vision.threshold`), and the module adds no second threshold of its own.
 - **Models load lazily**, on each stage's worker thread, at the first frame (that is the library's rule — see [vision-modules pipeline.md](../../vision-modules/specs/pipeline.md)). The first run downloads the MediaPipe bundle and the ~340 MB ViT; until they are ready the classifier publishes nothing and the status shows no label. A load failure (no network on first run, a missing extra) is recorded by the library in the stage's `last_error` and the graph keeps running; this module surfaces it in `status()["error"]` — vision never crashes the app.
@@ -118,7 +118,7 @@ Two rules, at two layers:
 
    So `None → two` wakes the agent, and so does `two → three` (a direct switch, no sign-less frame between); `three → None` updates the entry silently (the agent sees the hand is down on its next step); `two → two` never reaches the World at all (rule 1), and even if it did the predicate would not fire.
 
-   **Coalescing is not bypassed** (no `bypass_coalescing`, unlike the fist-only version): signs ride WICA's ~200 ms coalescing window like every other Input ([wica inputs.md](../../wica-framework/specs/inputs.md)). That is what folds two hands changing on the same frame — or a speech segment closing alongside a sign — into **one** reasoning step instead of two. The price is up to ~200 ms before a `stop` acts; revisit if that is felt on the robot.
+   **Coalescing is not bypassed** (no `bypass_coalescing`, unlike the fist-only version): signs ride WICA's ~200 ms coalescing window like every other Input ([wica inputs.md](../../wica-framework/specs/inputs.md)). That is what folds two hands changing on the same frame — or a speech segment closing alongside a sign — into **one** reasoning step instead of two. The price is up to ~200 ms before a `stop` acts; revisit if that is felt in use.
 
 ### In the prompt: ambient state, not a one-shot event
 
@@ -139,7 +139,7 @@ The section **describes the perception, not the reactions**: you can see the per
 
 **`stop` is the one exception**: when any hand shows `stop`, stop what you are doing — cancel every running Command (`cancel_command` on each in-flight `say` / action / whatever runs) and start nothing new; then, in the next turn, once the cancellation is observed done, `say` a short confirmation (a stop is a request like any other and gets a spoken reply); if nothing was running, just acknowledge briefly. Do not issue the cancel and the confirmation in the same turn (the robot persona's no-collision rule — [reachy-embodiment.md](reachy-embodiment.md); harmless on the computer). A `stop` going away is not a request for anything.
 
-**A known limit** (WICA's, not this module's): the agent handles one reasoning step at a time and a trigger arriving mid-step is dropped, not queued. A running `say` is a Command, not a step, so a sign shown *while the robot speaks* does wake the agent — the common case. A sign shown while the model is still reasoning is lost; the person lowers and shows it again (or shows another), and the next change triggers. With a whole vocabulary this happens more often than with the fist alone; barge-in proper is deferred in WICA.
+**A known limit** (WICA's, not this module's): the agent handles one reasoning step at a time and a trigger arriving mid-step is dropped, not queued. A running `say` is a Command, not a step, so a sign shown *while the agent speaks* does wake the agent — the common case. A sign shown while the model is still reasoning is lost; the person lowers and shows it again (or shows another), and the next change triggers. With a whole vocabulary this happens more often than with the fist alone; barge-in proper is deferred in WICA.
 
 ### `GestureInput`
 

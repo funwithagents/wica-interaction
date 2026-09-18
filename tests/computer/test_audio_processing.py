@@ -374,3 +374,38 @@ def test_audio_processing_ns_level_out_of_range_raises(tmp_path: Path) -> None:
         ValueError, match="'audio_processing.noise_suppression.level' must be 0-3"
     ):
         _load_with(tmp_path, {"noise_suppression": {"level": 5}})
+
+
+def test_a_misspelt_feature_is_rejected_not_read_as_off(tmp_path: Path) -> None:
+    """The costly typo: `echo_cancelation` would otherwise load as "echo cancellation off", and the
+    assistant would start answering its own voice with nothing on screen to say why."""
+    with pytest.raises(ValueError, match="unknown key.*'echo_cancelation'"):
+        _load_with(tmp_path, {"echo_cancelation": {"enabled": True}})
+
+
+@pytest.mark.parametrize(
+    ("section", "offender"),
+    [
+        ({"echo_cancellation": {"enabled": True, "delay_ms": 50}}, "delay_ms"),
+        ({"noise_suppression": {"enable": True}}, "enable"),
+    ],
+)
+def test_an_unknown_key_inside_a_feature_is_rejected(
+    tmp_path: Path, section: dict[str, Any], offender: str
+) -> None:
+    with pytest.raises(ValueError, match=f"unknown key.*'{offender}'"):
+        _load_with(tmp_path, section)
+
+
+def test_a_feature_that_is_not_an_object_is_rejected(tmp_path: Path) -> None:
+    """`"echo_cancellation": false` reads like a switch, but it is not the schema — it must not be
+    quietly taken for "all defaults"."""
+    with pytest.raises(
+        ValueError, match="'audio_processing.echo_cancellation' must be an object"
+    ):
+        _load_with(tmp_path, {"echo_cancellation": False})
+
+
+def test_a_null_feature_keeps_its_defaults(tmp_path: Path) -> None:
+    cfg = _load_with(tmp_path, {"echo_cancellation": None})
+    assert cfg.audio_processing == AudioProcessingConfig()

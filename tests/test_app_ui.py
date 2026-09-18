@@ -81,10 +81,15 @@ def _system(
     bridge: AsrBridge | None = None,
     gesture: GestureInput | None = None,
     embodiment: FakeEmbodiment | None = None,
+    display_name: str | None = None,
 ) -> AppSystem:
-    """A bare `AppSystem` carrying only what the view under test reads."""
+    """A bare `AppSystem` carrying only what the view under test reads. `display_name` defaults to
+    the body's, as `build_system` sets it; pass it alone for a body that failed to enter."""
+    if display_name is None and embodiment is not None:
+        display_name = embodiment.display_name
     return AppSystem(
         loop=None,
+        display_name=display_name,
         embodiment=embodiment,
         wica=None,
         bridge=bridge,
@@ -227,5 +232,10 @@ def test_the_page_is_named_after_the_body() -> None:
     ui = build_ui(_system(embodiment=FakeEmbodiment()))
     assert ui.blocks.title == "WICA Interaction — fake body"
 
-    # With no body at all the page still opens, under a neutral name.
-    assert build_ui(_system()).blocks.title == "WICA Interaction — WICA"
+    # A body that failed to enter is still the body the app was launched for: the page keeps its
+    # name (the banner says why it is absent).
+    failed = build_ui(_system(display_name="fake body"))
+    assert failed.blocks.title == "WICA Interaction — fake body"
+
+    # Only a config that never loaded has no body to name: a neutral title, not a made-up one.
+    assert build_ui(_system()).blocks.title == "WICA Interaction"

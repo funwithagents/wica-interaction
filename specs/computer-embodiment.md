@@ -78,11 +78,11 @@ class ComputerEmbodiment:
 Construction does no I/O and opens no device; everything happens in `enter()`, on the app loop:
 
 1. **Audio processing.** When `config.audio_processing.any_enabled`, build the `AudioProcessingCoordinator` through `coordinator_factory` (the module's `build_coordinator`, [audio-processing.md](audio-processing.md), "Building the coordinator"). `ImportError` (the WebRTC binding or the resampler absent), `RuntimeError` (the ASR audio format is not 16 kHz mono linear16) and `ValueError` are caught into `missing` as `Audio processing: …`, and the embodiment carries on with no coordinator — the mic goes straight to ASR, the speakers straight to the player.
-2. **The voice.** `TTSEngine(config.tts_engine, sink=coordinator.sink)` when echo cancellation is on (the far-end tap), plain `TTSEngine(config.tts_engine)` otherwise; then, with a sink, `coordinator.bind_far_rate(engine.sample_rate)` — the two-step the coordinator needs (the player and the resampler are built once the module's rate is known). The engine is wrapped once in `TTSTools(engine)`. tts-engine's `ConfigError` (a key unset, a misconfigured module) **and** `ImportError` (the provider's extra not installed — the SDK import is lazy inside the module) are both caught into `missing` as `TTS: …`; the embodiment then has no voice.
+2. **The voice.** `TTSEngine(config.tts_engine, sink=coordinator.sink)` when echo cancellation is on (the far-end tap), plain `TTSEngine(config.tts_engine)` otherwise; then, with a sink, `coordinator.bind_far_rate(engine.sample_rate)` — the two-step the coordinator needs (the player and the resampler are built once the module's rate is known). The engine is wrapped once in `TTSTools(engine)`. **Any** exception from that build — tts-engine's `ConfigError` (a key unset, a misconfigured module), `ImportError` (the provider's extra not installed — the SDK import is lazy inside the module), or whatever else a provider's constructor raises (a local model that fails to load) — is caught into `missing` as `TTS: …` and kept as the reason `say` reports; the body stays up, mic and camera included ([embodiment.md](embodiment.md), "Degradation is per component").
 
 The members:
 
-- **`voice`** — the bound `say` below, or `None` when the engine failed to build (then no output Command is set — [app.md](app.md), "Degraded start").
+- **`voice`** — the bound `say` below, **always**: with no engine it stays wired and answers with the TTS error, the same contract as the robot's ([embodiment.md](embodiment.md), "A voice that failed to build stays wired").
 - **`mic`** — `coordinator.source` when a coordinator was built (the processed mic, whatever features are on), else `None`: the ASR engine opens its default `AudioCapture` on `asr.engine.audio.device`.
 - **`mic_error`** — always `None`; a local capture that dies raises inside the engine, which reports it its own way.
 - **`camera(fps=…)`** — a `WebcamSource(config.camera.device, fps=fps)`, below.
@@ -101,7 +101,7 @@ async def say(self, text: str) -> str:
     """
 ```
 
-Delegates to [`TTSTools(engine).say`](../../tts-engine/specs/tools.md), reusing its guarded, non-raising contract rather than calling `engine.say` directly: an empty string returns `"TTS error: text must not be empty"`, a synthesis failure `"TTS error: <message>"`, success `"OK"`. It blocks until playback finishes (streaming playback inside the engine), so the Command stays `running` in the World for the real duration of the speech. As a bound method its docstring is what the model sees as the voice's description ([embodiment.md](embodiment.md)).
+Delegates to [`TTSTools(engine).say`](../../tts-engine/specs/tools.md), reusing its guarded, non-raising contract rather than calling `engine.say` directly: an empty string returns `"TTS error: text must not be empty"`, a synthesis failure `"TTS error: <message>"`, success `"OK"`. With no engine (the build failed in `enter()`), it returns `"TTS error: <the build error>"` without touching anything. It blocks until playback finishes (streaming playback inside the engine), so the Command stays `running` in the World for the real duration of the speech. As a bound method its docstring is what the model sees as the voice's description ([embodiment.md](embodiment.md)).
 
 ### `WebcamSource`
 
@@ -124,6 +124,7 @@ class WebcamSource:
 
 - **It paces itself** to `fps`, exactly as the robot source does: the `StreamProvider` calls `read()` back-to-back, and a webcam delivering 30 fps into a 5 fps hand stage would be wasted captures.
 - **A device that cannot be opened is visible, not fatal.** `OpenCVSource.open()` raises when the device is missing; `WebcamSource` catches it into `capture_error` (`"camera open failed: …"`) and `read()` keeps retrying the open at the poll rate, so an unplugged webcam shows on the Vision line and heals when plugged in. A failed `read()` (the device went away) is recorded the same way and retried; only `close()` makes `read()` return `None`. The provider never `ended`s on its own.
+- **An open never outlives the source.** The retry-open runs on the capture thread while `close()` runs on the main one; the opened flag flips under the source's lock, and an open that completes after `close()` is closed again rather than kept.
 - No mirroring: the classifier sees the frame as captured. (The hand demo mirrors only for display.)
 
 ## Entry point
@@ -144,7 +145,7 @@ def main() -> None:
 
 ## Persona
 
-[prompts/computer.md](../prompts/computer.md): a friendly voice assistant in a spoken conversation; it speaks only through `say`, may choose not to react, and can switch to dictation when asked — including the sentence that an empty dictated passage means the person paused without saying anything. It says nothing about hands: the "Hand signs" section is appended at startup by the app when vision is on ([gesture-input.md](gesture-input.md), "What the agent does with it"), so the same file serves with and without a webcam. The prompt's description of how dictation ends must match the config's `dictation_default_segmentation_mode` ([asr-bridge.md](asr-bridge.md), open question 2).
+[prompts/computer.md](../prompts/computer.md): a friendly voice assistant in a spoken conversation; it speaks only through `say`, may choose not to react, and can switch to dictation when asked — including the sentence that an empty dictated passage means nothing came through. It says nothing about hands: the "Hand signs" section is appended at startup by the app when vision is on ([gesture-input.md](gesture-input.md), "What the agent does with it"), so the same file serves with and without a webcam. It does **not** say how a dictated passage ends: that depends on the config's `dictation_default_segmentation_mode`, so `start_dictation`'s reply says it — for the model to know, not to announce ([asr-bridge.md](asr-bridge.md), "Dictation").
 
 ## Testing
 
@@ -152,8 +153,8 @@ def main() -> None:
 
 - **Config:** `load_config` on a computer file yields the shared `AppConfig` plus `tts_engine`, `audio_processing`, `camera`; `tts` missing, `tts` without an `engine` block, a `camera` that is not an object or has an unknown key, a `reachy` section, each raise `ValueError` naming the file; `camera` absent ⇒ device `0`; the `audio_processing` cases are in [audio-processing.md](audio-processing.md).
 - **Voice:** with an injected fake `TTSEngine`, `say("hello")` reaches the engine once and returns `"OK"`; `say("")` returns the empty-text error without calling it; a `TTSError` maps to `"TTS error: …"`.
-- **Enter:** with a fake engine, `voice` is set, `mic` is `None` with processing off; a `coordinator_factory` returning a fake coordinator makes `mic` its `source`, and with echo cancellation on the engine is built with its `sink` and `bind_far_rate` is called with the engine's rate; a factory raising `ImportError` degrades to `Audio processing: …` in `missing` with a still-working voice; a `TTSEngine` build raising `ConfigError` or `ImportError` degrades to `TTS: …` and `voice is None`; `commands()` is empty and `prompt_addendum` is `""`.
-- **Webcam:** `WebcamSource` over an injected fake `OpenCVSource`-like object: `read()` paces to `fps`; an `open()` that raises sets `capture_error` and a later success clears it; `close()` makes `read()` return `None` promptly.
+- **Enter:** with a fake engine, `voice` is set, `mic` is `None` with processing off; a `coordinator_factory` returning a fake coordinator makes `mic` its `source`, and with echo cancellation on the engine is built with its `sink` and `bind_far_rate` is called with the engine's rate; a factory raising `ImportError` degrades to `Audio processing: …` in `missing` with a still-working voice; a `TTSEngine` build raising `ConfigError`, `ImportError` or any other exception degrades to `TTS: …` with `voice` still the `say`, which returns the TTS error naming the cause; `commands()` is empty and `prompt_addendum` is `""`.
+- **Webcam:** `WebcamSource` over an injected fake `OpenCVSource`-like object: `read()` paces to `fps`; an `open()` that raises sets `capture_error` and a later success clears it; `close()` makes `read()` return `None` promptly; an open that completes after `close()` is released.
 
 A whole-loop live test (real mic + speakers + provider, asserting the agent replies and does not self-trigger) stays deferred to `tests-e2e/`.
 

@@ -198,10 +198,17 @@ def build_ui(system: AppSystem) -> AppUi:
         gesture = system.gesture
         return gesture.save_classifier_snapshot(folder) if gesture is not None else ""
 
-    # The page is named after the body the app was launched with (specs/embodiment.md).
-    name = system.embodiment.display_name if system.embodiment is not None else "WICA"
-    with gr.Blocks(title=f"WICA Interaction — {name}") as demo:
-        gr.Markdown(f"# Talk to a WICA agent embodied in a {name}")
+    # The page is named after the body the app was launched with (specs/embodiment.md) — also when
+    # that body failed to enter (the banner says why). Only a config that never loaded has no name.
+    name = system.display_name
+    title = f"WICA Interaction — {name}" if name else "WICA Interaction"
+    heading = (
+        f"# Talk to a WICA agent embodied in a {name}"
+        if name
+        else "# Talk to a WICA agent"
+    )
+    with gr.Blocks(title=title) as demo:
+        gr.Markdown(heading)
         if system.missing:
             items = "\n".join(f"> - {html.escape(m)}" for m in system.missing)
             gr.Markdown(
@@ -209,8 +216,8 @@ def build_ui(system: AppSystem) -> AppUi:
                 "and restart.**\n"
                 f"{items}\n>\n> The app still opens; you can type below to drive the agent wherever its "
                 "own key is set. With no embodiment, the `say` voice and its action commands are not "
-                "wired (the agent reasons but cannot speak or act); with no voice, `say` reports a "
-                "TTS error."
+                "wired (the agent reasons but cannot speak or act); with a body but no voice, `say` "
+                "stays wired and reports a TTS error."
             )
         gr.Markdown(
             "Speak (or type) a turn; the agent reasons over the World and replies with its **🗣️ "

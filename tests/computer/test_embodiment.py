@@ -193,13 +193,22 @@ def test_a_wrong_asr_format_degrades_the_processing_not_the_body() -> None:
 
 
 @pytest.mark.parametrize(
-    "failure", [TTSConfigError("ELEVENLABS_API_KEY is not set"), ImportError("no sdk")]
+    "failure",
+    [
+        TTSConfigError("ELEVENLABS_API_KEY is not set"),
+        ImportError("no sdk"),
+        # Not a config or import error: whatever a provider's constructor raises (a local model
+        # that fails to load) must still cost the voice alone, never the whole body.
+        RuntimeError("model weights could not be loaded"),
+    ],
 )
-def test_a_failed_voice_build_leaves_the_body_up_without_a_voice(
+def test_a_failed_voice_build_leaves_the_body_up_with_a_say_that_reports_it(
     failure: Exception, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A key unset or a provider extra absent degrades to `TTS: …` and no output Command — the rest
-    of the body (its mic, its camera) is untouched."""
+    """A key unset, a provider extra absent or any other build failure degrades to `TTS: …` — and
+    the voice keeps the robot's contract: `say` stays wired (the persona says "speak through `say`")
+    and answers with the TTS error, so the model sees why nothing was heard. The rest of the body
+    (its mic, its camera) is untouched."""
 
     def boom(_config: Any, *, sink: Any = None) -> Any:
         raise failure
@@ -209,7 +218,8 @@ def test_a_failed_voice_build_leaves_the_body_up_without_a_voice(
     run(embodiment.enter())
 
     assert any(m.startswith("TTS:") and str(failure) in m for m in embodiment.missing)
-    assert embodiment.voice is None
+    assert embodiment.voice == embodiment.say  # still wired as the output Command
+    assert run(embodiment.say("hello")) == f"TTS error: {failure}"
     assert embodiment.camera(fps=5.0) is not None  # the camera does not need the voice
 
 
@@ -334,6 +344,26 @@ def test_close_unblocks_read_and_releases_the_device() -> None:
     assert source.read() is None  # only close() makes read() return None
     assert time.monotonic() - t0 < 0.5  # did not wait out the 1 s interval
     assert inner.closes == 1
+
+
+def test_an_open_that_completes_after_close_is_closed_again() -> None:
+    """The retry-open runs on the capture thread while `close()` runs on the main one. When the
+    close lands *during* the open it finds nothing to close — so the device the open then yields
+    must be released, not kept past the source's life."""
+    inner = FakeOpenCVSource()
+    source = _webcam(inner)
+    real_open = inner.open
+
+    def open_while_closing() -> None:
+        real_open()
+        source.close()  # teardown arrives while the device is still opening
+
+    inner.open = open_while_closing  # type: ignore[method-assign]
+    source.open()
+
+    assert inner.opens == 1
+    assert inner.closes == 1  # released, even though close() itself saw it unopened
+    assert source.read() is None
 
 
 def test_a_non_positive_fps_is_rejected() -> None:

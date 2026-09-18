@@ -57,6 +57,9 @@ class AsrBridge:
         on_final_segment: OnFinalSegment,
         mic_error: MicError
         | None = None,  # the embodiment's capture health, for status()
+        trigger_words: Sequence[
+            str
+        ] = (),  # the ASR config's, named in the dictation reply
     ) -> None: ...
 
     async def start(self) -> None: ...  # engine.start() in utterance mode
@@ -90,9 +93,9 @@ async def start_dictation(segmentation_mode: str | None = None) -> str:
     """Switch speech capture to dictation mode for one longer passage.
 
     Use when the user wants to dictate free-form text rather than converse in short
-    turns. Speech keeps flowing to you as usual, but the current utterance is only
-    delivered once the user pauses (or says the trigger word), instead of after every
-    sentence. Dictation ends automatically after that one passage.
+    turns. Speech keeps flowing to you as usual, but it is delivered as one passage
+    instead of after every sentence. The reply tells you what ends the passage (a pause,
+    or a word the user says). Dictation ends automatically after that one passage.
     """
 ```
 
@@ -100,7 +103,15 @@ Semantics (a thin wrapper over the ASR engine's dictation — [asr-engine engine
 
 - Calls `engine.start_dictation(end_on_final_segment=True, segmentation_mode=segmentation_mode)`. The hard-wired **`end_on_final_segment=True`** is the "reset on segment end" behaviour: the mode swaps to `dictation_default_segmentation_mode` (typically `timeout` or `trigger_word`) for exactly one passage, then the engine reverts to `utterance` once that passage's final segment closes. The agent need not remember to turn it off.
 - **Dictation does not change where speech goes.** Segments still flow through `_on_segment`: interims still stream into the ASR panel, and the closed segment still becomes `speech_input`. The *only* difference is segmentation — how long the app waits before closing a segment — so a dictated passage arrives as one big `speech_input`. The agent is still fed and still replies.
-- Returns a short status string the model can read back — `"Dictation started (<mode> mode)."`, `<mode>` read back from `engine.segmentation_mode` after the call.
+- **The reply says how the passage ends** — `"Dictation started (<mode> mode): <how it ends>"`, `<mode>` read back from `engine.segmentation_mode` after the call:
+
+  | Mode | How it ends, as told to the model |
+  |---|---|
+  | `timeout` | the passage is delivered once the person stops speaking for a few seconds |
+  | `trigger_word` | the passage is delivered when the person says one of these words: `"submit"`, `"send"`, … — a pause does **not** end it |
+  | `utterance` | the passage is delivered after the person's next sentence |
+
+  This is the one fact neither persona can carry: the mode is the config's `dictation_default_segmentation_mode` (or the call's argument), and the two differ in a way the model must not get wrong — the engine's `trigger_word` mode runs **no timer at all**, so a prompt saying "delivered when they pause" (as the robot persona did, against a `trigger_word` config) describes a passage that never closes that way. Conversation (`utterance`, the always-on mode) is unaffected; only a dictated passage depends on it. The trigger words are the ASR config's `segmentation.trigger_words`, which the engine keeps private: the app passes them to the bridge (`trigger_words=`), and with none given the reply says "the trigger word". **The reply is for the model, not for the person**: neither it nor the personas ask the agent to announce how the passage ends — an extra spoken turn before every dictation would break the flow, and the person who chose the mode knows their trigger words. It is there so the model's picture matches the config: what it answers if asked, and what it makes of the passage it then receives (an empty one included).
 - **Never raises.** The engine raises `ValueError` on misuse (not running, already dictating, unknown mode); the command catches it and returns `"Could not start dictation: <msg>"`. The same non-raising Command contract `say` follows ([embodiment.md](embodiment.md)).
 
 `stop_dictation()` (`engine.stop_dictation()`, revert to `utterance`) backs the **UI stop button** — a manual hatch to leave dictation without waiting for the passage to close. It is a valid agent command too, but with `end_on_final_segment=True` the common path needs no explicit stop. It catches the engine's `ValueError` (no dictation in progress) and returns a readable string.
@@ -117,6 +128,7 @@ Drive `AsrBridge` against a fake `ASREngine` (no audio, no network) that lets a 
 - A final segment calls `on_final_segment` once with its `transcript`, then `display_text` is `""`; an empty final still fires.
 - A sequence interim→interim→final yields exactly one `on_final_segment` call, with the final text.
 - `start_dictation()` calls the engine with `end_on_final_segment=True` and the resolved mode; `status()` reflects `dictating` / `segmentation_mode` from the (fake) engine.
+- The reply per mode: `timeout` speaks of the person stopping and asks for no word; `trigger_word` names the injected words and rules out a pause; with no mode passed it describes the mode the engine resolved.
 - `status()["capture_error"]` is whatever the injected `mic_error` returns at that moment, and `None` without one.
 
 The mic sources themselves are tested with their embodiments ([reachy-embodiment.md](reachy-embodiment.md), [audio-processing.md](audio-processing.md)).
@@ -124,4 +136,4 @@ The mic sources themselves are tested with their embodiments ([reachy-embodiment
 ## Open questions
 
 1. **Barge-in while the agent is speaking.** *Echo* is handled per embodiment — the XVF3800 on the robot, the audio-processing coordinator on the computer — so this module adds none. What remains deferred is *barge-in*: acting on speech that arrives mid-`say`, which the agent's one-call-at-a-time model drops ([app.md](app.md)).
-2. **Choosing the dictation segmentation mode.** Whether the agent should be able to pass `segmentation_mode` (e.g. pick `trigger_word` vs `timeout`) or always use the configured default is left open; the signature allows it, the system prompt can constrain it.
+2. **Choosing the dictation segmentation mode.** Whether the agent should be able to pass `segmentation_mode` (e.g. pick `trigger_word` vs `timeout`) or always use the configured default is left open; the signature allows it, the system prompt can constrain it. Either way the reply describes the mode actually in force, so the choice no longer has to match any prompt text.

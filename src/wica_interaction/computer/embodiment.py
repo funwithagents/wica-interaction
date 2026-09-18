@@ -10,7 +10,8 @@ Construction does no I/O and opens no device: ``enter()`` builds the coordinator
 feature is on) and the TTS engine, wiring the two together through the seams the engines already
 expose — the sink for the far-end reference, the source for the cleaned mic — and recording each
 failure in ``missing`` rather than raising, so a body with a degraded voice or no processing is
-still a body.
+still a body. The voice keeps the one contract every embodiment's ``say`` has: it stays wired, and
+with no engine it answers ``"TTS error: …"`` instead of disappearing.
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ from typing import Any
 
 import numpy as np
 from asr_engine.audio import AudioSource
-from tts_engine.config import ConfigError as TTSConfigError
 from tts_engine.engine import TTSEngine
 from tts_engine.tools import TTSTools
 from vision_modules import FrameSource, OpenCVSource
@@ -89,7 +89,15 @@ class WebcamSource:
         except Exception as exc:  # noqa: BLE001 - a missing device is visible, not fatal
             self._record(f"camera open failed: {exc}")
             return
-        self._opened = True
+        # `close()` may have run while the open was in flight (a retry on the capture thread racing
+        # teardown on the main one). It then found nothing to close, so the device opened here
+        # would outlive the source: close it again instead of keeping it.
+        with self._lock:
+            closed_meanwhile = self._closed.is_set()
+            self._opened = not closed_meanwhile
+        if closed_meanwhile:
+            self._inner.close()
+            return
         self._clear_error()
 
     def read(self) -> np.ndarray | None:
@@ -112,7 +120,8 @@ class WebcamSource:
         except Exception as exc:  # noqa: BLE001 - a device that went away is visible, not fatal
             self._record(f"camera read failed: {exc}")
             # The device is gone: drop it so the next poll re-opens rather than re-reading a dead one.
-            self._opened = False
+            with self._lock:
+                self._opened = False
             return None
 
     def _record(self, message: str) -> None:
@@ -133,8 +142,9 @@ class WebcamSource:
 
     def close(self) -> None:
         self._closed.set()
-        if self._opened:
-            self._opened = False
+        with self._lock:
+            opened, self._opened = self._opened, False
+        if opened:
             self._inner.close()
 
     def fps(self) -> float:
@@ -161,12 +171,15 @@ class ComputerEmbodiment:
         self._factory = coordinator_factory
         self._coordinator: AudioProcessingCoordinator | None = None
         self._tools: TTSTools | None = None
+        # Why there is no engine, once `enter()` failed to build one: what `say` answers with.
+        self._voice_error: str | None = None
         self.missing: list[str] = []
 
     async def enter(self) -> None:
         """Build the audio-processing coordinator (when a feature is on) and the voice, on the app
         loop. Neither failure is fatal: each is one ``missing`` line and the member it backs
-        degrades — no coordinator means the mic goes straight to ASR, no engine means no voice."""
+        degrades — no coordinator means the mic goes straight to ASR, no engine means a ``say`` that
+        reports the TTS error."""
         ap = self._config.audio_processing
         if ap.any_enabled:
             try:
@@ -193,9 +206,12 @@ class ComputerEmbodiment:
                 # Two-step: the sink's player/resampler need the module's rate, known only now.
                 self._coordinator.bind_far_rate(engine.sample_rate)
             self._tools = TTSTools(engine)
-        except (TTSConfigError, ImportError) as exc:
-            # A key unset, a misconfigured module, or the provider's extra not installed (the SDK
-            # import is lazy inside the module): the body is up, it just has no voice.
+        except Exception as exc:  # noqa: BLE001 - the voice degrades alone, whatever broke it
+            # A key unset or a misconfigured module (tts-engine's ConfigError), the provider's extra
+            # not installed (ImportError — the SDK import is lazy inside the module), or anything
+            # else a provider's constructor raises (a local model that fails to load): the body is
+            # up — mic and camera included — it just cannot speak, and `say` says why.
+            self._voice_error = str(exc)
             self.missing.append(f"TTS: {exc}")
 
     async def exit(self) -> None:
@@ -204,7 +220,10 @@ class ComputerEmbodiment:
 
     @property
     def voice(self) -> Voice | None:
-        return self.say if self._tools is not None else None
+        """The ``say`` below, always — the same contract as the robot's: with no engine it stays
+        wired and reports the TTS error itself, so the persona's "speak through `say`" still names a
+        real Command and the model can see why nothing was heard."""
+        return self.say
 
     async def say(self, text: str) -> str:
         """Speak `text` aloud to the user through the machine's speakers.
@@ -212,7 +231,8 @@ class ComputerEmbodiment:
         This is your voice: whatever you want the user to hear, say it here.
         Returns "OK" when the utterance finished playing.
         """
-        assert self._tools is not None
+        if self._tools is None:
+            return f"TTS error: {self._voice_error or 'no voice was built'}"
         return await self._tools.say(text)
 
     @property

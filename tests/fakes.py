@@ -82,6 +82,23 @@ class FakeASREngine:
         return {"running": self.started}
 
 
+def asr_factory(
+    engine: FakeASREngine, calls: list[AudioSource | None] | None = None
+) -> Callable[[Any, AudioSource | None], Any]:
+    """The `asr_engine_factory` seam of `build_system`, handing back *engine*.
+
+    It records the source the lifecycle built the engine over — on `engine.audio_source`, and in
+    *calls* when given (so a test can also assert the factory was never called)."""
+
+    def factory(_config: Any, audio_source: AudioSource | None) -> Any:
+        engine.audio_source = audio_source
+        if calls is not None:
+            calls.append(audio_source)
+        return engine
+
+    return factory
+
+
 class ScriptedCameraSource:
     """A `CameraSource` over one settable frame — the camera every vision test runs on.
 

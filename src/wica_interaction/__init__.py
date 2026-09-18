@@ -1,1 +1,2 @@
-"""Reachy Mini Interaction WICA — talk to a WICA-driven Reachy Mini. See specs/_overview.md."""
+"""WICA Interaction — talk to a WICA agent embodied in the computer it runs on, or in a Reachy
+Mini. See specs/_overview.md."""

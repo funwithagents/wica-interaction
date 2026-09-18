@@ -116,7 +116,7 @@ class AudioProcessingConfig:
     def any_enabled(self) -> bool: ...
 ```
 
-Absent ⇒ all defaults ⇒ disabled. Field types are validated (a string where an int belongs, a bool for an int field, or an out-of-range `level` raises a clear `ValueError`). The committed `config.computer.example.json` turns echo cancellation on with `stream_delay_ms: 50` and leaves noise suppression off (it can hurt as often as help; enable per environment). Grouping AEC and NS under one object matches the reality that both are features of the one WebRTC processor.
+Absent ⇒ all defaults ⇒ disabled. **Strict, like every other app-owned section:** an unknown key — in the section or in either feature — is a `ValueError` naming it, because the costly typo here is silent (`echo_cancelation` would otherwise load as "echo cancellation off", and the assistant would answer its own voice with nothing on screen to say why); a feature that is present but not an object (`"echo_cancellation": false`) is an error too, while `null`/absent means its defaults. Field types are validated (a string where an int belongs, a bool for an int field, or an out-of-range `level` raises a clear `ValueError`). The committed `config.computer.example.json` turns echo cancellation on with `stream_delay_ms: 50` and leaves noise suppression off (it can hurt as often as help; enable per environment). Grouping AEC and NS under one object matches the reality that both are features of the one WebRTC processor.
 
 ## Teardown
 
@@ -130,7 +130,7 @@ Nothing to call directly: `ASREngine.stop()` stops the injected source (capture 
 
 `tests/computer/test_audio_processing.py` — deterministic, no hardware ([testing.md](testing.md)):
 
-- **Config:** an `audio_processing` block parses into `AudioProcessingConfig` (both features, partial sections, ns-level range, type errors); absent ⇒ disabled default.
+- **Config:** an `audio_processing` block parses into `AudioProcessingConfig` (both features, partial sections, ns-level range, type errors); absent ⇒ disabled default; a misspelt feature, an unknown key inside a feature, and a non-object feature each raise, while a `null` feature keeps its defaults.
 - **Processor (skips if the dependency is absent):** with echo cancellation, a delayed/attenuated copy of the far-end is cancelled from the near-end (steady-state ERLE materially positive) and near-end speech with a silent reference passes through; with noise suppression only, stationary noise is attenuated.
 - **Coordinator (fakes, no devices):** `sink.feed` forwards to the player **and** enqueues a resampled reference; the source re-chunks a 1600-sample mic chunk into ten 160-sample `process` calls paired with the buffered far frames (silence when empty); output preserves the input chunk length.
 - **Wiring** — in `tests/computer/test_embodiment.py` ([computer-embodiment.md](computer-embodiment.md)): echo cancellation on wires sink + source and binds the far rate; NS-only wires the source but not the sink and never binds; a forced `ImportError` degrades to direct wiring with a `missing` line.

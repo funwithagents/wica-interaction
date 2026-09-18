@@ -47,6 +47,13 @@ _STREAM_ENDED = "mic stream ended"
 # than wedging the capture thread forever.
 _POLL_TIMEOUT_S = 5.0
 
+# Appended to a failed connection's message (the "no embodiment" banner line) on a backend that
+# needs something outside this process — a robot, a daemon, a simulator.
+_OFFLINE_HINT = (
+    '(to develop with no robot, set reachy.backend to "fake" and remove the reachy.daemon '
+    'block, or to "sim" for the simulator)'
+)
+
 
 class RobotMicSource:
     """Feeds the ``ASREngine`` the robot's echo-cancelled mic instead of a local device.
@@ -224,8 +231,14 @@ class ReachyEmbodiment:
         self._loop = asyncio.get_running_loop()
         api = self._api if self._api is not None else ReachyMiniApi(self._config.reachy)
         # Construction never connects; __aenter__ does, so any raise here (an upstream reachy_mini
-        # error, the bridge's DaemonError/BridgeError) means "no embodiment".
-        await api.__aenter__()
+        # error, the bridge's DaemonError/BridgeError) means "no embodiment". The offline hint rides
+        # the message, since the banner shows it verbatim and only this body knows its backends.
+        try:
+            await api.__aenter__()
+        except Exception as exc:
+            if self._config.reachy.backend == "fake":
+                raise
+            raise RuntimeError(f"{exc} {_OFFLINE_HINT}") from exc
         self._api = api
         if not self._injected:
             # The voice degrades independently of the rest of the robot: the bridge records a failed

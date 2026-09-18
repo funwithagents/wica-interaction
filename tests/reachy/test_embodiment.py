@@ -116,6 +116,32 @@ def test_enter_failure_propagates_as_no_embodiment() -> None:
         run(embodiment.enter())
 
 
+def test_a_failed_connection_carries_the_offline_hint() -> None:
+    """On a backend that needs something outside the process, the "no embodiment" banner line says
+    how to develop without it — only this body knows its backends, so the hint rides its error."""
+    api = FakeReachyMiniApi(raise_on_enter="no daemon reachable")
+    config = ReachyConfig(
+        app=cast(AppConfig, None), reachy=ReachyMiniConfig(backend="sim")
+    )
+    embodiment = ReachyEmbodiment(config, api=cast(ReachyMiniApi, api))
+
+    with pytest.raises(RuntimeError, match="no daemon reachable") as raised:
+        run(embodiment.enter())
+
+    assert 'reachy.backend to "fake"' in str(raised.value)
+
+
+def test_the_fake_backend_gets_no_offline_hint() -> None:
+    """Already offline: pointing at `fake` again would be noise."""
+    api = FakeReachyMiniApi(raise_on_enter="boom")
+    embodiment = ReachyEmbodiment(_config(), api=cast(ReachyMiniApi, api))
+
+    with pytest.raises(RuntimeError) as raised:
+        run(embodiment.enter())
+
+    assert str(raised.value) == "boom"
+
+
 def test_failed_emotion_fetch_degrades_only_the_emotions() -> None:
     """An unreadable emotion library is one `missing` line: the robot is up, `play_emotion` is still
     registered (with its plain docstring) and the addendum is empty."""

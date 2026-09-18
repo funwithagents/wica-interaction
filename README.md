@@ -71,4 +71,4 @@ uv run wica-interaction-computer --config config.computer.example.json
 uv run wica-interaction-reachy --config config.reachy.example.json
 ```
 
-Whichever you launch, the app **opens even when something could not be built** and says what to fix in a banner: with no body the agent still reasons over typed text, with no voice `say` reports a TTS error, and with no ASR key the typed-text box is the way in.
+Whichever you launch, the app **opens even when something could not be built** and says what to fix in a banner: with no body the agent still reasons over typed text, with a body but no voice `say` stays wired and reports a TTS error (on either embodiment), and with no ASR key the typed-text box is the way in.

@@ -28,6 +28,9 @@ from wica_interaction.config import (
 SECTIONS = SHARED_SECTIONS | {"tts", "audio_processing", "camera"}
 
 _CAMERA_KEYS = frozenset({"device"})
+_AUDIO_PROCESSING_KEYS = frozenset({"echo_cancellation", "noise_suppression"})
+_ECHO_CANCELLATION_KEYS = frozenset({"enabled", "stream_delay_ms"})
+_NOISE_SUPPRESSION_KEYS = frozenset({"enabled", "level"})
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,30 @@ def _typed(
     return value
 
 
+def _reject_unknown(
+    section: dict[str, Any], known: frozenset[str], name: str, *, path: str
+) -> None:
+    unknown = sorted(set(section) - known)
+    if unknown:
+        raise ValueError(
+            f"config file {path!r}: section {name!r} has unknown key(s): "
+            f"{', '.join(repr(k) for k in unknown)}"
+        )
+
+
+def _feature_section(section: dict[str, Any], key: str, *, path: str) -> dict[str, Any]:
+    """One feature's sub-section: absent or ``null`` ⇒ ``{}`` (all defaults); anything else that is
+    not an object — ``false``, a list — is an error rather than a silent "off"."""
+    raw = section.get(key)
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(  # noqa: TRY004
+            f"config file {path!r}: 'audio_processing.{key}' must be an object"
+        )
+    return raw
+
+
 def _audio_processing_config(section: Any, *, path: str) -> AudioProcessingConfig:
     """Parse the optional ``audio_processing`` section (absent ⇒ all features disabled)."""
     if section is None:
@@ -163,13 +190,20 @@ def _audio_processing_config(section: Any, *, path: str) -> AudioProcessingConfi
             f"config file {path!r}: section 'audio_processing' must be an object"
         )
 
-    aec_raw = section.get("echo_cancellation") or {}
-    ns_raw = section.get("noise_suppression") or {}
-    if not isinstance(aec_raw, dict) or not isinstance(ns_raw, dict):
-        raise ValueError(  # noqa: TRY004
-            f"config file {path!r}: 'audio_processing.echo_cancellation' and "
-            f"'audio_processing.noise_suppression' must be objects"
-        )
+    # Strict like every other app-owned section: a misspelt `echo_cancelation` must not load as
+    # "echo cancellation off" — the assistant would then answer its own voice with nothing to say why.
+    _reject_unknown(section, _AUDIO_PROCESSING_KEYS, "audio_processing", path=path)
+    aec_raw = _feature_section(section, "echo_cancellation", path=path)
+    ns_raw = _feature_section(section, "noise_suppression", path=path)
+    _reject_unknown(
+        aec_raw,
+        _ECHO_CANCELLATION_KEYS,
+        "audio_processing.echo_cancellation",
+        path=path,
+    )
+    _reject_unknown(
+        ns_raw, _NOISE_SUPPRESSION_KEYS, "audio_processing.noise_suppression", path=path
+    )
 
     echo = EchoCancellationConfig(
         enabled=_typed(

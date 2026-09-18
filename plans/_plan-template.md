@@ -8,7 +8,7 @@ Implements the settled behavior in `specs/<spec>.md` ("<section>"). One-sentence
 
 The exact files this plan touches, each with a one-line note on what changes:
 
-- `src/reachy_mini_interaction_wica/example.py` — what's added/changed here
+- `src/wica_interaction/example.py` — what's added/changed here
 - `tests/test_example.py` — functional tests for the above
 
 ## Steps

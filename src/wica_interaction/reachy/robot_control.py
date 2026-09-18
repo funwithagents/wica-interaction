@@ -15,7 +15,7 @@ whose description **lists the valid names**. The names are a startup snapshot th
 from ``api.list_emotions()`` (the bridge loads its library once per connection, so nothing changes
 mid-session) and also folds into the system prompt through ``emotions_prompt_section`` — so the model
 knows the names before its first turn, and there is no ``list_emotions`` command to spend a turn on
-(specs/reachy-embodiment.md, "The agent knows the emotion names from the start").
+(specs/reachy-embodiment.md, "`RobotControl` — the action commands").
 
 Like every Command, each maps the bridge's typed failures onto a readable string rather than raising,
 so the agent always gets feedback it can reason over:
@@ -54,7 +54,7 @@ _PLAY_EMOTION_DESCRIPTION = (
 
 def emotions_prompt_section(names: Sequence[str]) -> str:
     """The persona addendum naming the emotions the robot can play — appended by the app to the
-    resolved system prompt at startup (specs/app.md, build step 4). The persona file itself only
+    resolved system prompt at startup (specs/app.md, build step 3). The persona file itself only
     says the list is "further down"; this is that list. Starts with a blank line so it reads as a
     new section after the persona's last line."""
     return (

@@ -26,13 +26,17 @@ import gradio as gr
 import numpy as np
 import pytest
 from asr_engine.config import ASREngineConfig
-from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
 from vision_modules.hand import DetectedHand
 from wica.config import WicaConfig
 from wica.contrib.gradio import ReactionLog, TranscriptLog
 
-from tests.fakes import FakeASREngine, FakeEmbodiment, scripted_wica_config
+from tests.fakes import (
+    FakeASREngine,
+    FakeEmbodiment,
+    asr_factory,
+    scripted_wica_config,
+)
 from wica_interaction import system as system_module
 from wica_interaction.app_ui import display_entry
 from wica_interaction.config import AppConfig, VisionConfig
@@ -58,13 +62,20 @@ def _config(
 ) -> AppConfig:
     """An `AppConfig` whose WICA section is the `fake` provider running *script*.
 
-    The ASR section is unused here (tests inject fakes), so it is `None` behind a cast. `vision`
-    is off unless given (the gesture input is built only with a section).
+    The ASR section is a real one the fake engine never reads (loading it needs no key); the
+    lifecycle reads its trigger words for the bridge. `vision` is off unless given (the gesture
+    input is built only with a section).
     """
     return AppConfig(
         wica=scripted_wica_config(script, persona=persona),
-        asr_engine=cast(ASREngineConfig, None),
+        asr_engine=_asr_config(),
         vision=vision,
+    )
+
+
+def _asr_config() -> ASREngineConfig:
+    return ASREngineConfig.from_dict(
+        {"module": {"type": "deepgram_v2", "api_key_env": "WICA_TEST_UNSET_ASR_KEY"}}
     )
 
 
@@ -97,7 +108,7 @@ def _build(
     return build_system(
         _config(script=script, vision=vision, persona=persona),
         embodiment,
-        asr_engine=cast(ASREngine, asr if asr is not None else FakeASREngine()),
+        asr_engine_factory=asr_factory(asr if asr is not None else FakeASREngine()),
         gesture_models=models,
     )
 
@@ -263,10 +274,12 @@ def test_the_mic_is_what_the_asr_engine_reads() -> None:
     device), and its capture health reaches the ASR panel through the bridge's status."""
     mic = cast(Any, object())  # an opaque AudioSource: only identity matters here
     embodiment = FakeEmbodiment(mic=mic, mic_error="mic stream ended")
-    system = _build(embodiment, script=[])
+    fake_asr = FakeASREngine()
+    system = _build(embodiment, script=[], asr=fake_asr)
     try:
-        assert system.embodiment is not None
-        assert system.embodiment.mic is mic
+        # What the lifecycle handed the engine — not what the fake body holds: dropping the
+        # hand-off would leave the robot listening through the laptop's mic, echo and all.
+        assert fake_asr.audio_source is mic
         assert system.bridge is not None
         assert system.bridge.status()["capture_error"] == "mic stream ended"
     finally:
@@ -353,13 +366,20 @@ def test_a_body_that_fails_to_enter_degrades_but_the_agent_still_reasons() -> No
     """A body that cannot come up is captured in `missing` under its own name; nothing that needs it
     is built, and WICA still runs on typed text."""
     embodiment = FakeEmbodiment(raise_on_enter="no daemon reachable")
-    # No asr_engine injected: with no body there is no mic, so no bridge is built at all.
+    built_over: list[Any] = []
     system = build_system(
-        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]), embodiment
+        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]),
+        embodiment,
+        asr_engine_factory=asr_factory(FakeASREngine(), built_over),
     )
     try:
         assert system.embodiment is None  # the failed enter degraded it to None
-        assert system.bridge is None  # no body ⇒ no mic ⇒ no speech-in
+        assert (
+            system.display_name == "fake body"
+        )  # … but the page still names what was launched
+        # No body ⇒ no mic ⇒ no speech-in: the engine is not even built.
+        assert built_over == []
+        assert system.bridge is None
         assert any(
             m.startswith("fake body:") and "no daemon reachable" in m
             for m in system.missing
@@ -431,10 +451,10 @@ def test_bad_system_prompt_file_degrades(tmp_path: Path) -> None:
             }
         }
     )
-    config = AppConfig(wica=wica, asr_engine=cast(ASREngineConfig, None))
+    config = AppConfig(wica=wica, asr_engine=_asr_config())
     embodiment = FakeEmbodiment()
     system = build_system(
-        config, embodiment, asr_engine=cast(ASREngine, FakeASREngine())
+        config, embodiment, asr_engine_factory=asr_factory(FakeASREngine())
     )
     try:
         assert system.wica is None
@@ -473,10 +493,20 @@ def test_shutdown_stops_asr_before_the_body_exits() -> None:
 
 
 class _NeverLaunched:
-    """Stands in for the built page in `_serve`: `_start` raises first, so `launch` must never run."""
+    """Stands in for the built page in `_serve`: something raises first, so `launch` must never run."""
 
     def launch(self) -> None:
-        raise AssertionError("launch() must not be reached when _start raises")
+        raise AssertionError("launch() must not be reached when an earlier step raises")
+
+
+def _never_launched_ui(system: AppSystem) -> Any:
+    """Stand in for `build_ui` (no browser): a real transcript, a page that must not launch."""
+
+    class _Ui:
+        blocks = cast(gr.Blocks, _NeverLaunched())
+        transcript = TranscriptLog(system.wica, display_entry)
+
+    return _Ui()
 
 
 def _loop_stopped(system: AppSystem) -> bool:
@@ -486,9 +516,12 @@ def _loop_stopped(system: AppSystem) -> bool:
     return _wait_until(lambda: not loop.is_running())
 
 
-def test_start_failure_still_tears_down_the_body() -> None:
+def test_start_failure_still_tears_down_the_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A raise while starting — after build_system has entered the body — still exits it and stops
     the loop, instead of leaking both (the UI is never launched)."""
+    monkeypatch.setattr(system_module, "build_ui", _never_launched_ui)
     embodiment = FakeEmbodiment()
     system = _build(
         embodiment,
@@ -498,11 +531,53 @@ def test_start_failure_still_tears_down_the_body() -> None:
     assert embodiment.entered
 
     with pytest.raises(RuntimeError, match="mic unavailable"):
-        _serve(system, cast(gr.Blocks, _NeverLaunched()))
+        _serve(system)
 
     assert embodiment.exited
     assert _loop_stopped(system)
     assert system.wica is not None and not system.wica.is_running
+
+
+def test_a_page_that_fails_to_build_still_tears_down_the_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The body is entered by `build_system`, before the page exists: a raise while building the
+    page must exit it (a robot session, a spawned daemon) like a raise while starting does."""
+
+    def _broken_ui(_system: AppSystem) -> Any:
+        raise RuntimeError("gradio could not build the page")
+
+    monkeypatch.setattr(system_module, "build_ui", _broken_ui)
+    embodiment = FakeEmbodiment()
+    system = _build(embodiment, script=[])
+
+    with pytest.raises(RuntimeError, match="could not build the page"):
+        _serve(system)
+
+    assert embodiment.exited
+    assert _loop_stopped(system)
+
+
+def test_a_wiring_failure_still_tears_down_the_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`wire` can raise on its own — here the body offers two Commands under one name, which WICA
+    rejects — and that, too, happens with the body already entered."""
+    monkeypatch.setattr(system_module, "build_ui", _never_launched_ui)
+
+    async def wave() -> str:
+        """A second `wave`, colliding with the first."""
+        return "OK"
+
+    embodiment = FakeEmbodiment(commands=None)
+    embodiment._commands = (embodiment.wave, wave)
+    system = _build(embodiment, script=[])
+
+    with pytest.raises(ValueError, match="wave"):
+        _serve(system)
+
+    assert embodiment.exited
+    assert _loop_stopped(system)
 
 
 def test_shutdown_isolates_a_failing_step() -> None:
@@ -586,8 +661,7 @@ def test_run_app_degrades_a_bad_config_into_the_banner(
     rather than a traceback: nothing is built, nothing is served."""
     monkeypatch.setattr(sys, "argv", ["wica-interaction-fake", "--config", "nope.json"])
     seen: list[AppSystem] = []
-    monkeypatch.setattr(system_module, "build_ui", lambda s: _ui_double(s, seen))
-    monkeypatch.setattr(system_module, "_serve", lambda _s, _b: None)
+    monkeypatch.setattr(system_module, "_serve", seen.append)
 
     def _load(path: str) -> tuple[AppConfig, Embodiment]:
         raise ValueError(f"could not read config file {path!r}")
@@ -596,18 +670,8 @@ def test_run_app_degrades_a_bad_config_into_the_banner(
 
     assert len(seen) == 1
     assert seen[0].wica is None and seen[0].embodiment is None
+    assert seen[0].display_name is None  # no config ⇒ no body to name the page after
     assert seen[0].missing == ["could not read config file 'nope.json'"]
-
-
-def _ui_double(system: AppSystem, seen: list[AppSystem]) -> Any:
-    """Stand in for `build_ui`: record the system and hand back the handle `run_app` expects."""
-    seen.append(system)
-
-    class _Ui:
-        blocks = cast(gr.Blocks, None)
-        transcript = TranscriptLog(system.wica, display_entry)
-
-    return _Ui()
 
 
 # --- Vision in: the hand-sign input (specs/gesture-input.md, "App integration") ----------------
@@ -794,7 +858,7 @@ def test_vision_needs_a_body() -> None:
     system = build_system(
         _config(script=[], vision=VisionConfig(enabled=True)),
         FakeEmbodiment(raise_on_enter="no body"),
-        asr_engine=cast(ASREngine, FakeASREngine()),
+        asr_engine_factory=asr_factory(FakeASREngine()),
     )
     try:
         assert system.gesture is None

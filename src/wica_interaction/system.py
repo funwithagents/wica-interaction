@@ -17,7 +17,7 @@ application callables; the sink and the output Command are set afterwards):
   hand-signs section) into the persona (an inline-prompt variant of the WICA config — see
   ``_seeded_wica_config``), ``Wica.init``s the agent and registers the ``speech_input`` entry,
   builds the ASR bridge over ``embodiment.mic`` and the gesture input over ``embodiment.camera``.
-  Its ``asr_engine=`` / ``gesture_models=`` kwargs are test seams for injecting fakes.
+  Its ``asr_engine_factory=`` / ``gesture_models=`` kwargs are test seams for injecting fakes.
 - ``build_ui(system)`` — the Gradio page (in [app_ui.py](app_ui.py)); it owns the contrib presenters
   (``TranscriptLog`` / ``ReactionLog``, subscribed to the agent's Events in their constructors) and hands
   the transcript back on an ``AppUi`` handle.
@@ -26,9 +26,10 @@ application callables; the sink and the output Command are set afterwards):
   each of ``embodiment.commands()``. Tests call it with a ``TranscriptLog`` they build themselves,
   playing the UI's role.
 - ``run_app(description, load)`` — each embodiment's ``main()`` is this call: parse ``--config``,
-  ``load`` it into ``(AppConfig, Embodiment)``, build, build the UI, wire, then ``_serve`` — start +
-  launch inside a ``try`` whose ``finally`` runs ``_shutdown`` (isolated, time-bounded steps; the
-  bridge and the vision are stopped before the embodiment exits).
+  ``load`` it into ``(AppConfig, Embodiment)``, build, then ``_serve`` — UI, wire, start and launch,
+  all inside the one ``try`` whose ``finally`` runs ``_shutdown`` (isolated, time-bounded steps; the
+  bridge and the vision are stopped before the embodiment exits), since the body is already
+  entered by then.
 
 ``AppSystem`` is a frozen snapshot of the resolved components (loop, embodiment, wica, bridge,
 gesture) and the typed-text ``submit_speech`` hatch — fully formed at construction, nothing
@@ -52,7 +53,8 @@ from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-import gradio as gr
+from asr_engine.audio import AudioSource
+from asr_engine.config import ASREngineConfig
 from asr_engine.engine import ASREngine
 from wica import Content, TextPart, Wica
 from wica.config import (
@@ -75,6 +77,17 @@ from wica_interaction.gesture_input import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Builds the ASR engine over the embodiment's mic (`None` ⇒ the engine opens its own default
+# device). A seam so the lifecycle tests can hand in a fake *and* see which source it was given —
+# the hand-off that decides whether the robot listens through its own echo-cancelled mic.
+AsrEngineFactory = Callable[[ASREngineConfig, AudioSource | None], ASREngine]
+
+
+def _build_asr_engine(
+    config: ASREngineConfig, audio_source: AudioSource | None
+) -> ASREngine:
+    return ASREngine(config, audio_source=audio_source)
 
 
 def _speech_input(value: Any, previous: Any) -> Content:
@@ -120,6 +133,9 @@ class AppSystem:
     """
 
     loop: asyncio.AbstractEventLoop | None
+    # The launched embodiment's `display_name` — kept even when its `enter()` raised, so the page
+    # still says which body it was launched for; None only when the config never loaded.
+    display_name: str | None
     # The body: None when `enter()` raised (its message is in `missing`) — the agent then reasons
     # on typed text with nothing to speak, act or see through. See specs/embodiment.md.
     embodiment: Embodiment | None
@@ -139,7 +155,7 @@ def build_system(
     config: AppConfig,
     embodiment: Embodiment,
     *,
-    asr_engine: ASREngine | None = None,
+    asr_engine_factory: AsrEngineFactory = _build_asr_engine,
     gesture_models: GestureModels | None = None,
 ) -> AppSystem:
     """Stand up the whole system from *config* and *embodiment* — the build step of ``run_app``,
@@ -161,8 +177,9 @@ def build_system(
     (``Wica.init`` → ``MissingEnvError``, any other ``ConfigError`` such as an unreadable
     ``system_prompt_file``, or ``ImportError`` for a missing provider extra; ``ASREngine`` →
     ``ValueError``) is likewise caught into ``missing`` rather than crashing, so the returned system
-    opens even with credentials or a body absent. ``asr_engine`` / ``gesture_models`` inject fakes
-    for tests, bypassing the real build.
+    opens even with credentials or a body absent. ``asr_engine_factory`` / ``gesture_models`` inject
+    fakes for tests; the factory is called exactly as the real build is — only with a body, over its
+    ``mic`` — so a test sees the source the engine was given.
     """
     loop = asyncio.new_event_loop()
     threading.Thread(
@@ -237,20 +254,16 @@ def build_system(
     # reads the embodiment's mic (None there means it opens its own default device), so speech-in
     # needs a body: with none, the bridge stays None and typed text still drives the agent. -------
     bridge: AsrBridge | None = None
-    if asr_engine is not None:
-        bridge = AsrBridge(
-            asr_engine,
-            on_final_segment=_deliver_speech,
-            mic_error=(lambda: body.mic_error) if body is not None else None,
-        )
-    elif body is not None:
+    if body is not None:
         embodied = body  # bound for the closure below: `body` is not reassigned after this point
         try:
-            asr = ASREngine(config.asr_engine, audio_source=body.mic)
+            asr = asr_engine_factory(config.asr_engine, body.mic)
             bridge = AsrBridge(
                 asr,
                 on_final_segment=_deliver_speech,
                 mic_error=lambda: embodied.mic_error,
+                # The engine keeps its trigger words private; `start_dictation`'s reply names them.
+                trigger_words=config.asr_engine.segmentation.trigger_words,
             )
         except (ValueError, ImportError) as exc:
             missing.append(f"ASR: {exc}")
@@ -297,6 +310,7 @@ def build_system(
 
     return AppSystem(
         loop=loop,
+        display_name=embodiment.display_name,
         embodiment=body,
         wica=wica,
         bridge=bridge,
@@ -365,6 +379,7 @@ def _degraded_system(message: str) -> AppSystem:
     """A do-nothing system that only carries a banner message (e.g. a config that failed to load)."""
     return AppSystem(
         loop=None,
+        display_name=None,
         embodiment=None,
         wica=None,
         bridge=None,
@@ -430,13 +445,19 @@ def _shutdown(system: AppSystem) -> None:
         loop.call_soon_threadsafe(loop.stop)
 
 
-def _serve(system: AppSystem, blocks: gr.Blocks) -> None:
-    """Start the system and run the (already built and wired) page, tearing down whatever happens.
-    ``_start`` sits *inside* the ``try``: ``build_system`` has already entered the embodiment, so a
-    raise in ``wica.start()`` / ``asr_bridge.start()`` must still exit it and stop the loop."""
+def _serve(system: AppSystem) -> None:
+    """Everything after the build — UI → wire → start → launch — tearing down whatever happens.
+
+    All four sit *inside* the ``try``: ``build_system`` has already entered the embodiment (a robot
+    session, a daemon the bridge spawned), so a raise anywhere from here on — the page failing to
+    build, ``wire`` rejecting a Command name, ``wica.start()`` / ``asr_bridge.start()`` — must still
+    exit it and stop the loop. The UI owns the presenters, so it comes before the wiring that needs
+    the transcript's sink; everything is wired before start."""
     try:
+        ui = build_ui(system)
+        wire(system, ui.transcript)
         _start(system)
-        blocks.launch()
+        ui.blocks.launch()
     finally:
         _shutdown(system)
 
@@ -473,8 +494,6 @@ def run_app(
         system = _degraded_system(str(exc))
     else:
         system = build_system(app_config, embodiment)
-    # build → UI → wire → start (+ launch, then close): the UI owns the presenters, so it comes before
-    # the wiring that needs the transcript's sink; everything is wired before start.
-    ui = build_ui(system)
-    wire(system, ui.transcript)
-    _serve(system, ui.blocks)
+    # build → UI → wire → start → launch → close; everything after the build is `_serve`'s, under
+    # the one `finally` that tears the entered body down.
+    _serve(system)

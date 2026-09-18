@@ -7,13 +7,16 @@ agent can invoke. Interim segments only feed a live display view (the agent is n
 mid-utterance); a closed segment reaches the agent, exactly once, via the injected
 ``on_final_segment`` callback. The bridge never sees the source itself: what it is given is
 ``mic_error``, a callable reporting the embodiment's capture health, because the engine can keep
-reporting ``running`` while its stream has died. See specs/asr-bridge.md.
+reporting ``running`` while its stream has died. ``start_dictation``'s reply says how the passage
+it opens will end (a pause, or one of the configured trigger words) — for the model's own
+understanding, not to be announced — so the personas never hard-code a segmentation mode the config
+can change. See specs/asr-bridge.md.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
@@ -33,7 +36,9 @@ class AsrBridge:
     the World itself, so the bridge is decoupled from WICA and unit-testable with a recording callback
     and a fake engine. ``mic_error`` reads the capture health of the source the engine was built
     over — the embodiment's, since the mic is its choice and the engine keeps its source private;
-    ``None`` when the caller gave none.
+    ``None`` when the caller gave none. ``trigger_words`` are the ASR config's
+    (``segmentation.trigger_words``) — the engine keeps them private, and ``start_dictation`` names
+    them in its reply when the passage will end on one.
     """
 
     def __init__(
@@ -42,10 +47,12 @@ class AsrBridge:
         *,
         on_final_segment: OnFinalSegment,
         mic_error: MicError | None = None,
+        trigger_words: Sequence[str] = (),
     ) -> None:
         self._engine = engine
         self._on_final_segment = on_final_segment
         self._mic_error = mic_error
+        self._trigger_words = tuple(trigger_words)
         self._display_text = ""
         engine.on_speech_segment = self._on_segment
 
@@ -96,9 +103,9 @@ class AsrBridge:
         """Switch speech capture to dictation mode for one longer passage.
 
         Use when the user wants to dictate free-form text rather than converse in short
-        turns. Speech keeps flowing to you as usual, but the current utterance is only
-        delivered once the user pauses (or says the trigger word), instead of after every
-        sentence. Dictation ends automatically after that one passage.
+        turns. Speech keeps flowing to you as usual, but it is delivered as one passage
+        instead of after every sentence. The reply tells you what ends the passage (a pause,
+        or a word the user says). Dictation ends automatically after that one passage.
         """
         try:
             await self._engine.start_dictation(
@@ -106,7 +113,23 @@ class AsrBridge:
             )
         except ValueError as exc:
             return f"Could not start dictation: {exc}"
-        return f"Dictation started ({self._engine.segmentation_mode} mode)."
+        mode = self._engine.segmentation_mode
+        return f"Dictation started ({mode} mode): {self._how_it_ends(mode)}"
+
+    def _how_it_ends(self, mode: str) -> str:
+        """What closes the passage in *mode* — the one fact the model cannot know from its persona,
+        since the mode is the config's (``dictation_default_segmentation_mode``) or the call's."""
+        if mode == "trigger_word":
+            # No timer runs in this mode: only a trigger word closes the segment.
+            words = ", ".join(f'"{word}"' for word in self._trigger_words)
+            named = f" one of these words: {words}" if words else " the trigger word"
+            return (
+                f"the passage is delivered when the person says{named} — "
+                "a pause does not end it."
+            )
+        if mode == "timeout":
+            return "the passage is delivered once the person stops speaking for a few seconds."
+        return "the passage is delivered after the person's next sentence."
 
     async def stop_dictation(self) -> str:
         """Leave dictation immediately, without waiting for the passage to close.

@@ -76,14 +76,14 @@ Each member is touched at exactly one point of the lifecycle ([app.md](app.md), 
 
 | Member | Called by, and when | Computer | Reachy Mini |
 |---|---|---|---|
-| `display_name` | `build_ui` (page title); `build_system` (the banner line when `enter` raises) | `"computer"` | `"Reachy Mini"` |
+| `display_name` | `build_system`, which keeps it on `AppSystem.display_name` — also when `enter` raises, so `build_ui` still names the page after the body that was launched — and uses it for the banner line of a failed `enter` | `"computer"` | `"Reachy Mini"` |
 | `enter()` | `build_system`, first, scheduled onto the app loop and awaited. **A raise means "no embodiment"**: the agent still builds, typed text still drives it, nothing that needs a body is wired | builds the audio-processing coordinator and the `TTSEngine`, recording their failures in `missing` | `ReachyMiniApi.__aenter__` (daemon, connection, media session), then the emotion-names fetch, then the mic source |
 | `missing` | `build_system`, right after `enter`, merged into the banner list | `TTS: …`, `Audio processing: …` | `TTS: …`, `Robot: emotions unavailable: …` |
 | `prompt_addendum` | `build_system`, before `Wica.init`: appended to the resolved persona (the same seam the hand-signs section uses — [app.md](app.md), build step 4) | `""` | the "Your emotions" section |
 | `mic` | `build_system`, as `ASREngine(cfg.asr_engine, audio_source=…)`. `None` means the engine opens its default local capture from the ASR config's `audio.device` | the coordinator's processed source, or `None` when no processing feature is on | `RobotMicSource` |
 | `mic_error` | the ASR panel's timer, through `AsrBridge.status()["capture_error"]` | always `None` | `RobotMicSource.capture_error` |
 | `camera(fps=…)` | `build_system`, only when `vision.enabled`, handed to `GestureInput` | a paced `WebcamSource` on the configured OpenCV device | `RobotCameraSource` polling the bridge on the loop |
-| `voice` | `wire`, as `wica.set_output_command(voice)`. `None` means no output Command is set — the model's free text is then its voice, as today | `say` over `TTSTools(engine)`, or `None` when the TTS engine failed to build | `say` over `api.say` |
+| `voice` | `wire`, as `wica.set_output_command(voice)`. `None` is for a body with **no speaker at all** (no output Command is set — the model's free text is then its voice); a body whose voice merely *failed to build* keeps its `say` wired (below) | `say` over `TTSTools(engine)`; with no engine it answers `"TTS error: <why>"` | `say` over `api.say`; with no synthesizer it answers `"TTS error: <why>"` |
 | `commands()` | `wire`, each item `register_command`ed after the dictation commands | `()` | `play_emotion`, `get_motors_state`, `set_motors_state` |
 | `exit()` | `_shutdown`, scheduled onto the loop after the agent, vision and ASR are stopped, before the loop stops | nothing to release | `ReachyMiniApi.__aexit__` |
 
@@ -91,7 +91,9 @@ Read the "called by" column top to bottom and it is the lifecycle: construct the
 
 **`voice` is the model-facing description of the voice.** The embodiment's `say` coroutine is registered directly as the output Command, so its name, signature and docstring are what the model reads — "out of the robot's speaker" versus "through the machine's speakers" lives with the embodiment that owns it. The contract is the same for both: non-raising, `"OK"` on success, a readable `"TTS error: …"` otherwise, awaiting real playback so the Command stays `running` for the duration of the speech.
 
-**Degradation is per component, never per embodiment.** `enter()` raises only when the body itself is unavailable (the robot cannot be connected). Anything narrower — the voice's key unset, an optional dependency absent, the emotions library unreadable — is recorded as one line in `missing` and the corresponding member degrades (`voice` is `None`, `commands()` still registers, the addendum is empty, …), so the rest of the body stays up. The banner shows `missing` verbatim.
+**A voice that failed to build stays wired.** Both personas say "speak only through `say`", and WICA's primer tells the model its free text is private *because* an output Command is set. Dropping the Command when the TTS engine cannot be built would leave the persona naming a tool that does not exist, and the model with no way to learn why nothing was heard. So both embodiments return their `say` from `voice` whatever happened to the engine, and `say` answers `"TTS error: <the build error>"` — the failure is in the banner for the person and in the Command result for the model. `voice` is `None` only for a body that has no speaker to begin with (none today; `FakeEmbodiment(voice=False)` pins that path).
+
+**Degradation is per component, never per embodiment.** `enter()` raises only when the body itself is unavailable (the robot cannot be connected). Anything narrower — the voice's key unset, an optional dependency absent, the emotions library unreadable — is recorded as one line in `missing` and the corresponding member degrades (`say` answers with the TTS error, `commands()` still registers, the addendum is empty, …), so the rest of the body stays up. An `enter()` therefore catches **whatever** a component's build raises, not a shortlist of exception types: a provider constructor failing in an unforeseen way must cost that component, never the mic and the camera with it. The banner shows `missing` verbatim.
 
 ## Not in the protocol
 
@@ -107,10 +109,10 @@ Read the "called by" column top to bottom and it is the lifecycle: construct the
 - the scripted `say` reaches `embodiment.said` (the voice is set as the output Command), and with `voice=None` no output Command is set;
 - each of `commands()` is registered and routes back to the fake when the model calls it;
 - `prompt_addendum` appears verbatim in the first step's prompt;
-- `mic` is what the ASR engine was built over (the fake engine records its `audio_source`), and `mic_error` reaches `bridge.status()["capture_error"]`;
-- `raise_on_enter` degrades to a banner line naming `display_name`, no voice, no commands, no ASR bridge, no gesture input — and typed text still reaches the agent;
+- `mic` is what the ASR engine was built over — asserted on the **engine's** side: the lifecycle builds the engine through its `asr_engine_factory` seam ([app.md](app.md), build step 6), so the fake factory records the `audio_source` it was handed (asserting the fake body's own `mic` would prove nothing) — and `mic_error` reaches `bridge.status()["capture_error"]`;
+- `raise_on_enter` degrades to a banner line naming `display_name` (kept on `AppSystem.display_name`), no voice, no commands, no ASR bridge — the engine factory is never called — no gesture input, and typed text still reaches the agent;
 - `missing` lines from `enter` reach `system.missing`;
-- teardown order: `wica.close`, `gesture.stop`, `asr.stop`, `embodiment.exit`, then the loop — and `exit` runs even when a step before it raises.
+- teardown order: `wica.close`, `gesture.stop`, `asr.stop`, `embodiment.exit`, then the loop — and `exit` runs even when a step before it raises, including a raise while building the page or wiring (the body is entered before either).
 
 Each embodiment's own tests ([computer-embodiment.md](computer-embodiment.md), [reachy-embodiment.md](reachy-embodiment.md)) pin that it satisfies each member's contract against its own fakes; no test builds a real body.
 

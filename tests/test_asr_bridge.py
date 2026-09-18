@@ -160,6 +160,43 @@ def test_start_dictation_wires_engine_and_reports_mode() -> None:
     }
 
 
+def test_the_dictation_reply_says_a_pause_ends_a_timeout_passage() -> None:
+    """The model cannot know the config's segmentation mode from its persona: the reply is where it
+    learns what closes the passage (to understand what it then receives, not to announce it)."""
+    bridge, _ = _make_bridge(FakeASREngine())
+
+    result = run(bridge.start_dictation("timeout"))
+
+    assert "stops speaking" in result
+    assert "says" not in result  # no trigger word is asked for in this mode
+
+
+def test_the_dictation_reply_names_the_trigger_words_and_rules_out_a_pause() -> None:
+    """`trigger_word` mode runs no timer at all, so a person told to "just pause" would wait forever:
+    the reply names the configured words and says a pause does not end the passage."""
+    engine = FakeASREngine()
+    bridge = AsrBridge(
+        cast(ASREngine, engine),
+        on_final_segment=lambda _text: None,
+        trigger_words=["submit", "envoyer"],
+    )
+
+    result = run(bridge.start_dictation("trigger_word"))
+
+    assert '"submit", "envoyer"' in result
+    assert "a pause does not end it" in result
+
+
+def test_the_dictation_reply_follows_the_engines_resolved_default_mode() -> None:
+    """With no mode passed, the reply describes the mode the engine resolved (its configured
+    default), not the argument."""
+    bridge, _ = _make_bridge(FakeASREngine())
+
+    result = run(bridge.start_dictation())  # the fake resolves None to "timeout"
+
+    assert result.startswith("Dictation started (timeout mode)")
+
+
 def test_start_dictation_catches_error() -> None:
     engine = FakeASREngine()
     engine.raise_on_start_dictation = "ASR is not running."
