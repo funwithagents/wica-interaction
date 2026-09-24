@@ -22,7 +22,9 @@ so the agent always gets feedback it can reason over:
 
 - ``play_emotion`` **moves the robot**, so the bridge raises ``MotorsNotEnabledError`` when the motors
   aren't ``"enabled"``. That is caught and turned into a message telling the model to enable and retry
-  — the app never silently auto-enables (matching the bridge's fail-fast stance).
+  — the app never silently auto-enables (matching the bridge's fail-fast stance). The motors are
+  **assumed enabled**: every description tells the model to just move, and to reach for the motor
+  commands only once a move has come back saying they are off — no state check before a move.
 - Any other failure (bad emotion/state name → ``ValueError``, connection/other ``BridgeError``) is
   caught and returned as ``"<verb> failed: <message>"`` (for an emotion, followed by the valid names
   when known); success returns a short confirmation or the read-back state.
@@ -48,7 +50,8 @@ _MOTORS_OFF = (
 # where it picks the tool (the docstring is the fallback when they aren't).
 _PLAY_EMOTION_DESCRIPTION = (
     "Play a physical emotion on the robot — a short recorded motion. Valid names: {names}. "
-    "Use exactly one of these. Needs the motors enabled."
+    "Use exactly one of these. The motors are on by default: just play it — only if the reply "
+    "says they are off, enable them and play it again."
 )
 
 
@@ -98,7 +101,8 @@ class RobotControl:
 
     async def play_emotion(self, name: str) -> str:
         """Play a physical emotion on the robot — a short recorded motion, e.g. "happy" or
-        "curious". Needs the motors enabled."""
+        "curious". The motors are on by default: just play it — only if the reply says they are
+        off, enable them and play it again."""
         try:
             await self._api.play_emotion(name)
         except MotorsNotEnabledError:
@@ -111,7 +115,9 @@ class RobotControl:
         return f"OK — played the {name!r} emotion."
 
     async def get_motors_state(self) -> str:
-        """Report whether the motors are enabled, disabled, or in gravity-compensation (limp-but-held)."""
+        """Report whether the motors are enabled, disabled, or in gravity-compensation
+        (limp-but-held). Assume they are enabled; only read them back when a move has just
+        reported them off or moved in an unexpected way."""
         try:
             state = await self._api.get_motors_state()
         except Exception as exc:  # noqa: BLE001 - any bridge/connection failure becomes a readable reply
@@ -120,7 +126,8 @@ class RobotControl:
 
     async def set_motors_state(self, state: str) -> str:
         """Set the motors: "enabled" (ready to move), "disabled" (limp), or "gravity_compensation"
-        (a gentle rest — the head holds position). Enable before playing an emotion."""
+        (a gentle rest — the head holds position). They are enabled by default, so call this only
+        to recover after a move reported them off, or to rest them."""
         try:
             await self._api.set_motors_state(state)
         except Exception as exc:  # noqa: BLE001 - unknown state / bridge failure → readable reply

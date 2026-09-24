@@ -171,18 +171,23 @@ class RobotControl:
 
     async def play_emotion(self, name: str) -> str:
         """Play a physical emotion on the robot — a short recorded motion, e.g. "happy" or
-        "curious". Needs the motors enabled."""
+        "curious". The motors are on by default: just play it — only if the reply says they are
+        off, enable them and play it again."""
 
     async def get_motors_state(self) -> str:
-        """Report whether the motors are enabled, disabled, or in gravity-compensation (limp-but-held)."""
+        """Report whether the motors are enabled, disabled, or in gravity-compensation
+        (limp-but-held). Assume they are enabled; only read them back when a move has just
+        reported them off or moved in an unexpected way."""
 
     async def set_motors_state(self, state: str) -> str:
         """Set the motors: "enabled" (ready to move), "disabled" (limp), or "gravity_compensation"
-        (a gentle rest — the head holds position). Enable before playing an emotion."""
+        (a gentle rest — the head holds position). They are enabled by default, so call this only
+        to recover after a move reported them off, or to rest them."""
 ```
 
 - **Registered as Commands** by `wire`, through `commands()`: a bound method's name/signature/docstring is what the model sees, except `play_emotion`, which — when the names are known — is wrapped as `Command(play_emotion, description=…)` listing the valid names right where the model picks the tool. With no names the docstring is used unchanged.
 - **Non-raising, like every Command.** `play_emotion` **moves the robot**, so the bridge raises `MotorsNotEnabledError` when the motors are not `"enabled"`: caught and returned as `"Can't do that: the motors are off. Call set_motors_state('enabled') first."` — the agent decides to enable and retry; the app never silently auto-enables (the bridge's fail-fast stance). An unknown emotion name or motor state (`ValueError`), or any other `BridgeError`/connection error, returns `"<verb> failed: <message>"` — for emotions followed by `Valid names: …` when known. Success returns a short confirmation or the state read back.
+- **The motors are assumed enabled; their state is checked only on failure.** Enabled is the normal state of a running robot, and a state check before every move costs a turn (and, under the no-collision rule below, a whole extra step) to learn what is almost always already true. So every description — the two motor docstrings, `play_emotion`'s, and the persona's "How you move" — tells the model to just move, and to reach for `set_motors_state("enabled")` **only** after a move has come back with the motor-precondition message, then retry. `get_motors_state` stays registered, as the read-back for that recovery (and for an unexpected move), not as a pre-flight check. This is prompt/description guidance, not a guard: the bridge's precondition is unchanged and still the thing that reports the truth.
 - **No `list_emotions` command.** The names are known at startup and given to the model up front (the prompt section through `prompt_addendum`, the tool description through `commands()`), both in the model's cached prefix; a round-trip command would spend a turn on information that never changes during a session.
 - **Head tracking, presence, breathing, wobbling are not agent-facing.** Observed behaviour showed the model treating idle aliveness as its responsibility when tracking was exposed; it is not — the bridge's motion loop keeps the robot alive between verbs, driven by the `motion` config, and the persona stays silent about all of it.
 - **Not independent of `say`.** `play_emotion` plays a sidecar sound and moves the head, so it collides with a `say` in flight; WICA runs a response's Commands concurrently, so the persona's action rules (below) sequence them across steps. No lock in v1 (open question 1).
@@ -205,7 +210,7 @@ def main() -> None:
 
 ## Persona
 
-[prompts/reachy.md](../prompts/reachy.md): the voice and mind of a Reachy Mini in a spoken, physical interaction. Beyond the shared voice/dictation rules (how a dictated passage ends comes from `start_dictation`'s reply, not from the file — [asr-bridge.md](asr-bridge.md); an empty passage means nothing came through), it tells the model how it moves — `play_emotion` with the names listed "further down" (the seeded section), `set_motors_state` before a move, resting in `gravity_compensation` — and never to narrate movements; it says nothing about tracking/presence/breathing. It carries the three **action rules** WICA's generic primer cannot know, because these Commands share one body and one speaker:
+[prompts/reachy.md](../prompts/reachy.md): the voice and mind of a Reachy Mini in a spoken, physical interaction. Beyond the shared voice/dictation rules (how a dictated passage ends comes from `start_dictation`'s reply, not from the file — [asr-bridge.md](asr-bridge.md); an empty passage means nothing came through), it tells the model how it moves — `play_emotion` with the names listed "further down" (the seeded section), the motors assumed on with `set_motors_state("enabled")` kept for recovering from a move that reported them off, resting in `gravity_compensation` — and never to narrate movements; it says nothing about tracking/presence/breathing. It carries the three **action rules** WICA's generic primer cannot know, because these Commands share one body and one speaker:
 
 1. **No colliding Commands in one turn.** `say` with `play_emotion` (the emotion's sidecar sound plays over the speech and its motion fights the talking head), two emotions, a move with a motor-state change, a `cancel_command` with the action replacing what it cancels: issue the first, then the next in a later step once the first is observed complete. Commands touching different things may go together. A prompt rule, not a guard.
 2. **Order matters.** Dependent actions (enable → move; stop one thing → start the next; speak → then the emotion that goes with it) are issued in that order across turns.
@@ -230,5 +235,5 @@ A live test (the `sim` or a real robot actually moving and speaking) belongs in 
 
 1. **Enforcing the no-collision rule.** If the model keeps issuing `say` + `play_emotion` together, the enforcement is a shared `asyncio.Lock` held by `say` and `play_emotion` (the two speaker/head-spanning verbs) so the second waits for the first, both still `running` in the World. Deferred until observed.
 2. **Compact-intent → emotion resolution.** The bridge keeps `play_emotion(name)` literal; friendlier intent mapping ("be happy" → a curated move) stays out.
-3. **Motors: agent-facing or lifecycle.** `set_motors_state`/`get_motors_state` stay exposed; whether real hardware honours motor-state changes, and whether a lifecycle default enable is friendlier, is deferred to hardware validation.
+3. **Motors: agent-facing or lifecycle.** `set_motors_state`/`get_motors_state` stay exposed, with the agent told to assume them enabled and check only on failure; whether real hardware honours motor-state changes, and whether the *lifecycle* should enable them at `enter()` (making the assumption true by construction rather than by convention), is deferred to hardware validation.
 4. **Robot state in the UI.** Connection / motor state on a panel of the embodiment's own ([embodiment.md](embodiment.md), open question 1).
