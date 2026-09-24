@@ -39,7 +39,7 @@ The file carries the shared sections (`wica`, `asr`, optional `vision` — [conf
     "audio": { "xvf3800": null },
     "motion": { "presence": true, "breathing": true, "wobbling": true, "tracking": true }
   },
-  "vision": { "enabled": true, "threshold": 0.55, "fps": 5, "max_hands": 2, "device": null }
+  "vision": { "enabled": true, "threshold": 0.55, "fps": 5, "max_hands": 2, "hold_s": 0.5, "device": null }
 }
 ```
 

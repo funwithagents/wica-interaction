@@ -23,6 +23,7 @@ from wica_interaction.gesture_input import (
     SIGNS,
     GestureInput,
     GestureModels,
+    HoldFilter,
     hand_signs_prompt_section,
     sign_shown,
     snapshot_path,
@@ -96,13 +97,17 @@ def _input(
     *,
     threshold: float = 0.55,
     max_hands: int = 2,
+    hold_s: float = 0.0,
 ) -> GestureInput:
+    """No hold unless a test asks for one: the reduction and change tests are about what each
+    frame does; the hold has its own tests below."""
     return GestureInput(
         camera,
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         threshold=threshold,
         fps=_FPS,
         max_hands=max_hands,
+        hold_s=hold_s,
         models=GestureModels(detector=ScriptedDetector(), classifier=classifier),
     )
 
@@ -223,35 +228,35 @@ def test_threshold_is_the_apps_setting() -> None:
         gesture.stop()
 
 
-def test_an_unmapped_class_is_no_sign() -> None:
-    """`call` is outside the vocabulary: confidently classified, it still delivers nothing — and a
-    hand leaving a mapped sign for it delivers the `None`."""
+@pytest.mark.parametrize("label", ["call", "mute"])
+def test_an_unmapped_class_is_no_sign(label: str) -> None:
+    """`call` and `mute` are outside the vocabulary: confidently classified, they still deliver
+    nothing — and a hand leaving a mapped sign for one of them delivers the `None`."""
     camera = _camera()
     deliveries: list[Delivery] = []
-    classifier = ScriptedClassifier(_scores("call", 0.9))
+    classifier = ScriptedClassifier(_scores(label, 0.9))
     gesture = _input(camera, classifier, deliveries)
     gesture.start()
     try:
         assert _wait_until(
-            lambda: [h["label"] for h in gesture.status()["hands"]] == ["call"]
+            lambda: [h["label"] for h in gesture.status()["hands"]] == [label]
         )
         assert deliveries == []
         classifier.scores = _scores("ok", 0.9)
         assert _wait_until(lambda: deliveries == [(1, "ok")])
-        classifier.scores = _scores("call", 0.9)  # back outside the vocabulary
+        classifier.scores = _scores(label, 0.9)  # back outside the vocabulary
         assert _wait_until(lambda: deliveries == [(1, "ok"), (1, None)])
     finally:
         gesture.stop()
 
 
 def test_the_vocabulary_is_the_specced_table() -> None:
-    """Every sign the persona names is reachable, and `call` is the one class left out."""
+    """Every sign the persona names is reachable; `call` and `mute` are the classes left out."""
     assert set(SIGNS.values()) == {
         "stop",
         "like",
         "dislike",
         "ok",
-        "mute",
         "one",
         "two",
         "three",
@@ -259,6 +264,140 @@ def test_the_vocabulary_is_the_specced_table() -> None:
         "five",
     }
     assert "call" not in SIGNS
+    assert "mute" not in SIGNS
+
+
+# --- The hold filter --------------------------------------------------------------------------------
+
+
+def test_hold_delivers_a_value_only_once_it_has_held_unbroken() -> None:
+    """Seen once: not delivered. Seen again `hold_s` later with nothing else between: delivered,
+    once; later sightings of the delivered value deliver nothing more."""
+    hold = HoldFilter(0.5)
+    assert hold.observe("two", 10.0) is False
+    assert hold.value is None
+    assert hold.observe("two", 10.3) is False
+    assert hold.observe("two", 10.5) is True
+    assert hold.value == "two"
+    assert hold.observe("two", 11.0) is False
+    assert hold.value == "two"
+
+
+def test_hold_restarts_the_clock_on_a_dissenting_frame() -> None:
+    """One frame of another value resets the hold: it counts from the dissent, not from the first
+    sighting — strictly consecutive, no majority vote."""
+    hold = HoldFilter(0.5)
+    assert hold.observe("two", 10.0) is False
+    assert hold.observe("three", 10.4) is False  # the dissent starts its own candidate
+    assert (
+        hold.observe("two", 10.6) is False
+    )  # back to two, but the clock restarted here
+    assert (
+        hold.observe("two", 10.9) is False
+    )  # 0.9 s after the first sighting, still nothing
+    assert hold.observe("two", 11.1) is True  # 0.5 s after the restart
+    assert hold.value == "two"
+
+
+def test_hold_swallows_a_dip_to_none_between_two_sightings() -> None:
+    """A one-frame flicker to `None` below a delivered sign never reaches the consumer: the
+    delivered value seen again drops the candidate, and no `two → None → two` happens."""
+    hold = HoldFilter(0.5)
+    assert hold.observe("two", 10.0) is False
+    assert hold.observe("two", 10.5) is True
+    assert hold.observe(None, 10.7) is False  # the dip
+    assert hold.observe("two", 10.9) is False  # back before the hold elapsed
+    assert hold.value == "two"
+    assert (
+        hold.observe(None, 11.5) is False
+    )  # a fresh candidate: the old dip does not count
+    assert hold.observe(None, 12.0) is True  # a real drop, held for its own 0.5 s
+    assert hold.value is None
+
+
+def test_hold_applies_to_a_sign_going_away_too() -> None:
+    """`x → None` waits the same hold as `None → x`."""
+    hold = HoldFilter(0.5)
+    hold.observe("stop", 0.0)
+    assert hold.observe("stop", 0.5) is True
+    assert hold.observe(None, 1.0) is False
+    assert hold.observe(None, 1.4) is False
+    assert hold.observe(None, 1.5) is True
+    assert hold.value is None
+
+
+def test_hold_of_zero_delivers_on_the_first_observation() -> None:
+    hold = HoldFilter(0.0)
+    assert hold.observe("ok", 5.0) is True
+    assert hold.value == "ok"
+    assert hold.observe(None, 5.01) is True
+    assert hold.value is None
+
+
+def test_hold_rejects_a_negative_duration() -> None:
+    with pytest.raises(ValueError, match="hold_s"):
+        HoldFilter(-0.1)
+    with pytest.raises(ValueError, match="hold_s"):
+        GestureInput(
+            _camera(),
+            on_gesture=lambda _hand, _sign: None,
+            hold_s=-1.0,
+            models=GestureModels(
+                detector=ScriptedDetector(),
+                classifier=ScriptedClassifier(_scores("ok", 0.9)),
+            ),
+        )
+
+
+def test_a_sign_is_delivered_after_the_hold_and_not_before() -> None:
+    """Through the pipeline with a real clock: a steady sign takes at least `hold_s` to arrive,
+    arrives once, and the status echoes the hold."""
+    camera = _camera()
+    deliveries: list[Delivery] = []
+    gesture = _input(
+        camera, ScriptedClassifier(_scores("like", 0.9)), deliveries, hold_s=0.2
+    )
+    t0 = time.monotonic()
+    gesture.start()
+    try:
+        assert gesture.status()["hold_s"] == 0.2
+        # The classifier is publishing well before the hold elapses, yet nothing is delivered.
+        assert _wait_until(
+            lambda: [h["label"] for h in gesture.status()["hands"]] == ["like"]
+        )
+        assert deliveries == []
+        assert gesture.status()["signs"] == [None, None]
+        assert _wait_until(lambda: deliveries == [(1, "like")])
+        assert time.monotonic() - t0 >= 0.2
+        assert gesture.status()["signs"] == ["like", None]
+        time.sleep(0.1)  # many more frames at 100 fps
+        assert deliveries == [(1, "like")]
+    finally:
+        gesture.stop()
+
+
+def test_a_flickering_sign_never_arrives_until_it_settles() -> None:
+    """A classifier flipping between two signs faster than the hold delivers neither; once it
+    settles on one, that one arrives."""
+    camera = _camera()
+    deliveries: list[Delivery] = []
+    classifier = ScriptedClassifier(_scores("stop", 0.9))
+    gesture = _input(camera, classifier, deliveries, hold_s=0.2)
+    gesture.start()
+    try:
+        deadline = time.monotonic() + 0.6
+        flip = False
+        while (
+            time.monotonic() < deadline
+        ):  # flip every ~50 ms, well under the 200 ms hold
+            classifier.scores = _scores("palm" if flip else "stop", 0.9)
+            flip = not flip
+            time.sleep(0.05)
+        assert deliveries == []
+        classifier.scores = _scores("palm", 0.9)  # settles
+        assert _wait_until(lambda: deliveries == [(1, "five")])
+    finally:
+        gesture.stop()
 
 
 # --- Two hands ------------------------------------------------------------------------------------
@@ -310,6 +449,7 @@ def _two_hand_input(
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         fps=_FPS,
         max_hands=max_hands,
+        hold_s=0.0,
         models=GestureModels(detector=TwoHandDetector(), classifier=classifier),
     )
 
@@ -374,6 +514,7 @@ def test_achieved_fps_is_measured_per_stage() -> None:
         camera,
         on_gesture=lambda _hand, _sign: None,
         fps=_FPS,
+        hold_s=0.0,
         models=GestureModels(
             detector=ScriptedDetector(),
             classifier=ScriptedClassifier(_scores("fist", 0.9)),
@@ -567,6 +708,9 @@ def test_hand_signs_prompt_section_names_the_whole_vocabulary_and_the_stop_rule(
     assert section.startswith("\n\n## Hand signs\n\n")
     for sign in set(SIGNS.values()):
         assert f"`{sign}`" in section
+    assert (
+        "mute" not in section
+    )  # dropped from the vocabulary, and from the persona with it
     assert "`stop`" in section
     assert "cancel_command" in section  # the stop rule, spelled out
     assert "hand_gesture_<n>" in section

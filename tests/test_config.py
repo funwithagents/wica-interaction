@@ -180,7 +180,7 @@ def test_vision_null_means_off(tmp_path: Path) -> None:
 def test_vision_empty_object_takes_the_defaults(tmp_path: Path) -> None:
     cfg = _load(tmp_path, {**_composed(), "vision": {}})
     assert cfg.vision == VisionConfig(
-        enabled=False, threshold=0.55, fps=5.0, max_hands=2, device=None
+        enabled=False, threshold=0.55, fps=5.0, max_hands=2, hold_s=0.5, device=None
     )
 
 
@@ -190,12 +190,15 @@ def test_vision_fields_are_carried(tmp_path: Path) -> None:
         "threshold": 0.7,
         "fps": 10,
         "max_hands": 1,
+        "hold_s": 0,
         "device": "cpu",
     }
     cfg = _load(tmp_path, {**_composed(), "vision": section})
+    assert cfg.vision is not None
     assert cfg.vision == VisionConfig(
-        enabled=True, threshold=0.7, fps=10.0, max_hands=1, device="cpu"
+        enabled=True, threshold=0.7, fps=10.0, max_hands=1, hold_s=0.0, device="cpu"
     )
+    assert isinstance(cfg.vision.hold_s, float)  # the integer 0 is carried as a float
 
 
 @pytest.mark.parametrize(
@@ -213,6 +216,9 @@ def test_vision_fields_are_carried(tmp_path: Path) -> None:
         ({"max_hands": 2.0}, "vision.max_hands"),
         ({"max_hands": True}, "vision.max_hands"),
         ({"max_hands": "two"}, "vision.max_hands"),
+        ({"hold_s": -0.1}, "vision.hold_s"),
+        ({"hold_s": "0.5"}, "vision.hold_s"),
+        ({"hold_s": True}, "vision.hold_s"),
         ({"device": 3}, "vision.device"),
     ],
 )

@@ -35,7 +35,7 @@ The file carries the shared sections (`wica`, `asr`, optional `vision` — [conf
     "echo_cancellation": { "enabled": true, "stream_delay_ms": 50 },
     "noise_suppression": { "enabled": false, "level": 2 }
   },
-  "vision": { "enabled": false, "threshold": 0.55, "fps": 5, "max_hands": 2, "device": null },
+  "vision": { "enabled": false, "threshold": 0.55, "fps": 5, "max_hands": 2, "hold_s": 0.5, "device": null },
   "camera": { "device": 0 }
 }
 ```

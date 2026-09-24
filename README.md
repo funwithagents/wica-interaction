@@ -22,7 +22,7 @@ Consumed as local path dependencies (in the parent folder), per [specs/project.m
 - `asr-engine` (`../asr-engine`) — speech-to-text over whichever mic the embodiment provides.
 - `tts-engine` (`../tts-engine`) — the computer's voice, and the voice the bridge builds for the robot.
 - `reachy-mini-bridge` (`../reachy-mini-bridge`) — the robot's interaction API: connects to the robot, manages the daemon, and builds the voice itself from the config's `reachy.tts` block.
-- `vision-modules` (`../vision-modules`) — the hand stage + HaGRID gesture classifier behind the hand-sign input: each hand's sign (`stop`, `like`, `dislike`, `ok`, `mute`, `one` … `five`) reaches the agent as its own World entry (see [specs/gesture-input.md](specs/gesture-input.md)). The models download on first run (a MediaPipe bundle and a ~340 MB ViT); enable it with a `vision` config section.
+- `vision-modules` (`../vision-modules`) — the hand stage + HaGRID gesture classifier behind the hand-sign input: each hand's sign (`stop`, `like`, `dislike`, `ok`, `one` … `five`), once it has held for `vision.hold_s` (0.5 s), reaches the agent as its own World entry (see [specs/gesture-input.md](specs/gesture-input.md)). The models download on first run (a MediaPipe bundle and a ~340 MB ViT); enable it with a `vision` config section.
 
 > **Prerequisite.** `reachy-mini-bridge` must name `tts-engine` by plain name in its own metadata (not a git URL): uv refuses two different URLs for one package, and this project consumes `../tts-engine` as a path source.
 

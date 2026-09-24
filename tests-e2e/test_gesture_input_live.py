@@ -103,8 +103,9 @@ def _run(frame: np.ndarray) -> tuple[list[Delivery], dict]:
         status = gesture.status()
         if status["error"] is not None:
             pytest.skip(f"vision models unavailable: {status['error']}")
-        # Give the watcher one more beat to deliver what the classifier just published.
-        time.sleep(0.5)
+        # The default 0.5 s hold must clear (the photo is steady, so it does), plus a beat for
+        # the watcher to deliver what the classifier then publishes.
+        time.sleep(1.5)
         return deliveries, gesture.status()
     finally:
         gesture.stop()

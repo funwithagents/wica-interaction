@@ -715,7 +715,8 @@ def _vision_system(
     return _build(
         embodiment,
         script=script,
-        vision=VisionConfig(enabled=True, fps=100.0),
+        # No hold: these tests are about the wiring, not the filter (tested with the module).
+        vision=VisionConfig(enabled=True, fps=100.0, hold_s=0.0),
         models=GestureModels(detector=_ScriptedDetector(), classifier=classifier),
     )
 
@@ -830,14 +831,14 @@ def test_vision_section_present_but_disabled_builds_nothing() -> None:
         _shutdown(system)
 
 
-def test_vision_max_hands_and_fps_reach_the_gesture_input() -> None:
-    """The configured hand cap and rate are what the pipeline (and the body's camera) run with, not
-    the library's defaults."""
+def test_vision_max_hands_fps_and_hold_reach_the_gesture_input() -> None:
+    """The configured hand cap, rate and hold are what the pipeline (and the body's camera) run
+    with, not the library's or the module's defaults."""
     embodiment = FakeEmbodiment(frames=_HAND_FRAME)
     system = _build(
         embodiment,
         script=[],
-        vision=VisionConfig(enabled=True, max_hands=1, fps=20.0),
+        vision=VisionConfig(enabled=True, max_hands=1, fps=20.0, hold_s=0.25),
         models=GestureModels(
             detector=_ScriptedDetector(), classifier=_ScriptedClassifier(fist=0.9)
         ),
@@ -846,6 +847,7 @@ def test_vision_max_hands_and_fps_reach_the_gesture_input() -> None:
         assert system.gesture is not None
         assert system.gesture.status()["max_hands"] == 1
         assert system.gesture.status()["target_fps"] == 20.0
+        assert system.gesture.status()["hold_s"] == 0.25
         # The camera the body handed over was asked for the same rate.
         assert [camera.fps() for camera in embodiment.cameras] == [20.0]
     finally:

@@ -43,7 +43,7 @@ Nesting each engine's native document verbatim (rather than flattening the keys)
       "dictation_default_segmentation_mode": "trigger_word"
     }
   },
-  "vision": { "enabled": false, "threshold": 0.55, "fps": 5, "max_hands": 2, "device": null }
+  "vision": { "enabled": false, "threshold": 0.55, "fps": 5, "max_hands": 2, "hold_s": 0.5, "device": null }
 }
 ```
 
@@ -53,12 +53,13 @@ Nesting each engine's native document verbatim (rather than flattening the keys)
 
 ### The `vision` section — the app's own small schema
 
-Enables the hand-sign input ([gesture-input.md](gesture-input.md)) over whichever camera the embodiment provides. Unlike the engine sections it is **not** delegated to a sibling loader: `vision-modules` is a library with constructor kwargs and no config document of its own, so the app owns this schema in `config.py` as a frozen `VisionConfig(enabled, threshold, fps, max_hands, device)` with a `from_dict(data, path=…)` that validates it:
+Enables the hand-sign input ([gesture-input.md](gesture-input.md)) over whichever camera the embodiment provides. Unlike the engine sections it is **not** delegated to a sibling loader: `vision-modules` is a library with constructor kwargs and no config document of its own, so the app owns this schema in `config.py` as a frozen `VisionConfig(enabled, threshold, fps, max_hands, hold_s, device)` with a `from_dict(data, path=…)` that validates it:
 
 - `enabled` — the switch; a boolean, default **`false`**. The section can stay in the file, tuned, with vision off; turning it on is a one-key edit.
 - `threshold` — the gesture classifier's validation threshold; a number in `[0, 1]`, default **`0.55`**.
 - `fps` — one rate for the camera poll, the hand stage and the classifier; a number `> 0`, default **`5`**.
 - `max_hands` — how many hands are detected, published and classified per frame, and so how many `hand_gesture_<n>` entries exist; an integer `>= 1` (not a bool, not a float), default **`2`** ([gesture-input.md](gesture-input.md), "The pipeline").
+- `hold_s` — how long a hand's value must be seen, unbroken, before it is delivered to the World (the hold filter — [gesture-input.md](gesture-input.md), "The hold filter"); a number `>= 0`, default **`0.5`**; `0` delivers on the first frame.
 - `device` — the classifier's torch device (`"mps"`, `"cuda"`, `"cpu"`); `null`/absent lets the library pick.
 
 **Vision is off unless `enabled` is `true`** — an absent section, `null`, `{}`, or `enabled: false` all mean no camera is opened, no model downloaded, no `hand_gesture_<n>` entry registered. It is an explicit opt-in because its first run downloads ~340 MB of models. Not an object, an unknown key, or an out-of-range value raises `ValueError` from the loader, naming the file and the field. Which camera it reads is the embodiment's business: the computer's `camera` section, the robot's own camera.
@@ -110,7 +111,7 @@ This dict-based composition rests on each section's owner exposing a `from_dict`
 
 - `read_config_file`: a missing file, invalid JSON, a non-object document each raise `ValueError` naming the path.
 - `load_app_config`: a missing `wica` or `asr`, an `asr` without an `engine` block, an unknown top-level key (given a section set), raise `ValueError` naming the offender; a relative `system_prompt_file` resolves against the file's directory; keys unset do not fail the load.
-- `VisionConfig`: absent/`null`/`{}` ⇒ off; `{"enabled": true}` ⇒ on with defaults; each field's type/range rule; an unknown key.
+- `VisionConfig`: absent/`null`/`{}` ⇒ off; `{"enabled": true}` ⇒ on with defaults (`hold_s` 0.5 among them); each field's type/range rule (a negative or non-numeric `hold_s` included); an unknown key.
 
 ## Open questions
 

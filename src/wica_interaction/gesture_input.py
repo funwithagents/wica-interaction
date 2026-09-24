@@ -5,9 +5,11 @@ robot's own, a webcam on the computer — specs/embodiment.md): ``GestureInput``
 ``CameraSource``, it never builds one. It runs the library's
 hand stage + HaGRID gesture classifier over it (up to ``max_hands`` hands per frame) and reduces
 **each hand** to one value of the app's own sign vocabulary — ``SIGNS`` maps the classifier's labels
-onto ``"stop"``, ``"like"``, ``"dislike"``, ``"ok"``, ``"mute"`` and the counts ``"one"`` …
-``"five"``; anything unmapped, unconfident or absent is ``None`` — delivering ``(hand, sign)`` to the
-injected ``on_gesture`` callback **on change only, per hand**. The app wires that callback to
+onto ``"stop"``, ``"like"``, ``"dislike"``, ``"ok"`` and the counts ``"one"`` … ``"five"``;
+anything unmapped, unconfident or absent is ``None`` — holds each hand's value for ``hold_s`` (a
+per-hand ``HoldFilter``: unbroken on every result for that long, so a one-frame flicker never
+counts) and delivers ``(hand, sign)`` to the injected ``on_gesture`` callback **on change only, per
+hand**. The app wires that callback to
 ``world.update(f"hand_gesture_{hand}", sign)`` on entries whose trigger predicate, ``sign_shown``,
 wakes the agent whenever a hand shows a sign (never when one goes away). The vocabulary's persona
 text lives here too, as ``hand_signs_prompt_section()``, appended to the resolved persona at
@@ -47,8 +49,8 @@ OnGesture = Callable[[int, str | None], None]
 # The app's sign vocabulary: HaGRID class (the library reports them verbatim) → the value the World
 # carries. Several classes collapse onto one sign — a fist and a flat hand both mean "stop", and
 # `peace` / `rock` / `two_up` all show two fingers — and the counts are named by fingers, so `palm`
-# is "five". `call` is the one class left unmapped (it reduces to `None`, like an unconfident or
-# absent hand). Hardcoded for now: the prompt and the persona depend on it (specs/gesture-input.md,
+# is "five". `call` and `mute` are the classes left unmapped (they reduce to `None`, like an
+# unconfident or absent hand). Hardcoded for now: the prompt and the persona depend on it (specs/gesture-input.md,
 # "The reduction: label → sign, per hand").
 SIGNS: Mapping[str, str] = {
     "fist": "stop",
@@ -57,7 +59,6 @@ SIGNS: Mapping[str, str] = {
     "like": "like",
     "dislike": "dislike",
     "ok": "ok",
-    "mute": "mute",
     "one": "one",
     "two_up": "two",
     "two_up_inverted": "two",
@@ -88,7 +89,7 @@ def snapshot_path(folder: str | PathLike[str], stage_name: str, now: datetime) -
 # the reactions — what each sign means is the agent's to read from context — except `stop`,
 # the one sign that carries an instruction.
 _HAND_SIGNS_TEXT = (
-    "You can see the person's hands. Each `hand_gesture_<n>` state says which sign hand *n* is showing right now — one of `stop`, `like`, `dislike`, `ok`, `mute`, `one`, `two`, `three`, `four`, `five` — or that it is showing none. The numbers follow the hands in view, in the order they appeared; they are not left and right, and a hand can change number when the other one leaves. A sign is not necessarily meant for you: read it the way you read anything else the person does, and decide for yourself whether it matters here and what to make of it."
+    "You can see the person's hands. Each `hand_gesture_<n>` state says which sign hand *n* is showing right now — one of `stop`, `like`, `dislike`, `ok`, `one`, `two`, `three`, `four`, `five` — or that it is showing none. The numbers follow the hands in view, in the order they appeared; they are not left and right, and a hand can change number when the other one leaves. A sign is not necessarily meant for you: read it the way you read anything else the person does, and decide for yourself whether it matters here and what to make of it."
     "\n\n"
     "One sign always means the same thing: **`stop`**. When any hand shows `stop`, **stop what you are doing.** Cancel every command that is running (`cancel_command` on each in-flight `say` or anything else), and start nothing new. Then, in the next turn, once you see the cancellation done, `say` a short confirmation that you stopped — a stop is a request like any other and gets a spoken reply, never a silent halt. If nothing was running, just briefly acknowledge out loud. Do not issue the cancel and the confirmation in the same turn. A `stop` going away is not a request for anything: do not react to it on its own, just carry on when the person next speaks."
 )
@@ -129,6 +130,41 @@ class CameraSource(FrameSource, Protocol):
         ...
 
 
+class HoldFilter:
+    """One hand slot's hold: a value is delivered only once it has been seen, unbroken, for
+    ``hold_s`` seconds (specs/gesture-input.md, "The hold filter").
+
+    ``value`` is the last *delivered* value (``None`` to start, matching the World entry).
+    ``observe(value, now)`` feeds one classifier result and returns whether ``value`` just became
+    the delivered one. A value differing from the delivered one starts a candidate stamped ``now``;
+    each later observation of the same candidate delivers on the first ``now`` at least ``hold_s``
+    after the stamp; a different value restarts the candidate from scratch (one dissenting frame
+    resets the clock — strictly consecutive, no majority vote); the delivered value seen again drops
+    the candidate. Applies to every transition, ``None`` included, and ``hold_s == 0`` delivers on the
+    first observation. Pure — no clock, no thread — so it is tested with explicit times.
+    """
+
+    def __init__(self, hold_s: float) -> None:
+        if hold_s < 0:
+            raise ValueError("hold_s must be >= 0")
+        self._hold_s = hold_s
+        self.value: str | None = None
+        self._candidate: str | None = None
+        self._since: float | None = None
+
+    def observe(self, value: str | None, now: float) -> bool:
+        if value == self.value:
+            self._candidate, self._since = None, None
+            return False
+        if self._since is None or value != self._candidate:
+            self._candidate, self._since = value, now
+        if now - self._since < self._hold_s:
+            return False
+        self.value = value
+        self._candidate, self._since = None, None
+        return True
+
+
 class _FpsMeter:
     """A stage's real achieved rate from its ``published_count`` alone — the hand demo's meter.
 
@@ -166,9 +202,11 @@ class GestureInput:
 
     Graph: ``CameraSource → StreamProvider → HandStage → GestureClassifier``, every stage at
     ``fps``, plus a watcher thread (also at ``fps``) that reduces each new classifier result to one
-    value per hand slot — ``SIGNS[label]`` for a validated, mapped label, else ``None`` — and calls
-    ``on_gesture(hand, sign)`` only for the hands whose value changed from the last one delivered for
-    *that* hand (all starting at ``None``, matching the World entries' initial value). Hand ``n`` is
+    value per hand slot — ``SIGNS[label]`` for a validated, mapped label, else ``None`` — runs it
+    through that slot's ``HoldFilter`` (the value must hold, unbroken, for ``hold_s`` seconds —
+    ``0`` delivers at once) and calls ``on_gesture(hand, sign)`` only for the hands whose held value
+    changed from the last one delivered for *that* hand (all starting at ``None``, matching the
+    World entries' initial value). Hand ``n`` is
     the library's ``hands[n-1]``: the same physical hand while it stays in view, but slots are
     compacted when a hand leaves, so a remaining hand can move down a slot (specs/gesture-input.md,
     "Hands are slots, not identities"). ``threshold`` is the
@@ -187,11 +225,15 @@ class GestureInput:
         threshold: float = 0.55,
         fps: float = 5.0,
         max_hands: int = 2,
+        hold_s: float = 0.5,
         device: str | None = None,
         models: GestureModels | None = None,
         fps_window_s: float = _FPS_WINDOW_S,
     ) -> None:
         models = models if models is not None else GestureModels()
+        self._hold_s = hold_s
+        # One hold per hand slot (hand n is `_holds[n - 1]`); each owns its last delivered value.
+        self._holds = [HoldFilter(hold_s) for _ in range(max_hands)]
         self._on_gesture = on_gesture
         self._target_fps = fps
         self._max_hands = max_hands
@@ -219,8 +261,6 @@ class GestureInput:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        # Last delivered value per hand slot, indexed 0-based (hand n is `_signs[n - 1]`).
-        self._signs: list[str | None] = [None] * max_hands
         # Every hand of the latest result, in the library's slot order: (validated label, top score).
         self._seen: tuple[tuple[str | None, float], ...] = ()
 
@@ -249,14 +289,14 @@ class GestureInput:
         return self._thread is not None
 
     def status(self) -> dict:
-        """What the Vision line renders: every hand's last delivered sign, each hand's latest label/score (slot
-        order — entry *i* stays the same physical hand while it is in view), the hand cap, the
-        target rate and each node's achieved rate — the camera stream, the hand stage, the
+        """What the Vision line renders: every hand's last delivered sign (past the hold), each hand's
+        latest label/score (slot order — entry *i* stays the same physical hand while it is in
+        view), the hand cap, the hold, the target rate and each node's achieved rate — the camera stream, the hand stage, the
         classifier (``None`` until a full sampling window has passed) — the camera's capture health,
         and the last stage error (the classifier's first — a failed model load lands there),
         ``None`` when healthy."""
         with self._lock:
-            signs, seen = list(self._signs), self._seen
+            signs, seen = [hold.value for hold in self._holds], self._seen
             stream_fps = self._stream_meter.fps
             hand_fps, classifier_fps = self._hand_meter.fps, self._classifier_meter.fps
         error = self._gestures.last_error or self._hands.last_error
@@ -267,6 +307,7 @@ class GestureInput:
                 {"label": label, "confidence": confidence} for label, confidence in seen
             ],
             "max_hands": self._max_hands,
+            "hold_s": self._hold_s,
             "target_fps": self._target_fps,
             "stream_fps": stream_fps,
             "hand_fps": hand_fps,
@@ -334,19 +375,22 @@ class GestureInput:
                     (hand.label, hand.confidence) for hand in result.hands
                 )
                 # One value per slot, whether or not that hand is in the frame: a hand that left
-                # reads `None`, like one showing nothing the vocabulary names.
+                # reads `None`, like one showing nothing the vocabulary names. Each slot's value
+                # goes through its hold: only a value seen unbroken for `hold_s` is delivered.
                 values = [
                     SIGNS.get(seen_hands[i][0] or "") if i < len(seen_hands) else None
                     for i in range(self._max_hands)
                 ]
+                now = time.monotonic()
                 with self._lock:
                     self._seen = seen_hands
                     changes = [
                         (i + 1, value)
-                        for i, value in enumerate(values)
-                        if value != self._signs[i]
+                        for i, (hold, value) in enumerate(
+                            zip(self._holds, values, strict=True)
+                        )
+                        if hold.observe(value, now)
                     ]
-                    self._signs = values
                 for hand, value in changes:  # outside the lock: a consumer may be slow
                     self._deliver(hand, value)
             self._stop_event.wait(max(self._interval - (time.monotonic() - t0), 0.0))

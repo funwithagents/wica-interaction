@@ -48,6 +48,7 @@
     "threshold": 0.55,
     "fps": 5,
     "max_hands": 2,
+    "hold_s": 0.5,
     "device": null
   },
   "camera": {

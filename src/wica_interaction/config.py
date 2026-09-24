@@ -26,7 +26,9 @@ SHARED_SECTIONS = frozenset({"wica", "asr", "vision"})
 
 _REQUIRED_SECTIONS = ("wica", "asr")
 
-_VISION_KEYS = frozenset({"enabled", "threshold", "fps", "max_hands", "device"})
+_VISION_KEYS = frozenset(
+    {"enabled", "threshold", "fps", "max_hands", "hold_s", "device"}
+)
 
 
 @dataclass(frozen=True)
@@ -34,14 +36,15 @@ class VisionConfig:
     """The optional `vision` section: the hand-sign input over the embodiment's camera (see
     specs/gesture-input.md). `vision-modules` has no config loader of its own, so this is the app's
     own small schema — its defaults are the library's (threshold 0.55, two hands) and the app's
-    (5 fps for the camera poll, hand stage, and classifier alike; `device` None lets the classifier pick
-    mps → cuda → cpu). `enabled` is the switch, off by default: the section can stay in the file
+    (5 fps for the camera poll, hand stage, and classifier alike; a 0.5 s hold before a hand's value
+    counts; `device` None lets the classifier pick mps → cuda → cpu). `enabled` is the switch, off by default: the section can stay in the file
     (tuned) with vision off, and flipping it on is a one-key edit."""
 
     enabled: bool = False
     threshold: float = 0.55
     fps: float = 5.0
     max_hands: int = 2
+    hold_s: float = 0.5
     device: str | None = None
 
     @classmethod
@@ -60,6 +63,7 @@ class VisionConfig:
         threshold = data.get("threshold", cls.threshold)
         fps = data.get("fps", cls.fps)
         max_hands = data.get("max_hands", cls.max_hands)
+        hold_s = data.get("hold_s", cls.hold_s)
         device = data.get("device", cls.device)
         if not isinstance(enabled, bool):
             message = f"config file {path!r}: vision.enabled must be a boolean"
@@ -74,6 +78,10 @@ class VisionConfig:
             raise ValueError(
                 f"config file {path!r}: vision.max_hands must be an integer >= 1"
             )
+        if not _is_number(hold_s) or hold_s < 0:
+            raise ValueError(
+                f"config file {path!r}: vision.hold_s must be a number >= 0"
+            )
         if device is not None and not isinstance(device, str):
             raise ValueError(
                 f"config file {path!r}: vision.device must be a string or null"
@@ -83,6 +91,7 @@ class VisionConfig:
             threshold=float(threshold),
             fps=float(fps),
             max_hands=max_hands,
+            hold_s=float(hold_s),
             device=device,
         )
 
