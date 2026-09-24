@@ -44,7 +44,7 @@
     }
   },
   "vision": {
-    "enabled": false,
+    "enabled": true,
     "threshold": 0.55,
     "fps": 5,
     "max_hands": 2,

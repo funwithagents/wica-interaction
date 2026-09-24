@@ -37,7 +37,7 @@ The file carries the shared sections (`wica`, `asr`, optional `vision` — [conf
     "daemon": { "spawn": "auto", "headless": false, "camera": { "source": "webcam", "device": null } },
     "tts": { "module": { "type": "pocket", "voice": "george", "device": "auto" } },
     "audio": { "xvf3800": null },
-    "motion": { "presence": true, "breathing": true, "wobbling": true, "tracking": true }
+    "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": true }
   },
   "vision": { "enabled": true, "threshold": 0.55, "fps": 5, "max_hands": 2, "hold_s": 0.5, "device": null }
 }
@@ -57,7 +57,7 @@ class ReachyConfig:
 - `daemon` — how the bridge brings up the daemon it talks to (`spawn`, `headless`, `scene`, `camera`, `preload_datasets`, `startup_timeout`). Only `fake` has no daemon, so `spawn` other than `"never"` is rejected there.
 - `tts` — **the voice**: a tts-engine `engine` block whose `module.type` names the provider; the bridge builds the synthesizer itself from it. The provider's extra must be installed — the same `tts-elevenlabs` / `tts-pocket` extras the computer embodiment uses ([project.md](project.md), "Extras"). The committed default is `pocket` (the local model, voice `george`): no key, no network at synthesis time, weights downloaded on first run. Absent ⇒ no voice (`say` unavailable, everything else unaffected).
 - `audio.xvf3800` — the tuned XVF3800 profile; `null`/absent keeps the firmware defaults.
-- `motion` — presence, breathing, wobbling, tracking: the bridge's own aliveness, all default `true`, none of it agent-facing (below).
+- `motion` — presence, the idle mode (`"breathing"` by default, else `"hold"` / `"custom"`), wobbling, tracking: the bridge's own aliveness, the switches all default `true`, none of it agent-facing (below).
 
 Absent `reachy` section ⇒ `ReachyMiniConfig()` (the `real` backend, upstream defaults, no voice). Its validation errors are the bridge's `ConfigError`, a `ValueError` subclass, so `load_config`'s one error type holds. The section is the one place that imports `reachy_mini` at load (lazily, to validate `robot` keys against upstream's signature). The ASR config's `audio.device` is irrelevant here (no local device is opened); the ASR module must be configured for **16 kHz mono linear16** to match `api.mic_sample_rate`. Any top-level key outside `wica`/`asr`/`vision`/`reachy` — a `tts`, `audio_processing` or `camera` section — is rejected.
 

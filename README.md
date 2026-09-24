@@ -59,7 +59,7 @@ uv run pytest
 
 One config file stands up each embodiment, and each committed example is a **template** — copy it, fill in the API keys, and adapt it; `--config` is required, with no default.
 
-**The computer** ([config.computer.example.json](config.computer.example.json)): the agent's key (`WICA_ANTHROPIC_API_KEY`), ASR's (`DEEPGRAM_API_KEY`) and the voice's (`ELEVENLABS_API_KEY`). Echo cancellation is on by default, so the agent does not hear itself through the speakers; `vision.enabled` is off — turn it on (and set `camera.device`) to read hand signs through a webcam.
+**The computer** ([config.computer.example.json](config.computer.example.json)): the agent's key (`WICA_ANTHROPIC_API_KEY`), ASR's (`DEEPGRAM_API_KEY`) and the voice's (`ELEVENLABS_API_KEY`). Echo cancellation is on by default, so the agent does not hear itself through the speakers; `vision.enabled` is on, reading hand signs through the webcam `camera.device` names — set it to `false` to run without a camera.
 
 ```
 uv run wica-interaction-computer --config config.computer.example.json
