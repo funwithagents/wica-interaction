@@ -15,7 +15,7 @@ The building blocks are **sibling path dependencies** consumed **in-process** as
 
 ## The core idea: state, not a transcript
 
-WICA's model is that you don't thread a conversation — you maintain **World state**, and every reasoning step renders the relevant state into the prompt. This app has a deliberately tiny World: a **`speech_input`** entry (the thing the person just said), one **`hand_gesture_<n>`** entry per hand when vision is on (the sign that hand shows, if any), plus the command entries WICA tracks automatically. Speaking is a **Command** (`say`), and so is every robot action — so the voice and the moves are real, observable, cancellable actions, and the model's free text becomes visible *private thinking*.
+WICA's model is that you don't thread a conversation — you maintain **World state**, and every reasoning step renders the relevant state into the prompt. This app has a deliberately tiny World: a **`speech_input`** entry (the thing the person just said), one **`hand_gesture_<n>`** entry per hand when vision is on (the sign that hand just showed, if any), plus the command entries WICA tracks automatically. The two inputs are one-shot: each is observed by the step it triggers, then cleared by a short TTL and omitted from every later prompt ([app.md](app.md), "Inputs are transient"). Speaking is a **Command** (`say`), and so is every robot action — so the voice and the moves are real, observable, cancellable actions, and the model's free text becomes visible *private thinking*.
 
 ## End-to-end data flow
 

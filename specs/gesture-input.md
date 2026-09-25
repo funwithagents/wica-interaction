@@ -20,7 +20,7 @@ The **vision-in** half of the app — the first perception besides speech. The e
 
 Two consumers read from it, as for speech ([asr-bridge.md](asr-bridge.md)):
 
-- **The WICA World** — each hand's current sign is a `hand_gesture_<n>` entry the agent reads in every prompt, and a hand *showing a new sign* triggers a reasoning step.
+- **The WICA World** — the sign a hand just showed is its `hand_gesture_<n>` entry: a hand *showing a new sign* triggers a reasoning step, and the entry is a one-shot observation — cleared by the app's TTL a second later and omitted from the prompt while it holds nothing ([app.md](app.md), "Inputs are transient").
 - **The Gradio UI** — each published hand's current label/confidence and the pipeline's health are displayed (see [app.md](app.md), "Vision line").
 
 ## Decided
@@ -125,28 +125,28 @@ Two rules, at two layers:
        )
    ```
 
-   So `None → two` wakes the agent, and so does `two → three` (a direct switch, no sign-less frame between); `three → None` updates the entry silently (the agent sees the hand is down on its next step); `two → two` never reaches the World at all (rule 1), and even if it did the predicate would not fire.
+   So `None → two` wakes the agent, and so does `two → three` (a direct switch, no sign-less frame between); `three → None` updates the entry silently; `two → two` never reaches the World at all (rule 1), and even if it did the predicate would not fire. The app also registers each entry with a **TTL** (`HAND_GESTURE_TTL`, 1 s — [app.md](app.md), "Inputs are transient"): the World clears a sign that long after it lands, a reset that never triggers. Since deliveries are change-only, a sign the hand keeps holding is not refreshed — it reads as no sign once expired, until the hand changes — and the `old` value the predicate sees is usually already `None` when a new sign arrives.
 
    **Coalescing is not bypassed** (no `bypass_coalescing`, unlike the fist-only version): signs ride WICA's ~200 ms coalescing window like every other Input ([wica inputs.md](../../wica-framework/specs/inputs.md)). That is what folds two hands changing on the same frame — or a speech segment closing alongside a sign — into **one** reasoning step instead of two. The price is up to ~200 ms before a `stop` acts; revisit if that is felt in use.
 
-### In the prompt: ambient state, not a one-shot event
+### In the prompt: a one-shot event, then nothing
 
-Every `hand_gesture_<n>` entry is rendered in **every** prompt (`include_in_prompt` default), not only on the step it triggers, so the agent always knows what each hand currently shows:
+A `hand_gesture_<n>` entry is in the prompt **only while it holds a sign** — in practice the step the sign triggered, and any step that starts within the TTL:
 
 | Value of hand `n` | Rendered |
 |---|---|
-| `None` | `The person's hand {n} is not showing a sign.` |
+| `None` | nothing — an empty `Content`, so WICA omits the entry, envelope included |
 | a sign | `The person's hand {n} is showing the "{sign}" sign.` |
 
-The `None` rendering is what an entry reads once the hand drops or relaxes (rule 1 delivers that change), so the agent is never left believing a sign is still up. The person-facing counterpart (`display_entry` in [app.md](app.md)) shows `✋ hand {n}: {sign}` / `✋ hand {n}: no sign`.
+`None` is what an entry holds before any sign, once the hand drops or relaxes (rule 1 delivers that change), and once the TTL clears a sign; in every case the prompt simply carries no line for that hand, rather than a "not showing a sign" placeholder — the agent is never left believing a sign is still up, and a sign-less hand costs no tokens. The step's own history keeps the sign it observed, so the agent still sees what was shown in earlier turns, as past observations. The person-facing counterpart (`display_entry` in [app.md](app.md)) shows `✋ hand {n}: {sign}` / `✋ hand {n}: no sign` (the latter only labels a reaction whose trigger carried a sign-less hand, which the trigger rule never produces in practice).
 
 ### What the agent does with it — the persona, seeded at startup
 
 The "Hand signs" section of the persona is **not** written in either prompt file: this module owns it as `hand_signs_prompt_section()`, and the app appends it to the resolved persona when — and only when — vision is enabled ([app.md](app.md), build step 3), the same seam the embodiment's `prompt_addendum` uses. A persona never describes hands the agent cannot see, and the vocabulary lives in one place next to the `SIGNS` table it must match.
 
-The section **describes the perception, not the reactions**: you can see the person's hands; each `hand_gesture_<n>` state says which sign hand `n` shows — one of `stop`, `like`, `dislike`, `ok`, `one`, `two`, `three`, `four`, `five` — or none; hand numbers follow the hands in view in the order they appeared and are not left/right. It does **not** say what `like`, `ok`, a count, or two hands at once mean, nor whether to respond: the agent decides from the interaction context whether a sign is meant for it and what to make of it. That is deliberate — the point is to see how the agent interprets the signs unprompted.
+The section **describes the perception, not the reactions**: you can see the person's hands; when hand `n` shows a sign a `hand_gesture_<n>` state appears saying which — one of `stop`, `like`, `dislike`, `ok`, `one`, `two`, `three`, `four`, `five` — and is gone a moment later, so it says what the person just did, not what they are still holding, and no state means no sign just now; hand numbers follow the hands in view in the order they appeared and are not left/right. It does **not** say what `like`, `ok`, a count, or two hands at once mean, nor whether to respond: the agent decides from the interaction context whether a sign is meant for it and what to make of it. That is deliberate — the point is to see how the agent interprets the signs unprompted.
 
-**`stop` is the one exception**: when any hand shows `stop`, stop what you are doing — cancel every running Command (`cancel_command` on each in-flight `say` / action / whatever runs) and start nothing new; then, in the next turn, once the cancellation is observed done, `say` a short confirmation (a stop is a request like any other and gets a spoken reply); if nothing was running, just acknowledge briefly. Do not issue the cancel and the confirmation in the same turn (the robot persona's no-collision rule — [reachy-embodiment.md](reachy-embodiment.md); harmless on the computer). A `stop` going away is not a request for anything.
+**`stop` is the one exception**: when any hand shows `stop`, stop what you are doing — cancel every running Command (`cancel_command` on each in-flight `say` / action / whatever runs) and start nothing new; then, in the next turn, once the cancellation is observed done, `say` a short confirmation (a stop is a request like any other and gets a spoken reply); if nothing was running, just acknowledge briefly. Do not issue the cancel and the confirmation in the same turn (the robot persona's no-collision rule — [reachy-embodiment.md](reachy-embodiment.md); harmless on the computer). The `stop` state disappearing is not a request for anything.
 
 **A known limit** (WICA's, not this module's): the agent handles one reasoning step at a time and a trigger arriving mid-step is dropped, not queued. A running `say` is a Command, not a step, so a sign shown *while the agent speaks* does wake the agent — the common case. A sign shown while the model is still reasoning is lost; the person lowers and shows it again (or shows another), and the next change triggers. With a whole vocabulary this happens more often than with the fist alone; barge-in proper is deferred in WICA.
 
@@ -231,10 +231,10 @@ Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with 
 - `sign_shown`: `None → x` and `x → y` fire; `x → None` and `x → x` do not.
 - With a short `fps_window_s`, `stream_fps` / `hand_fps` / `classifier_fps` go from `None` to a positive rate once frames flow, and `target_fps` is the configured rate.
 - Snapshots: before any frame both save methods return a `⚠️` line and write nothing; once frames flow, the detector snapshot writes `snapshot_HandStage_<ts>.jpg` (the full frame) and the classifier snapshot `snapshot_GestureClassifier_<ts>_0.jpg` (the crop), each reporting `Saved …`; with no hand in frame the classifier snapshot reports `no crop to save`; an unwritable folder reports the `OSError` instead of raising.
-- `hand_signs_prompt_section()` names every sign of the vocabulary (exactly the values of `SIGNS`), does not name `mute`, and states the `stop` rule.
+- `hand_signs_prompt_section()` names every sign of the vocabulary (exactly the values of `SIGNS`), does not name `mute`, states the `stop` rule, and describes a sign state as what the person just did (never promising a "showing none" state).
 - The sources themselves are tested with their embodiments: `RobotCameraSource` in [reachy-embodiment.md](reachy-embodiment.md), `WebcamSource` in [computer-embodiment.md](computer-embodiment.md).
 - `stop()` joins the threads and the callback is not called afterwards.
-- In `tests/test_system.py`, with a `FakeEmbodiment` whose camera serves synthetic frames + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered, `hold_s` reaches the gesture input, and the hand-signs section is in the first prompt; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line (and the hand-1 "not showing a sign" line); `two → None` does not trigger; a vision config with no embodiment builds no `GestureInput`; `enabled: false` builds none either (registers no entry, seeds no section); teardown stops vision before the embodiment exits.
+- In `tests/test_system.py`, with a `FakeEmbodiment` whose camera serves synthetic frames + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered, `hold_s` reaches the gesture input, and the hand-signs section is in the first prompt; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line and no line for the sign-less hand 1; `HAND_GESTURE_TTL` later the World has cleared the sign with no step and renders no hand entry; `two → None` does not trigger; the serializer renders `None` as an empty `Content`; a vision config with no embodiment builds no `GestureInput`; `enabled: false` builds none either (registers no entry, seeds no section); teardown stops vision before the embodiment exits.
 - `tests-e2e/test_gesture_input_live.py` runs the **real** models, at the default hold (so it also proves the hold clears on a steady photo): a scripted source serving each of `vision-modules`' bundled photos must deliver its sign for hand 1 — `hand_fist.jpg` and `hand_stop.jpg` → `"stop"`, `hand_palm.jpg` → `"five"`, `hand_one.jpg` → `"one"`, `hand_three2.jpg` → `"three"` — and `no_hand.jpg` must deliver nothing — skipped when the fixtures or the models are unavailable (see [testing.md](testing.md)).
 
 ## Open questions

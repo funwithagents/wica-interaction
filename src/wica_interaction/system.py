@@ -51,6 +51,7 @@ import logging
 import threading
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any
 
 from asr_engine.audio import AudioSource
@@ -90,28 +91,41 @@ def _build_asr_engine(
     return ASREngine(config, audio_source=audio_source)
 
 
+# The inputs are transient (specs/app.md, "Inputs are transient"): each perception is a one-shot
+# event the step it triggers observes, then the World clears it (a TTL reset — no trigger, a new
+# id) and it is gone from every later prompt. The values are set so the coalescing window (~200 ms)
+# always observes the input, and little else does: a step woken by something else — a `say`
+# finishing, a command completing, a sign — never re-reads an utterance from earlier as if it were
+# current, and a held sign is what the person *did*, not ambient state.
+SPEECH_INPUT_TTL = timedelta(seconds=2)
+HAND_GESTURE_TTL = timedelta(seconds=1)
+
+
 def _speech_input(value: Any, previous: Any) -> Content:
     """Render the triggering `speech_input` entry into the prompt (voice-assistant phrasing).
 
     An empty string — an ASR final that closed on silence, delivered verbatim — is a real value,
-    rendered as ``said to you: ""``; only ``None`` means the person hasn't spoken yet. Its
-    person-facing counterpart (how the same entry reads in the transcript) is ``display_entry`` in
-    [app_ui.py](app_ui.py)."""
+    rendered as ``said to you: ""``. ``None`` — nothing said yet, or the last utterance expired
+    (`SPEECH_INPUT_TTL`) — renders **nothing**: WICA omits an entry whose serializer returns an empty
+    `Content`, envelope included, so the prompt carries no `speech_input` block at all rather than
+    a stale or empty one. Its person-facing counterpart (how the same entry reads in the transcript)
+    is ``display_entry`` in [app_ui.py](app_ui.py)."""
     if value is None:
-        return [TextPart("The person hasn't said anything to you yet.")]
+        return []
     return [TextPart(f'The person said to you: "{value}"')]
 
 
 def _hand_gesture(hand: int) -> Callable[[Any, Any], Content]:
-    """The `serialize_fn` of hand *hand*'s entry — ambient state in every step, so the agent always
-    knows what each hand currently shows (specs/gesture-input.md, "In the prompt"). Only a sign being
-    *shown* triggers a step (`sign_shown`); a hand that drops or relaxes renders as the `None` line
-    on the next one. What a sign *means* is deliberately not said here, nor in the persona (except
-    `stop`): the agent reads it from the interaction."""
+    """The `serialize_fn` of hand *hand*'s entry — present in a prompt only while the entry holds a
+    sign (specs/gesture-input.md, "In the prompt"). Only a sign being *shown* triggers a step
+    (`sign_shown`); ``None`` — no sign delivered yet, the hand dropped, or the sign expired
+    (`HAND_GESTURE_TTL`) — renders nothing, so the entry is omitted rather than saying "no sign".
+    What a sign *means* is deliberately not said here, nor in the persona (except `stop`): the agent
+    reads it from the interaction."""
 
     def serialize(value: Any, previous: Any) -> Content:
         if value is None:
-            return [TextPart(f"The person's hand {hand} is not showing a sign.")]
+            return []
         return [TextPart(f'The person\'s hand {hand} is showing the "{value}" sign.')]
 
     return serialize
@@ -228,8 +242,13 @@ def build_system(
 
     if wica is not None:
         # A World-schema operation, so it belongs to the build (like the demo's register_world).
+        # The TTL makes each utterance a one-shot observation (see SPEECH_INPUT_TTL).
         wica.world.register(
-            "speech_input", str, serialize_fn=_speech_input, triggers_llm_call=True
+            "speech_input",
+            str,
+            serialize_fn=_speech_input,
+            triggers_llm_call=True,
+            ttl=SPEECH_INPUT_TTL,
         )
 
     # The two input paths into `speech_input`. `wica` is already final here (built above), so plain
@@ -286,7 +305,10 @@ def build_system(
         try:
             # One entry per hand the pipeline can publish, so two hands are two states the agent
             # reads side by side rather than one merged signal. Coalescing is *not* bypassed: two
-            # hands changing on the same frame then make one reasoning step, not two.
+            # hands changing on the same frame then make one reasoning step, not two. The TTL makes
+            # a sign a one-shot observation too (see HAND_GESTURE_TTL); a sign the hand keeps
+            # holding is not re-delivered (GestureInput delivers changes only), so it is gone from
+            # the prompt until the hand changes.
             for hand in range(1, vision.max_hands + 1):
                 world.register(
                     f"hand_gesture_{hand}",
@@ -294,6 +316,7 @@ def build_system(
                     serialize_fn=_hand_gesture(hand),
                     triggers_llm_call=True,
                     trigger_condition_fn=sign_shown,
+                    ttl=HAND_GESTURE_TTL,
                 )
             gesture = GestureInput(
                 body.camera(fps=vision.fps),

@@ -28,6 +28,7 @@ import pytest
 from asr_engine.config import ASREngineConfig
 from asr_engine.segmenter import SpeechSegment
 from vision_modules.hand import DetectedHand
+from wica import Content, TextPart
 from wica.config import WicaConfig
 from wica.contrib.gradio import ReactionLog, TranscriptLog
 
@@ -43,10 +44,14 @@ from wica_interaction.config import AppConfig, VisionConfig
 from wica_interaction.embodiment import Embodiment
 from wica_interaction.gesture_input import GestureModels
 from wica_interaction.system import (
+    HAND_GESTURE_TTL,
+    SPEECH_INPUT_TTL,
     AppSystem,
     _degraded_system,
+    _hand_gesture,
     _serve,
     _shutdown,
+    _speech_input,
     _start,
     build_system,
     run_app,
@@ -131,6 +136,11 @@ def _user_items(transcript: TranscriptLog) -> list[str]:
     return [
         m["content"] for m in transcript.snapshot().conversation if m["role"] == "user"
     ]
+
+
+def _flat(content: Content) -> str:
+    """The text of a rendered `Content` (the World's own rendering — every part here is text)."""
+    return "".join(part.text for part in content if isinstance(part, TextPart))
 
 
 # --- The body: entered, wired, torn down ---------------------------------------------------------
@@ -355,6 +365,65 @@ def test_empty_final_segment_wakes_agent() -> None:
         _start(system)
         _emit_segment(system, fake_asr, _final_segment(""))
         assert _wait_until(lambda: embodiment.said == ["you went quiet"])
+    finally:
+        _shutdown(system)
+
+
+# --- Transient inputs: the serializers and the TTLs (specs/app.md, "Inputs are transient") ------
+
+
+def test_speech_serializer_renders_an_utterance_and_omits_none() -> None:
+    """An utterance (an empty one included — a passage that closed on silence) is a line; `None` —
+    nothing said yet, or the last utterance expired — is an empty `Content`, which WICA turns into
+    no entry at all."""
+    assert _flat(_speech_input("hello", None)) == 'The person said to you: "hello"'
+    assert _flat(_speech_input("", "hello")) == 'The person said to you: ""'
+    assert _speech_input(None, None) == []
+    assert (
+        _speech_input(None, "hello") == []
+    )  # expired: still nothing, not "nothing yet"
+
+
+def test_hand_serializer_renders_a_sign_and_omits_none() -> None:
+    assert (
+        _flat(_hand_gesture(2)("three", None))
+        == 'The person\'s hand 2 is showing the "three" sign.'
+    )
+    assert _hand_gesture(1)(None, None) == []
+    assert (
+        _hand_gesture(1)(None, "three") == []
+    )  # dropped or expired: omitted, not "no sign"
+
+
+def test_an_utterance_is_gone_from_the_world_and_the_prompt_after_its_ttl() -> None:
+    """The step an utterance triggers observes it; `SPEECH_INPUT_TTL` later the World has cleared
+    it on its own — a reset that wakes no step — and the World renders no `speech_input` block."""
+    embodiment = FakeEmbodiment()
+    system = _build(embodiment, script=_say_once("hello there"))
+    try:
+        assert system.wica is not None
+        world = system.wica.world
+        assert world.get_config("speech_input").ttl == SPEECH_INPUT_TTL
+        _, reactions = _wire(system)
+        _start(system)
+        assert "speech_input" not in _flat(
+            world.render_full_prompt()
+        )  # nothing said yet
+        system.submit_speech("hi")
+        assert _wait_until(lambda: embodiment.said == ["hello there"])
+        prompt = reactions.prompt_text(0)
+        assert prompt is not None
+        assert 'The person said to you: "hi"' in prompt
+        # The say finishing re-triggers one step (the scripted noop); then nothing else may.
+        assert _wait_until(lambda: reactions.snapshot().count == 2)
+
+        assert _wait_until(
+            lambda: world.get("speech_input") is None,
+            timeout=SPEECH_INPUT_TTL.total_seconds() + 1.0,
+        )
+        assert "speech_input" not in _flat(world.render_full_prompt())
+        time.sleep(0.3)  # long enough for a step the reset might (wrongly) have woken
+        assert reactions.snapshot().count == 2
     finally:
         _shutdown(system)
 
@@ -734,31 +803,32 @@ def _sign_steps(reactions: ReactionLog, hand: int) -> int:
     )
 
 
-def test_a_sign_wakes_the_agent_with_every_hand_in_its_prompt() -> None:
+def test_a_sign_wakes_the_agent_and_is_gone_from_the_prompt_after_its_ttl() -> None:
     """The body's camera → pipeline → `hand_gesture_1` → one reasoning step whose prompt names the
-    sign that hand shows (and says the other hand shows none); the sign held over many frames wakes
-    the agent only once, and it going away does not wake it at all."""
+    sign that hand shows and carries no line for the sign-less hand 2; the sign held over many frames
+    wakes the agent only once; after `HAND_GESTURE_TTL` the World has cleared it (no step for that)
+    and the World renders no hand entry at all; the hand then dropping does not wake the agent."""
     embodiment = FakeEmbodiment(frames=_HAND_FRAME)
     classifier = _ScriptedClassifier(fist=0.9)
     system = _vision_system(embodiment, classifier, _say_once("okay, stopping"))
     try:
         assert system.gesture is not None
         assert system.wica is not None
-        # One entry per hand the pipeline can publish (`max_hands`, 2 by default).
-        assert system.wica.world.is_registered("hand_gesture_1")
-        assert system.wica.world.is_registered("hand_gesture_2")
-        assert not system.wica.world.is_registered("hand_gesture_3")
+        world = system.wica.world
+        # One entry per hand the pipeline can publish (`max_hands`, 2 by default), each expiring.
+        assert world.is_registered("hand_gesture_1")
+        assert world.is_registered("hand_gesture_2")
+        assert not world.is_registered("hand_gesture_3")
+        assert world.get_config("hand_gesture_1").ttl == HAND_GESTURE_TTL
         # And the vocabulary is in the prompt, seeded from gesture_input at startup.
         assert "## Hand signs" in system.wica.agent.system_prompt
         _, reactions = _wire(system)
         _start(system)
         assert _wait_until(lambda: embodiment.said == ["okay, stopping"])
-        assert system.wica.world.get("hand_gesture_1") == "stop"
-        assert system.wica.world.get("hand_gesture_2") is None
         prompt = reactions.prompt_text(0)
         assert prompt is not None
         assert 'hand 1 is showing the "stop" sign' in prompt
-        assert "hand 2 is not showing a sign" in prompt
+        assert "hand 2" not in prompt  # a sign-less hand is omitted, not described
 
         # Still shown, many frames later: no second step for it (the `say` finishing re-triggers one
         # step of its own — WICA's completion re-trigger — which is labelled by the say, not a sign).
@@ -766,9 +836,16 @@ def test_a_sign_wakes_the_agent_with_every_hand_in_its_prompt() -> None:
         assert _wait_until(lambda: _camera_reads(embodiment) >= reads_then + 10)
         assert _sign_steps(reactions, 1) == 1
 
+        # Expired: the World cleared the sign on its own (the hand is still up — the gesture input
+        # still holds `stop` and re-delivers nothing) with no step, and renders no hand entry.
+        assert _wait_until(lambda: world.get("hand_gesture_1") is None)
+        assert system.gesture.status()["signs"][0] == "stop"
+        assert _sign_steps(reactions, 1) == 1
+        assert "hand_gesture" not in _flat(world.render_full_prompt())
+
         # Gone: the entry updates (silently), the agent is not woken.
         classifier.fist = 0.1
-        assert _wait_until(lambda: system.wica.world.get("hand_gesture_1") is None)  # type: ignore[union-attr]
+        assert _wait_until(lambda: system.gesture.status()["signs"][0] is None)  # type: ignore[union-attr]
         reads_then = _camera_reads(embodiment)
         assert _wait_until(lambda: _camera_reads(embodiment) >= reads_then + 10)
         assert _sign_steps(reactions, 1) == 1
@@ -799,8 +876,10 @@ def test_another_sign_wakes_the_agent_again() -> None:
             lambda: system.wica.world.get("hand_gesture_1") == "five"  # type: ignore[union-attr]
         )
         assert _wait_until(lambda: embodiment.said == ["okay, stopping", "five it is"])
-        assert system.wica.world.get("hand_gesture_1") == "five"
         assert _sign_steps(reactions, 1) == 2
+        prompt = reactions.prompt_text(reactions.snapshot().count - 1)
+        assert prompt is not None
+        assert 'hand 1 is showing the "five" sign' in prompt
     finally:
         _shutdown(system)
 

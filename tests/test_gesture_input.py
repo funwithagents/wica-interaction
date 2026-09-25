@@ -714,3 +714,7 @@ def test_hand_signs_prompt_section_names_the_whole_vocabulary_and_the_stop_rule(
     assert "`stop`" in section
     assert "cancel_command" in section  # the stop rule, spelled out
     assert "hand_gesture_<n>" in section
+    # A sign state is one-shot (the app's TTL): the section says it names what the person just
+    # did, not a hand's standing state, and never promises a "no sign" state.
+    assert "not what they are still holding" in section
+    assert "showing none" not in section

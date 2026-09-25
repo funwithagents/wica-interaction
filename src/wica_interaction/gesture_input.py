@@ -89,9 +89,9 @@ def snapshot_path(folder: str | PathLike[str], stage_name: str, now: datetime) -
 # the reactions — what each sign means is the agent's to read from context — except `stop`,
 # the one sign that carries an instruction.
 _HAND_SIGNS_TEXT = (
-    "You can see the person's hands. Each `hand_gesture_<n>` state says which sign hand *n* is showing right now — one of `stop`, `like`, `dislike`, `ok`, `one`, `two`, `three`, `four`, `five` — or that it is showing none. The numbers follow the hands in view, in the order they appeared; they are not left and right, and a hand can change number when the other one leaves. A sign is not necessarily meant for you: read it the way you read anything else the person does, and decide for yourself whether it matters here and what to make of it."
+    "You can see the person's hands. When hand *n* shows a sign, a `hand_gesture_<n>` state appears saying which one — one of `stop`, `like`, `dislike`, `ok`, `one`, `two`, `three`, `four`, `five` — and it is gone again a moment later: it tells you what the person just did, not what they are still holding, and no such state means no sign was shown just now. The numbers follow the hands in view, in the order they appeared; they are not left and right, and a hand can change number when the other one leaves. A sign is not necessarily meant for you: read it the way you read anything else the person does, and decide for yourself whether it matters here and what to make of it."
     "\n\n"
-    "One sign always means the same thing: **`stop`**. When any hand shows `stop`, **stop what you are doing.** Cancel every command that is running (`cancel_command` on each in-flight `say` or anything else), and start nothing new. Then, in the next turn, once you see the cancellation done, `say` a short confirmation that you stopped — a stop is a request like any other and gets a spoken reply, never a silent halt. If nothing was running, just briefly acknowledge out loud. Do not issue the cancel and the confirmation in the same turn. A `stop` going away is not a request for anything: do not react to it on its own, just carry on when the person next speaks."
+    "One sign always means the same thing: **`stop`**. When a hand shows `stop`, **stop what you are doing.** Cancel every command that is running (`cancel_command` on each in-flight `say` or anything else), and start nothing new. Then, in the next turn, once you see the cancellation done, `say` a short confirmation that you stopped — a stop is a request like any other and gets a spoken reply, never a silent halt. If nothing was running, just briefly acknowledge out loud. Do not issue the cancel and the confirmation in the same turn. The `stop` state disappearing is not a request for anything: do not react to it on its own, just carry on when the person next speaks."
 )
 
 
@@ -108,7 +108,8 @@ def sign_shown(old: str | None, new: str | None) -> bool:
     ``None → "two"`` triggers, and so does ``"two" → "three"`` (a hand switching sign with no
     sign-less frame between). A sign going away (``"two" → None``) updates the entry silently, and an
     unchanged sign never fires (it never reaches the World anyway — ``GestureInput`` delivers changes
-    only).
+    only). The app's entries also expire on a TTL (``system.HAND_GESTURE_TTL``, a World reset that
+    never triggers), so ``old`` is usually ``None`` by the time the hand changes sign.
     """
     return new is not None and new != old
 
