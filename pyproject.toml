@@ -29,16 +29,22 @@ audio-processing = ["aec-audio-processing>=1.0.1", "samplerate>=0.2.4"]
 reachy = ["reachy-mini-bridge"]
 # The hand-sign input: MediaPipe + the torch/transformers HaGRID classifier, either embodiment.
 vision = ["vision-modules[hand]"]
-# The agent provider the example configs select.
+# The agent providers, one extra per WICA provider extra, all interchangeable: a config selects
+# one by its `provider` name, either embodiment.
 wica-anthropic = ["wica[anthropic]"]
+wica-huggingface-hub = ["wica[huggingface-hub]"]
+wica-openai = ["wica[openai]"]
+wica-google-genai = ["wica[google-genai]"]
 # The ASR provider the example configs select.
 asr-deepgram = ["asr-engine[deepgram]"]
-# The two voices, for *both* embodiments (the bridge builds the robot's voice from the same
-# tts-engine): the cloud provider, and the local model (torch + a first-run weight download).
+# The voices, for *both* embodiments (the bridge builds the robot's voice from the same
+# tts-engine): two cloud providers, and the local model (torch + a first-run weight download).
+# Adding one here means adding it to `override-dependencies` below too (see there).
 tts-elevenlabs = ["tts-engine[elevenlabs]"]
+tts-gradium = ["tts-engine[gradium]"]
 tts-pocket = ["tts-engine[pocket]"]
 all = [
-    "wica-interaction[computer,audio-processing,reachy,vision,wica-anthropic,asr-deepgram,tts-elevenlabs,tts-pocket]",
+    "wica-interaction[computer,audio-processing,reachy,vision,wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,asr-deepgram,tts-elevenlabs,tts-gradium,tts-pocket]",
 ]
 
 [project.scripts]
@@ -64,13 +70,17 @@ dev = [
 [tool.uv.sources]
 # Self-reference for the `dev` group above, which pulls the package's own extras.
 wica-interaction = { workspace = true }
-# First-party sibling repos, consumed as local path dependencies during development (a pinned git
-# URL later, per specs/project.md). They live in the parent folder. `tts-engine` is one of them:
-# the bridge names it by plain name in its own metadata, so this source resolves the whole graph —
-# the bridge's own requirement included — from ../tts-engine.
+# First-party sibling repos. `asr-engine` and `tts-engine` come from GitHub, `rev = "main"`: the
+# lock records the exact commit, and `uv lock --upgrade-package <name>` moves it. `tts-engine`'s
+# URL is the bridge's own requirement verbatim (`tts-engine @ git+https://github.com/
+# funwithagents/tts-engine@main`) — uv refuses two different URLs for one package, and `rev`
+# (not `branch`) is what makes the two references identical, so the graph resolves without an
+# override. `wica` and `reachy-mini-bridge` are still local path dependencies from the parent
+# folder while they are developed alongside this app; they move to GitHub URLs the same way once
+# they settle (specs/project.md, "Sibling sources").
 wica = { path = "../wica-framework", editable = true }
-asr-engine = { path = "../asr-engine", editable = true }
-tts-engine = { path = "../tts-engine", editable = true }
+asr-engine = { git = "https://github.com/funwithagents/asr-engine", rev = "main" }
+tts-engine = { git = "https://github.com/funwithagents/tts-engine", rev = "main" }
 reachy-mini-bridge = { path = "../reachy-mini-bridge", editable = true }
 vision-modules = { path = "../vision-modules", editable = true }
 
