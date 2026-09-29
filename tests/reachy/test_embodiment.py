@@ -1,8 +1,8 @@
 """Functional tests for the Reachy Mini embodiment (specs/reachy-embodiment.md, "Testing").
 
-Everything runs against a fake `ReachyMiniApi` — no daemon, no hardware, no cloud: the protocol
+Everything runs against a fake `ReachyMiniBridge` — no daemon, no hardware, no cloud: the protocol
 members after `enter()`, the non-raising `say`, and the two feeds the embodiment hands the rest of
-the app (`RobotMicSource` for ASR, `RobotCameraFeed` for vision — the bridge's own `api.camera`
+the app (`RobotMicSource` for ASR, `RobotCameraFeed` for vision — the bridge's own `bridge.camera`
 behind an adapter that never touches its lifecycle).
 """
 
@@ -14,11 +14,11 @@ from collections.abc import Callable, Coroutine
 from typing import Any, cast
 
 import pytest
-from reachy_mini_bridge.api import ReachyMiniApi
+from reachy_mini_bridge import ReachyMiniBridge
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica import Command
 
-from tests.reachy.fakes import FakeReachyMiniApi
+from tests.reachy.fakes import FakeReachyMiniBridge
 from tests.test_gesture_input import ScriptedClassifier, ScriptedDetector, _scores
 from wica_interaction.config import AppConfig
 from wica_interaction.gesture_input import GestureInput, GestureModels
@@ -42,9 +42,11 @@ def _config(**reachy: Any) -> ReachyConfig:
     )
 
 
-def _entered(api: FakeReachyMiniApi, **reachy: Any) -> ReachyEmbodiment:
-    """Construct the embodiment over *api* and enter it on a throwaway loop, as build_system does."""
-    embodiment = ReachyEmbodiment(_config(**reachy), api=cast(ReachyMiniApi, api))
+def _entered(bridge: FakeReachyMiniBridge, **reachy: Any) -> ReachyEmbodiment:
+    """Construct the embodiment over *bridge* and enter it on a throwaway loop, as build_system does."""
+    embodiment = ReachyEmbodiment(
+        _config(**reachy), bridge=cast(ReachyMiniBridge, bridge)
+    )
     run(embodiment.enter())
     return embodiment
 
@@ -53,11 +55,11 @@ def _entered(api: FakeReachyMiniApi, **reachy: Any) -> ReachyEmbodiment:
 
 
 def test_enter_brings_the_robot_up_and_wires_every_member() -> None:
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
 
-    assert api.entered
-    assert api.emotion_fetches == 1  # one snapshot per session
+    assert bridge.started and bridge.running
+    assert bridge.emotion_fetches == 1  # one snapshot per session
     assert embodiment.voice is not None
     assert isinstance(embodiment.mic, RobotMicSource)
     assert embodiment.mic_error is None
@@ -68,15 +70,15 @@ def test_enter_brings_the_robot_up_and_wires_every_member() -> None:
 def test_construction_does_no_io() -> None:
     """Nothing happens until `enter()`: the entry point constructs the embodiment from its config,
     the lifecycle enters it on the app loop."""
-    api = FakeReachyMiniApi()
-    ReachyEmbodiment(_config(), api=cast(ReachyMiniApi, api))
-    assert not api.entered
-    assert api.emotion_fetches == 0
+    bridge = FakeReachyMiniBridge()
+    ReachyEmbodiment(_config(), bridge=cast(ReachyMiniBridge, bridge))
+    assert not bridge.started
+    assert bridge.emotion_fetches == 0
 
 
 def test_commands_are_the_three_actions_described_by_the_fetched_names() -> None:
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
 
     commands = embodiment.commands()
     names = [c.tool.name if isinstance(c, Command) else c.__name__ for c in commands]
@@ -89,25 +91,25 @@ def test_commands_are_the_three_actions_described_by_the_fetched_names() -> None
     assert isinstance(
         play, Command
     )  # wrapped, so its description can name the emotions
-    for name in api.emotions:
+    for name in bridge.emotions:
         assert name in play.tool.description
 
 
 def test_prompt_addendum_names_every_emotion_and_the_command() -> None:
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
 
     addendum = embodiment.prompt_addendum
     assert "play_emotion" in addendum
-    for name in api.emotions:
+    for name in bridge.emotions:
         assert name in addendum
 
 
 def test_enter_failure_propagates_as_no_embodiment() -> None:
     """A robot that cannot be connected raises out of `enter()` — the lifecycle's "no embodiment"
     degrade (specs/embodiment.md), not a `missing` line."""
-    api = FakeReachyMiniApi(raise_on_enter="no daemon reachable")
-    embodiment = ReachyEmbodiment(_config(), api=cast(ReachyMiniApi, api))
+    bridge = FakeReachyMiniBridge(raise_on_start="no daemon reachable")
+    embodiment = ReachyEmbodiment(_config(), bridge=cast(ReachyMiniBridge, bridge))
 
     with pytest.raises(RuntimeError, match="no daemon reachable"):
         run(embodiment.enter())
@@ -116,11 +118,11 @@ def test_enter_failure_propagates_as_no_embodiment() -> None:
 def test_a_failed_connection_carries_the_offline_hint() -> None:
     """On a backend that needs something outside the process, the "no embodiment" banner line says
     how to develop without it — only this body knows its backends, so the hint rides its error."""
-    api = FakeReachyMiniApi(raise_on_enter="no daemon reachable")
+    bridge = FakeReachyMiniBridge(raise_on_start="no daemon reachable")
     config = ReachyConfig(
         app=cast(AppConfig, None), reachy=ReachyMiniConfig(backend="sim")
     )
-    embodiment = ReachyEmbodiment(config, api=cast(ReachyMiniApi, api))
+    embodiment = ReachyEmbodiment(config, bridge=cast(ReachyMiniBridge, bridge))
 
     with pytest.raises(RuntimeError, match="no daemon reachable") as raised:
         run(embodiment.enter())
@@ -130,8 +132,8 @@ def test_a_failed_connection_carries_the_offline_hint() -> None:
 
 def test_the_fake_backend_gets_no_offline_hint() -> None:
     """Already offline: pointing at `fake` again would be noise."""
-    api = FakeReachyMiniApi(raise_on_enter="boom")
-    embodiment = ReachyEmbodiment(_config(), api=cast(ReachyMiniApi, api))
+    bridge = FakeReachyMiniBridge(raise_on_start="boom")
+    embodiment = ReachyEmbodiment(_config(), bridge=cast(ReachyMiniBridge, bridge))
 
     with pytest.raises(RuntimeError) as raised:
         run(embodiment.enter())
@@ -142,8 +144,8 @@ def test_the_fake_backend_gets_no_offline_hint() -> None:
 def test_failed_emotion_fetch_degrades_only_the_emotions() -> None:
     """An unreadable emotion library is one `missing` line: the robot is up, `play_emotion` is still
     registered (with its plain docstring) and the addendum is empty."""
-    api = FakeReachyMiniApi(raise_on_list_emotions="dataset download failed")
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge(raise_on_list_emotions="dataset download failed")
+    embodiment = _entered(bridge)
 
     assert any(
         m.startswith("Robot:") and "dataset download failed" in m
@@ -162,7 +164,7 @@ def test_absent_tts_block_is_reported_on_the_tts_axis() -> None:
     `voice` stays wired (it reports the error when called)."""
     embodiment = ReachyEmbodiment(
         _config()
-    )  # no injected api: the real fake-backend one is built
+    )  # no injected bridge: the real fake-backend one is built
     run(embodiment.enter())
     try:
         assert (
@@ -194,53 +196,53 @@ def test_failed_synthesizer_build_is_reported_on_the_tts_axis() -> None:
         run(embodiment.exit())
 
 
-def test_exit_closes_the_api() -> None:
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+def test_exit_stops_the_bridge() -> None:
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
 
     run(embodiment.exit())
 
-    assert api.exited
+    assert bridge.stopped and not bridge.running
 
 
 # --- say ------------------------------------------------------------------------------------------
 
 
 def test_say_speaks_through_the_robot_and_returns_ok() -> None:
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
 
     assert run(embodiment.say("hello")) == "OK"
-    assert api.said == ["hello"]
+    assert bridge.said == ["hello"]
 
 
 def test_empty_text_is_guarded_without_calling_the_robot() -> None:
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
 
     assert run(embodiment.say("")) == "TTS error: text must not be empty"
     assert run(embodiment.say("   ")) == "TTS error: text must not be empty"
-    assert api.said == []  # never reached the robot
+    assert bridge.said == []  # never reached the robot
 
 
 def test_say_error_is_mapped_not_raised() -> None:
-    class RaisingApi(FakeReachyMiniApi):
+    class RaisingBridge(FakeReachyMiniBridge):
         async def say(self, text: str) -> None:
             self.said.append(text)
             raise RuntimeError("boom")
 
-    api = RaisingApi()
-    embodiment = _entered(api)
+    bridge = RaisingBridge()
+    embodiment = _entered(bridge)
 
     assert run(embodiment.say("hi")) == "TTS error: boom"
-    assert api.said == ["hi"]  # it did attempt to speak before failing
+    assert bridge.said == ["hi"]  # it did attempt to speak before failing
 
 
 # --- RobotMicSource -------------------------------------------------------------------------------
 
 
-class FakeMicApi:
-    """Minimal stand-in for ``ReachyMiniApi.audio_input`` — an async iterator of PCM ``bytes``.
+class FakeMicBridge:
+    """Minimal stand-in for ``ReachyMiniBridge.audio_input`` — an async iterator of PCM ``bytes``.
 
     Yields the supplied ``chunks``; then raises ``RuntimeError(raise_after)`` if set, else blocks
     forever when ``hold_open`` is set (so the pump task stays alive), else ends. ``started`` counts
@@ -293,8 +295,8 @@ async def _eventually(predicate: Callable[[], bool], timeout: float = 1.0) -> bo
 
 def test_mic_source_streams_chunks_in_order() -> None:
     async def scenario() -> list[bytes]:
-        api = FakeMicApi([b"aa", b"bbbb", b"c"])
-        source = RobotMicSource(cast(ReachyMiniApi, api))
+        bridge = FakeMicBridge([b"aa", b"bbbb", b"c"])
+        source = RobotMicSource(cast(ReachyMiniBridge, bridge))
         queue = source.start()
         try:
             return await _take(queue, 3)
@@ -306,16 +308,16 @@ def test_mic_source_streams_chunks_in_order() -> None:
 
 def test_mic_source_stop_cancels_pump() -> None:
     async def scenario() -> tuple[int, bool, str | None]:
-        api = FakeMicApi([b"x"], hold_open=True)
-        source = RobotMicSource(cast(ReachyMiniApi, api))
+        bridge = FakeMicBridge([b"x"], hold_open=True)
+        source = RobotMicSource(cast(ReachyMiniBridge, bridge))
         queue = source.start()
         await _take(queue, 1)  # the stream is live
-        assert api.active == 1
+        assert bridge.active == 1
         source.stop()
         closed = await _eventually(
-            lambda: api.active == 0
+            lambda: bridge.active == 0
         )  # the cancelled pump closed the stream
-        return api.active, closed, source.capture_error
+        return bridge.active, closed, source.capture_error
 
     active, closed, error = run(scenario())
     assert closed and active == 0
@@ -327,8 +329,8 @@ def test_pump_error_is_recorded_and_reaches_the_embodiment() -> None:
     `mic_error` — what the ASR panel renders through the bridge — carries it."""
 
     async def scenario() -> tuple[list[bytes], RobotMicSource]:
-        api = FakeMicApi([b"a"], raise_after="usb unplugged")
-        source = RobotMicSource(cast(ReachyMiniApi, api))
+        bridge = FakeMicBridge([b"a"], raise_after="usb unplugged")
+        source = RobotMicSource(cast(ReachyMiniBridge, bridge))
         queue = source.start()
         got = await _take(queue, 1)
         assert await _eventually(lambda: source.capture_error is not None)
@@ -340,8 +342,8 @@ def test_pump_error_is_recorded_and_reaches_the_embodiment() -> None:
 
 
 def test_mic_error_reads_the_sources_capture_error() -> None:
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
     mic = embodiment.mic
     assert isinstance(mic, RobotMicSource)
 
@@ -352,8 +354,8 @@ def test_mic_error_reads_the_sources_capture_error() -> None:
 
 def test_stream_end_is_recorded_and_a_restart_clears_it() -> None:
     async def scenario() -> tuple[str | None, str | None]:
-        api = FakeMicApi([b"a"], hold_open=False)  # ends after one chunk
-        source = RobotMicSource(cast(ReachyMiniApi, api))
+        bridge = FakeMicBridge([b"a"], hold_open=False)  # ends after one chunk
+        source = RobotMicSource(cast(ReachyMiniBridge, bridge))
         source.start()
         assert await _eventually(lambda: source.capture_error is not None)
         ended = source.capture_error
@@ -373,11 +375,11 @@ def test_queue_drops_oldest_under_backpressure() -> None:
 
     async def scenario() -> tuple[int, list[bytes], str | None]:
         chunks = [str(i).encode() for i in range(10)]
-        api = FakeMicApi(chunks, hold_open=True)
-        source = RobotMicSource(cast(ReachyMiniApi, api), maxsize=4)
+        bridge = FakeMicBridge(chunks, hold_open=True)
+        source = RobotMicSource(cast(ReachyMiniBridge, bridge), maxsize=4)
         queue = source.start()
         try:
-            assert await _eventually(lambda: api.yielded == len(chunks))
+            assert await _eventually(lambda: bridge.yielded == len(chunks))
             size = queue.qsize()
             kept = [queue.get_nowait() for _ in range(size)]
             return size, kept, source.capture_error
@@ -395,15 +397,15 @@ def test_second_start_cancels_the_first_pump() -> None:
     only the second queue is fed."""
 
     async def scenario() -> tuple[int, int, int, list[bytes]]:
-        api = FakeMicApi([b"x"], hold_open=True)
-        source = RobotMicSource(cast(ReachyMiniApi, api))
+        bridge = FakeMicBridge([b"x"], hold_open=True)
+        source = RobotMicSource(cast(ReachyMiniBridge, bridge))
         first = source.start()
         await _take(first, 1)
         second = source.start()
         try:
             got = await _take(second, 1)
-            assert await _eventually(lambda: api.active == 1)
-            return api.started, api.active, first.qsize(), got
+            assert await _eventually(lambda: bridge.active == 1)
+            return bridge.started, bridge.active, first.qsize(), got
         finally:
             source.stop()
 
@@ -416,8 +418,8 @@ def test_second_start_cancels_the_first_pump() -> None:
 
 def test_mic_source_is_restartable_with_a_fresh_queue() -> None:
     async def scenario() -> tuple[bool, int, list[bytes]]:
-        api = FakeMicApi([b"1", b"2"])
-        source = RobotMicSource(cast(ReachyMiniApi, api))
+        bridge = FakeMicBridge([b"1", b"2"])
+        source = RobotMicSource(cast(ReachyMiniBridge, bridge))
         first = source.start()
         got_first = await _take(first, 2)
         source.stop()
@@ -425,7 +427,7 @@ def test_mic_source_is_restartable_with_a_fresh_queue() -> None:
         second = source.start()  # restart after stop
         try:
             got_second = await _take(second, 2)
-            return (second is not first, api.started, got_first + got_second)
+            return (second is not first, bridge.started, got_first + got_second)
         finally:
             source.stop()
 
@@ -441,36 +443,36 @@ def test_mic_source_is_restartable_with_a_fresh_queue() -> None:
 def test_camera_feed_forwards_the_bridges_feed_without_copying() -> None:
     """`latest()` is the bridge's very frame object (shared, read-only, the one its detector read),
     `published_count` its count; `None` before the session's first frame."""
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
     feed = embodiment.camera(fps=5.0)
     assert feed.latest() is None and feed.published_count == 0
-    published = api.camera.publish()
+    published = bridge.camera.publish()
     assert feed.latest() is published  # the same object, not a copy
     assert feed.published_count == 1
-    api.camera.publish()
+    bridge.camera.publish()
     latest = feed.latest()
     assert latest is not None and latest.frame_id == 2 and feed.published_count == 2
-    assert latest.image is api.camera.frame
+    assert latest.image is bridge.camera.frame
     assert feed.capture_error is None  # the feed has no error of its own to report
 
 
 def test_camera_feed_lifecycle_never_touches_the_bridges_feed() -> None:
     """`open()`/`close()` are no-ops: the feed is the session's, and stopping it would blind the
     bridge's face detection."""
-    api = FakeReachyMiniApi()
-    feed = RobotCameraFeed(cast(ReachyMiniApi, api))
+    bridge = FakeReachyMiniBridge()
+    feed = RobotCameraFeed(cast(ReachyMiniBridge, bridge))
     feed.open()
     feed.close()
     feed.open()
-    assert (api.camera.starts, api.camera.stops) == (0, 0)
+    assert (bridge.camera.starts, bridge.camera.stops) == (0, 0)
 
 
 def test_a_sign_on_the_robots_feed_reaches_the_gesture_input() -> None:
     """The robot path end to end: the bridge's feed → `RobotCameraFeed` → the real hand stage and
     classifier (scripted backends) → a delivered sign. No `StreamProvider`, no loop hop."""
-    api = FakeReachyMiniApi()
-    embodiment = _entered(api)
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
     deliveries: list[tuple[int, str | None]] = []
     gesture = GestureInput(
         embodiment.camera(fps=100.0),
@@ -486,10 +488,10 @@ def test_a_sign_on_the_robots_feed_reaches_the_gesture_input() -> None:
     try:
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline and deliveries != [(1, "stop")]:
-            api.camera.publish()  # the bridge's reader thread, played by the test
+            bridge.camera.publish()  # the bridge's reader thread, played by the test
             time.sleep(0.01)
         assert deliveries == [(1, "stop")]
         assert gesture.status()["capture_error"] is None
     finally:
         gesture.stop()
-    assert (api.camera.starts, api.camera.stops) == (0, 0)
+    assert (bridge.camera.starts, bridge.camera.stops) == (0, 0)

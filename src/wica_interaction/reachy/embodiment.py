@@ -1,11 +1,13 @@
-"""The agent embodied in a Reachy Mini: one ``ReachyMiniApi`` behind the voice, the mic and the camera.
+"""The agent embodied in a Reachy Mini: one ``ReachyMiniBridge`` behind the voice, the mic and the camera.
 
 This embodiment gathers everything robot-specific behind the [Embodiment](../embodiment.py)
 protocol the shared lifecycle is written against: ``say`` out of the robot's speaker,
 ``RobotMicSource`` over its echo-cancelled mic, ``RobotCameraFeed`` over its camera feed
-(``api.camera``, the bridge's one reader of the camera), and the action Commands of
-[robot_control.py](robot_control.py). All four ride the *same* api instance — one robot connection,
-one media session, one camera feed — built and entered in ``enter()`` on the app loop.
+(``bridge.camera``, the bridge's one reader of the camera), and the action Commands of
+[robot_control.py](robot_control.py). All four ride the *same* bridge instance — one robot connection,
+one media session, one camera feed — built and started in ``enter()`` on the app loop: the
+bridge's session is its ``start()`` / ``stop()`` pair, which is what a host with lifecycle hooks of
+its own (this protocol's ``enter`` / ``exit``) drives, instead of the ``async with`` sugar over it.
 
 Audio on Reachy Mini is a daemon-owned pipeline with an XMOS XVF3800 doing echo cancellation in
 firmware, which works only if playback goes *through* it: that is why speech is played through the
@@ -21,8 +23,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from asr_engine.audio import AudioSource
-from reachy_mini_bridge import CameraFrame
-from reachy_mini_bridge.api import ReachyMiniApi
+from reachy_mini_bridge import CameraFrame, ReachyMiniBridge
 from wica import Command
 
 from wica_interaction.embodiment import Voice
@@ -54,19 +55,19 @@ class RobotMicSource:
 
     Implements the ASR engine's synchronous ``AudioSource`` protocol (``start() -> Queue``, ``stop()``
     — see asr-engine specs/audio-source.md): the engine calls ``start()`` (not awaited) from inside its
-    start coroutine to obtain the queue it drains, and ``stop()`` on teardown. ``api.audio_input()``
-    already yields int16 LE mono PCM at ``api.mic_sample_rate`` (16 kHz) — the streaming-ASR contract —
+    start coroutine to obtain the queue it drains, and ``stop()`` on teardown. ``bridge.audio_input()``
+    already yields int16 LE mono PCM at ``bridge.mic_sample_rate`` (16 kHz) — the streaming-ASR contract —
     so the pump just iterates and enqueues each chunk; no resampling or reformatting. The queue is
     bounded and drops its oldest chunk when full (see ``_MIC_QUEUE_MAXSIZE``). If the stream raises or
     ends on its own, the pump logs it and records why in ``capture_error`` — so a dead mic is visible in
-    the ASR status rather than passing for silence. The source shares the one ``ReachyMiniApi`` the
+    the ASR status rather than passing for silence. The source shares the one ``ReachyMiniBridge`` the
     embodiment builds (same connection/media session as ``say``).
     """
 
     def __init__(
-        self, api: ReachyMiniApi, *, maxsize: int = _MIC_QUEUE_MAXSIZE
+        self, bridge: ReachyMiniBridge, *, maxsize: int = _MIC_QUEUE_MAXSIZE
     ) -> None:
-        self._api = api
+        self._bridge = bridge
         self._maxsize = maxsize
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=maxsize)
         self._task: asyncio.Task[None] | None = None
@@ -103,7 +104,7 @@ class RobotMicSource:
         queue is full. A raise or a normal end of the stream is logged and kept as ``capture_error``
         (cancellation by ``stop()`` is neither — it propagates untouched)."""
         try:
-            async for chunk in self._api.audio_input():
+            async for chunk in self._bridge.audio_input():
                 if queue.full():
                     queue.get_nowait()  # the engine fell behind: drop the stalest chunk
                 queue.put_nowait(chunk)
@@ -116,9 +117,9 @@ class RobotMicSource:
 
 
 class RobotCameraFeed:
-    """The robot camera as a ``CameraFeed``: a thin adapter over the bridge's ``api.camera``.
+    """The robot camera as a ``CameraFeed``: a thin adapter over the bridge's ``bridge.camera``.
 
-    The bridge reads its camera in exactly one place — ``api.camera``, a feed thread the session
+    The bridge reads its camera in exactly one place — ``bridge.camera``, a feed thread the session
     owns, publishing the newest ``CameraFrame`` (``frame_id``, ``ts``, the BGR image, ``head_pose``)
     for any number of consumers to sample without stealing frames from one another (upstream's
     one-shot ``get_frame()`` hands each frame out once). The bridge's own face detection samples that
@@ -126,16 +127,16 @@ class RobotCameraFeed:
     forward to it, nothing is copied, paced or re-numbered, and reading is an instant, thread-safe
     call from the hand stage's own thread — no hop to the app loop, nothing async.
 
-    ``open()``/``close()`` are no-ops: the feed's lifecycle is the session's (started at
-    ``__aenter__``, stopped and reset to ``None`` at ``__aexit__``), and stopping it here would blind
+    ``open()``/``close()`` are no-ops: the feed's lifecycle is the session's (started by the
+    bridge's ``start()``, stopped and reset to ``None`` by its ``stop()``), and stopping it here would blind
     the bridge's face detection and head tracking. ``capture_error`` is always ``None`` — the feed
     has no failure of its own to report (a failing read is logged by the bridge and the last frame
     stays published); a camera that goes quiet shows through the gesture input's stall line instead.
     See specs/reachy-embodiment.md, "``RobotCameraFeed``".
     """
 
-    def __init__(self, api: ReachyMiniApi) -> None:
-        self._api = api
+    def __init__(self, bridge: ReachyMiniBridge) -> None:
+        self._bridge = bridge
 
     def open(self) -> None:
         """Nothing: the feed is the session's, started at enter."""
@@ -144,11 +145,11 @@ class RobotCameraFeed:
         """Nothing: never stops the bridge's feed."""
 
     def latest(self) -> CameraFrame | None:
-        return self._api.camera.latest()
+        return self._bridge.camera.latest()
 
     @property
     def published_count(self) -> int:
-        return self._api.camera.published_count
+        return self._bridge.camera.published_count
 
     @property
     def capture_error(self) -> str | None:
@@ -158,7 +159,7 @@ class RobotCameraFeed:
 class ReachyEmbodiment:
     """The agent embodied in a Reachy Mini (specs/reachy-embodiment.md).
 
-    Construction keeps the config (and the injected fake api, if any) and does no I/O; everything
+    Construction keeps the config (and the injected fake bridge, if any) and does no I/O; everything
     comes up in ``enter()``, on the app loop. Every other member is called only after a successful
     ``enter`` (specs/embodiment.md, "Member by member"), which is what the ``assert``s below state.
     Degradation is per component: ``enter`` raises only when the robot itself cannot be connected —
@@ -169,30 +170,36 @@ class ReachyEmbodiment:
     display_name = "Reachy Mini"
 
     def __init__(
-        self, config: ReachyConfig, *, api: ReachyMiniApi | None = None
+        self, config: ReachyConfig, *, bridge: ReachyMiniBridge | None = None
     ) -> None:
         self._config = config
-        self._api: ReachyMiniApi | None = api
-        self._injected = api is not None
+        self._bridge: ReachyMiniBridge | None = bridge
+        self._injected = bridge is not None
         self._mic: RobotMicSource | None = None
         self._emotions: tuple[str, ...] | None = None
         self.missing: list[str] = []
 
     async def enter(self) -> None:
-        """Bring the robot up: the api's daemon/connection/media session, the voice's health, the
-        emotion names, the mic source. Any exception from ``__aenter__`` propagates — that is the
-        "no embodiment" degrade the lifecycle catches."""
-        api = self._api if self._api is not None else ReachyMiniApi(self._config.reachy)
-        # Construction never connects; __aenter__ does, so any raise here (an upstream reachy_mini
+        """Bring the robot up: the bridge's session (``start()`` — daemon, connection, media
+        session, camera feed, motion), the voice's health, the emotion names, the mic source. Any
+        exception from ``start()`` propagates — that is the "no embodiment" degrade the lifecycle
+        catches."""
+        bridge = (
+            self._bridge
+            if self._bridge is not None
+            else ReachyMiniBridge(self._config.reachy)
+        )
+        # Construction never connects; start() does, so any raise here (an upstream reachy_mini
         # error, the bridge's DaemonError/BridgeError) means "no embodiment". The offline hint rides
         # the message, since the banner shows it verbatim and only this body knows its backends.
+        # A failed start() has already unwound whatever it brought up, so there is nothing to stop.
         try:
-            await api.__aenter__()
+            await bridge.start()
         except Exception as exc:
             if self._config.reachy.backend == "fake":
                 raise
             raise RuntimeError(f"{exc} {_OFFLINE_HINT}") from exc
-        self._api = api
+        self._bridge = bridge
         if not self._injected:
             # The voice degrades independently of the rest of the robot: the bridge records a failed
             # synthesizer build rather than raising. Skipped for an injected fake (it carries its
@@ -201,21 +208,22 @@ class ReachyEmbodiment:
                 self.missing.append(
                     "TTS: no reachy.tts block configured (say is unavailable)"
                 )
-            elif api.synthesizer_error is not None:
-                self.missing.append(f"TTS: {api.synthesizer_error}")
+            elif bridge.synthesizer_error is not None:
+                self.missing.append(f"TTS: {bridge.synthesizer_error}")
         # One fetch per session, so the model knows the names before its first turn. A failed
         # library load (on the real backend, a HuggingFace dataset read) degrades to a banner line
         # and no names: no emotion section in the prompt, and play_emotion keeps its plain docstring.
         try:
-            self._emotions = tuple(await api.list_emotions())
+            self._emotions = tuple(await bridge.list_emotions())
         except Exception as exc:  # noqa: BLE001 - a library load failure degrades, never crashes
             self.missing.append(f"Robot: emotions unavailable: {exc}")
-        self._mic = RobotMicSource(api)
+        self._mic = RobotMicSource(bridge)
 
     async def exit(self) -> None:
-        """Close the media session, the robot connection and the managed daemon."""
-        if self._api is not None:
-            await self._api.__aexit__(None, None, None)
+        """Stop the bridge's session: the motion loop, the camera feed, the media session, the
+        robot connection and the managed daemon (a no-op on a bridge that never started)."""
+        if self._bridge is not None:
+            await self._bridge.stop()
 
     @property
     def voice(self) -> Voice | None:
@@ -229,13 +237,13 @@ class ReachyEmbodiment:
         This is your voice: whatever you want the person to hear, say it here.
         Returns "OK" when the utterance finished playing.
         """
-        assert self._api is not None
+        assert self._bridge is not None
         if not text.strip():
             # Guard before touching the robot: an empty utterance is nothing to say. Mirrors the
             # non-raising Command contract — the agent always gets a readable string, never an error.
             return "TTS error: text must not be empty"
         try:
-            await self._api.say(text)
+            await self._bridge.say(text)
         except Exception as exc:  # noqa: BLE001 - any synth/media/bridge failure becomes a readable reply
             return f"TTS error: {exc}"
         return "OK"
@@ -251,14 +259,14 @@ class ReachyEmbodiment:
     def camera(self, *, fps: float) -> CameraFeed:
         """The bridge's camera feed behind ``RobotCameraFeed``. ``fps`` is ignored: the feed runs at
         the daemon's rate (10 fps on a local daemon), the gesture stages pace themselves."""
-        assert self._api is not None
-        return RobotCameraFeed(self._api)
+        assert self._bridge is not None
+        return RobotCameraFeed(self._bridge)
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:
-        """The robot's action Commands, over the same api as the voice: the emotion (its description
+        """The robot's action Commands, over the same bridge as the voice: the emotion (its description
         naming the names fetched at enter) and the motors."""
-        assert self._api is not None
-        return RobotControl(self._api, emotions=self._emotions).commands()
+        assert self._bridge is not None
+        return RobotControl(self._bridge, emotions=self._emotions).commands()
 
     @property
     def prompt_addendum(self) -> str:

@@ -3,7 +3,7 @@
 One interaction application built on the **WICA** agentic framework, in which a person **speaks** to an AI agent and the agent **speaks — and, given a body, acts — back**. The same program runs in different **embodiments**, chosen by the command you launch:
 
 - **`wica-interaction-computer`** — the agent on the machine it runs on: a local microphone, the speakers (a [`tts-engine`](https://github.com/funwithagents/tts-engine) voice), optionally a webcam for hand signs. A plain voice assistant.
-- **`wica-interaction-reachy`** — the agent in a [Reachy Mini](https://github.com/pollen-robotics/reachy_mini): it speaks out of the robot's speaker, listens through the robot's echo-cancelled mic, sees through the robot's camera, plays emotions and manages its motors, all through [`reachy-mini-bridge`](../reachy-mini-bridge)'s `ReachyMiniApi`.
+- **`wica-interaction-reachy`** — the agent in a [Reachy Mini](https://github.com/pollen-robotics/reachy_mini): it speaks out of the robot's speaker, listens through the robot's echo-cancelled mic, sees through the robot's camera, plays emotions and manages its motors, all through [`reachy-mini-bridge`](../reachy-mini-bridge)'s `ReachyMiniBridge`.
 
 Everything WICA-side is shared — the World and its `speech_input` entry, the dictation commands, the hand-sign entries, the transcript and observability panels, the whole lifecycle. What varies is captured by one small protocol, the [Embodiment](specs/embodiment.md): where audio comes in and goes out, what the agent can act with, and what it sees through. Everything runs in-process (no MCP servers) behind a small Gradio UI: WICA's own observability panels (the reusable `wica.contrib.gradio` components) next to the app's live ASR and Vision panel.
 

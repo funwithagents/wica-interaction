@@ -1,18 +1,18 @@
 """Robot control: the agent's Reachy Mini action commands (``RobotControl``).
 
 The **actions** half of the app (specs/reachy-embodiment.md): a thin, **non-raising** adapter that turns
-the sibling ``reachy-mini-bridge`` ``ReachyMiniApi`` verbs into WICA Commands the agent chooses among
+the sibling ``reachy-mini-bridge`` ``ReachyMiniBridge`` verbs into WICA Commands the agent chooses among
 while reasoning — express an emotion (``play_emotion``) and read/set the motor torque state. ``say``
 is *not* here (that is WICA's output Command, see embodiment.py); this module holds the invokable
 **action** commands. Head tracking is not agent-facing: the bridge's motion loop drives it
 automatically, the same as presence and breathing.
 
-``RobotControl`` holds the *same* ``ReachyMiniApi`` instance that backs ``say`` and the mic stream, so
+``RobotControl`` holds the *same* ``ReachyMiniBridge`` instance that backs ``say`` and the mic stream, so
 there is one robot connection and one media session. ``commands()`` yields what the app registers via
 ``wica.register_command``: bound async methods whose name/signature/docstring become what the model
 sees — except ``play_emotion``, which, when the emotion names are known, is wrapped as a ``Command``
 whose description **lists the valid names**. The names are a startup snapshot the app fetches once
-from ``api.list_emotions()`` (the bridge loads its library once per connection, so nothing changes
+from ``bridge.list_emotions()`` (the bridge loads its library once per connection, so nothing changes
 mid-session) and also folds into the system prompt through ``emotions_prompt_section`` — so the model
 knows the names before its first turn, and there is no ``list_emotions`` command to spend a turn on
 (specs/reachy-embodiment.md, "`RobotControl` — the action commands").
@@ -39,7 +39,7 @@ from reachy_mini_bridge.errors import MotorsNotEnabledError
 from wica import Command
 
 if TYPE_CHECKING:
-    from reachy_mini_bridge.api import ReachyMiniApi
+    from reachy_mini_bridge import ReachyMiniBridge
 
 # The one motor-precondition message: it names the exact fix so the agent can enable and retry.
 _MOTORS_OFF = (
@@ -69,18 +69,18 @@ def emotions_prompt_section(names: Sequence[str]) -> str:
 
 
 class RobotControl:
-    """The agent's robot action commands, over one shared ``ReachyMiniApi``.
+    """The agent's robot action commands, over one shared ``ReachyMiniBridge``.
 
-    Constructed with the app's single ``ReachyMiniApi`` (the same instance behind ``say`` and the mic
+    Constructed with the app's single ``ReachyMiniBridge`` (the same instance behind ``say`` and the mic
     stream) and, when the app could fetch them, the ``emotions`` the library holds. ``commands()`` is
     what the app registers; the docstrings below are what the model sees as each action's
     description (``play_emotion``'s is replaced by one naming the emotions when they are known).
     """
 
     def __init__(
-        self, api: ReachyMiniApi, *, emotions: Sequence[str] | None = None
+        self, bridge: ReachyMiniBridge, *, emotions: Sequence[str] | None = None
     ) -> None:
-        self._api = api
+        self._bridge = bridge
         self._emotions: tuple[str, ...] | None = (
             tuple(emotions) if emotions is not None else None
         )
@@ -104,7 +104,7 @@ class RobotControl:
         "curious". The motors are on by default: just play it — only if the reply says they are
         off, enable them and play it again."""
         try:
-            await self._api.play_emotion(name)
+            await self._bridge.play_emotion(name)
         except MotorsNotEnabledError:
             return _MOTORS_OFF
         except Exception as exc:  # noqa: BLE001 - unknown name / bridge failure → readable reply
@@ -119,7 +119,7 @@ class RobotControl:
         (limp-but-held). Assume they are enabled; only read them back when a move has just
         reported them off or moved in an unexpected way."""
         try:
-            state = await self._api.get_motors_state()
+            state = await self._bridge.get_motors_state()
         except Exception as exc:  # noqa: BLE001 - any bridge/connection failure becomes a readable reply
             return f"get_motors_state failed: {exc}"
         return f"The motors are {state!r}."
@@ -129,7 +129,7 @@ class RobotControl:
         (a gentle rest — the head holds position). They are enabled by default, so call this only
         to recover after a move reported them off, or to rest them."""
         try:
-            await self._api.set_motors_state(state)
+            await self._bridge.set_motors_state(state)
         except Exception as exc:  # noqa: BLE001 - unknown state / bridge failure → readable reply
             return f"set_motors_state failed: {exc}"
         return f"OK — set the motors to {state!r}."

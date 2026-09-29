@@ -1,10 +1,9 @@
-"""Doubles for the Reachy Mini embodiment's tests: the slice of `ReachyMiniApi` it touches."""
+"""Doubles for the Reachy Mini embodiment's tests: the slice of `ReachyMiniBridge` it touches."""
 
 from __future__ import annotations
 
 import threading
 import time
-from typing import Self
 
 import numpy as np
 from reachy_mini_bridge import CameraFrame
@@ -48,12 +47,12 @@ class FakeCameraFeed:
         self.stops += 1
 
 
-class FakeReachyMiniApi:
-    """An async-context robot recording what the embodiment asked of it.
+class FakeReachyMiniBridge:
+    """A start/stop robot session recording what the embodiment asked of it.
 
-    `ReachyEmbodiment.enter` enters it (`__aenter__`) and fetches `list_emotions`; `say` speaks;
+    `ReachyEmbodiment.enter` starts it (`start()`) and fetches `list_emotions`; `say` speaks;
     `RobotMicSource` drains `audio_input()`; `RobotCameraFeed` samples `camera` (a `FakeCameraFeed`); the
-    action Commands call the motor/emotion verbs. Set `raise_on_enter` to simulate a robot that
+    action Commands call the motor/emotion verbs. Set `raise_on_start` to simulate a robot that
     fails to connect (the "no embodiment" degrade) and `raise_on_list_emotions` for one whose
     emotions library fails to load. Pass `log` to record teardown steps in order.
     """
@@ -64,34 +63,40 @@ class FakeReachyMiniApi:
     def __init__(
         self,
         *,
-        raise_on_enter: str | None = None,
+        raise_on_start: str | None = None,
         raise_on_list_emotions: str | None = None,
         log: list[str] | None = None,
     ) -> None:
         self.said: list[str] = []
         self.played: list[str] = []
-        self.entered = False
-        self.exited = False
+        self.started = False
+        self.stopped = False
+        self._running = False
         self.emotion_fetches = 0
         self.motors = "disabled"
         self.synthesizer_error: str | None = None
         # The perception slice: the camera feed the gesture input samples, exists from construction
         # like the bridge's (a bright synthetic frame a scripted detector reads as "a hand").
         self.camera = FakeCameraFeed(np.full((48, 64, 3), 200, dtype=np.uint8))
-        self._raise_on_enter = raise_on_enter
+        self._raise_on_start = raise_on_start
         self._raise_on_list_emotions = raise_on_list_emotions
         self._log = log
 
-    async def __aenter__(self) -> Self:
-        if self._raise_on_enter is not None:
-            raise RuntimeError(self._raise_on_enter)
-        self.entered = True
-        return self
+    async def start(self) -> None:
+        if self._raise_on_start is not None:
+            raise RuntimeError(self._raise_on_start)
+        self.started = True
+        self._running = True
 
-    async def __aexit__(self, *exc: object) -> None:
+    async def stop(self) -> None:
         if self._log is not None:
             self._log.append("embodiment.exit")
-        self.exited = True
+        self.stopped = True
+        self._running = False
+
+    @property
+    def running(self) -> bool:
+        return self._running
 
     async def say(self, text: str) -> None:
         self.said.append(text)

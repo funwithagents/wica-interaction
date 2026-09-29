@@ -7,7 +7,7 @@
 One **interaction application** on the **WICA** agentic framework, in which a person **speaks** to an AI agent and the agent **speaks — and, given a body, acts — back**. The same program runs in different **embodiments**, chosen by the command you launch:
 
 - **`wica-interaction-computer`** — the agent on the machine it runs on: a local microphone, the speakers (a [`tts-engine`](../../tts-engine/AGENTS.md) voice), optionally a webcam. A plain voice assistant; formerly the sibling `vocal-interaction-wica` repo.
-- **`wica-interaction-reachy`** — the agent in a [Reachy Mini](https://github.com/pollen-robotics/reachy_mini): it speaks out of the robot's speaker, listens through the robot's echo-cancelled mic, sees through the robot's camera, plays emotions and manages its motors, all through [`reachy-mini-bridge`](../../reachy-mini-bridge/specs/_overview.md)'s `ReachyMiniApi`.
+- **`wica-interaction-reachy`** — the agent in a [Reachy Mini](https://github.com/pollen-robotics/reachy_mini): it speaks out of the robot's speaker, listens through the robot's echo-cancelled mic, sees through the robot's camera, plays emotions and manages its motors, all through [`reachy-mini-bridge`](../../reachy-mini-bridge/specs/_overview.md)'s `ReachyMiniBridge`.
 
 Everything WICA-side is shared — the World and its `speech_input` entry, the dictation commands, the hand-sign entries, the transcript and observability panels, the lifecycle. What varies is captured by one small protocol, the **[Embodiment](embodiment.md)**: where audio comes in and goes out, what the agent can act with, what it sees through. A future body (a Nao) is one more subpackage implementing it.
 
@@ -56,7 +56,7 @@ Shared concepts are top-level modules of `src/wica_interaction/`; each embodimen
 | `system.py` | The lifecycle: `build_system(config, embodiment)`, `wire`, start/teardown, `run_app` | [app.md](app.md) |
 | `app_ui.py` | The Gradio presentation layer: the `display_entry` hook, the page (WICA's contrib panels next to the app's ASR panel + Vision line) | [app.md](app.md) |
 | `computer/` | `ComputerEmbodiment` (TTS voice, processed or raw mic, webcam), its config, `audio_processing.py`, the `wica-interaction-computer` entry point | [computer-embodiment.md](computer-embodiment.md), [audio-processing.md](audio-processing.md) |
-| `reachy/` | `ReachyEmbodiment` (one `ReachyMiniApi` behind `say`, the mic and the camera), `robot_control.py`, its config, the `wica-interaction-reachy` entry point | [reachy-embodiment.md](reachy-embodiment.md) |
+| `reachy/` | `ReachyEmbodiment` (one `ReachyMiniBridge` behind `say`, the mic and the camera), `robot_control.py`, its config, the `wica-interaction-reachy` entry point | [reachy-embodiment.md](reachy-embodiment.md) |
 
 Plus two cross-cutting specs: [project.md](project.md) (tooling/layout/extras) and [testing.md](testing.md) (the two-tier test strategy).
 

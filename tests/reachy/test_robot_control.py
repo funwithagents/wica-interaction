@@ -2,16 +2,16 @@
 no hardware, no network).
 
 Tests drive the public ``RobotControl`` coroutines the way WICA's Commands will, using a real,
-**entered** ``ReachyMiniApi("fake")`` so the *actual* verb wiring runs: the fake honors motor-state
+**started** ``ReachyMiniBridge("fake")`` so the *actual* verb wiring runs: the fake honors motor-state
 changes and records the moves it is handed, so the motor precondition is genuinely enforced (not
 mocked). They assert on the non-raising Command contract — a readable string in every case, never an
 exception — and on the side effects the fake records, rather than on exact wording. See
 specs/reachy-embodiment.md ("Testing").
 
 The verbs use ``asyncio.to_thread`` internally, so each coroutine is driven with ``asyncio.run`` to
-provide a running loop (no async-test plugin required). ``api.robot`` is only available while entered
-(``reachy-mini-bridge``'s entered-only lifecycle — construction never connects), so each test enters
-the ``fake`` api itself and exits it in a ``finally``; the ``fake`` backend needs no daemon, so this
+provide a running loop (no async-test plugin required). ``bridge.robot`` is only available while running
+(``reachy-mini-bridge``'s start/stop lifecycle — construction never connects), so each test starts
+the ``fake`` bridge itself and exits it in a ``finally``; the ``fake`` backend needs no daemon, so this
 stays offline and fast. ``play_emotion`` plays through the bridge's motion loop and awaits until the
 trajectory ends (see reachy-mini-bridge specs/motion.md, "Emotions through the loop"), so a successful
 play is observed here as its sidecar sound reaching the fake's media layer (``media.play_sound``), not
@@ -28,7 +28,7 @@ from collections.abc import Coroutine, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from reachy_mini_bridge.api import ReachyMiniApi
+from reachy_mini_bridge import ReachyMiniBridge
 from reachy_mini_bridge.fake_reachy_mini import FakeReachyMini
 from wica import Command
 
@@ -37,7 +37,7 @@ from wica_interaction.reachy.robot_control import (
     emotions_prompt_section,
 )
 
-# The fake's stubbed library (see ReachyMiniApi._FAKE_EMOTIONS) — what the app would fetch at startup.
+# The fake's stubbed library (see ReachyMiniBridge._FAKE_EMOTIONS) — what the app would fetch at startup.
 _FAKE_NAMES = ("happy", "sad", "curious")
 
 
@@ -49,17 +49,17 @@ def run[T](coro: Coroutine[Any, Any, T]) -> T:
 def _control(
     emotions: tuple[str, ...] | None = None,
 ) -> Iterator[tuple[RobotControl, FakeReachyMini]]:
-    """A ``RobotControl`` over a freshly entered ``fake`` api, plus the underlying fake robot to assert
-    on. Exits the api on the way out, matching how the app itself uses it. *emotions* plays the
+    """A ``RobotControl`` over a freshly started ``fake`` bridge, plus the underlying fake robot to assert
+    on. Stops the bridge on the way out, matching how the app itself uses it. *emotions* plays the
     startup snapshot the app fetches (None: the names are unknown)."""
-    api = ReachyMiniApi("fake")
-    run(api.__aenter__())
+    bridge = ReachyMiniBridge("fake")
+    run(bridge.start())
     try:
-        robot = api.robot
+        robot = bridge.robot
         assert isinstance(robot, FakeReachyMini)
-        yield RobotControl(api, emotions=emotions), robot
+        yield RobotControl(bridge, emotions=emotions), robot
     finally:
-        run(api.__aexit__(None, None, None))
+        run(bridge.stop())
 
 
 def _recorded(robot: FakeReachyMini, name: str) -> list[dict[str, Any]]:
