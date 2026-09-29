@@ -27,7 +27,45 @@ Two consumers read from it, as for speech ([asr-bridge.md](asr-bridge.md)):
 
 ### Frames come from the embodiment
 
-The video source is whatever camera the embodiment looks through ([embodiment.md](embodiment.md), `camera(fps=…)`): the robot's camera through the bridge's `get_camera_frame()` on the Reachy Mini ([reachy-embodiment.md](reachy-embodiment.md), `RobotCameraSource`), a local webcam through `vision-modules`' `OpenCVSource` on the computer ([computer-embodiment.md](computer-embodiment.md), `WebcamSource`). `GestureInput` takes the source, it never builds one. What it requires of a source is the library's `FrameSource` protocol plus one accessor, the module's `CameraSource`:
+The video source is whatever camera the embodiment looks through ([embodiment.md](embodiment.md), `camera(fps=…)`): the robot's camera through the bridge's camera feed, `api.camera`, on the Reachy Mini ([reachy-embodiment.md](reachy-embodiment.md), `RobotCameraFeed`), a local webcam through `vision-modules`' `OpenCVSource` on the computer ([computer-embodiment.md](computer-embodiment.md), `WebcamSource` behind a `StreamFeed`). `GestureInput` takes the feed, it never builds one. What it requires of a feed is a **latest-value frame slot** — the shape the library's stages sample (`Upstream[FrameLike]`: a `latest()` returning items carrying `frame_id`, `ts` and a BGR `image`) — plus its lifecycle and its health, the module's `CameraFeed`:
+
+```python
+class CameraFeed(Protocol):
+    """A latest-value frame slot the hand stage samples, with its lifecycle and health."""
+
+    def open(
+        self,
+    ) -> None: ...  # GestureInput.start(): begin publishing (or nothing to do)
+    def close(
+        self,
+    ) -> None: ...  # GestureInput.stop(): stop publishing (or nothing to do)
+    def latest(self) -> FrameLike | None: ...  # the newest frame; None before the first
+    @property
+    def published_count(
+        self,
+    ) -> int: ...  # frames published, ever: the achieved-rate counter
+    @property
+    def capture_error(
+        self,
+    ) -> (
+        str | None
+    ): ...  # the feed's own failure; None while healthy, or when it has none to report
+```
+
+**Why a slot and not a `FrameSource`: the robot already has one.** The bridge reads its camera in exactly one place — `api.camera`, a feed thread publishing the newest `CameraFrame` (`frame_id`, `ts`, `image`, `head_pose`) for any number of consumers to sample at their own rate, because upstream's one-shot `get_frame()` hands each frame out once and two readers steal frames from each other, silently ([reachy-mini-bridge camera.md](../../reachy-mini-bridge/specs/vision/camera.md)). The bridge's own face-detection loop samples that same feed. Re-reading it through a `StreamProvider` would add a second thread, a second `frame_id` numbering and a copy of every frame for nothing — and the library's `FrameLike` protocol exists precisely so a host's own slot plugs into `HandStage` as it stands ([vision-modules stream.md](../../vision-modules/specs/stream.md), "`FrameLike`"). The webcam has no such slot, so the computer's source goes through a `StreamProvider`, wrapped as a `StreamFeed` (below), and both bodies present the same shape here.
+
+Two rules every feed obeys, so the pipeline behaves the same over any camera:
+
+- **The feed's lifecycle is the embodiment's; `open()` / `close()` are the module's only calls into it.** `GestureInput.start()` calls `open()` before the stages start, `stop()` calls `close()` after they are joined. A feed the embodiment owns end to end (the robot's, alive for the whole session) makes both no-ops; a feed built for this module (the webcam's provider) starts and stops its capture thread there. The module never touches anything else on the feed — in particular it never starts or stops the bridge's `api.camera`, whose `stop()` would blind the bridge's own face detection; the protocol's vocabulary (`open`/`close`, not `start`/`stop`) keeps the bridge's feed from satisfying it by accident, so an adapter is always in between.
+- **A missing frame is visible, not fatal — and never the end.** A stage samples `latest()` and simply finds no new `frame_id` while nothing arrives, so a camera that goes quiet (a daemon before its first frame, the headless sim's absent camera, an unplugged webcam) never ends the graph. Health has two sources: the feed's own `capture_error` — what only it can know (a webcam that cannot be opened or read, retried at its pace and cleared on success) — and the module's **stall** detection: `published_count` not advancing for `stall_s` seconds (`3.0` by default) reads `no camera frame for 3 s`, cleared the moment a frame lands. `status()["capture_error"]` is the feed's error when it has one, else the stall line, else `None` — so the Vision line says *why* frames stopped whatever the camera, and the robot's feed, which has no error of its own to report, still shows a dead camera.
+
+The configured `fps` paces what the module can pace: the hand stage and the classifier (their `target_fps`), and — through the embodiment — a webcam source (a webcam delivering 30 fps into a 5 fps hand stage would be wasted captures). The robot's feed runs at the daemon's own rate (10 fps on a local daemon) whatever `fps` says; the stages sample it at theirs.
+
+No mirroring: the classifier sees the frame as captured (`StreamFeed` builds its provider with `mirror=False`).
+
+### `StreamFeed` — a `FrameSource` as a feed
+
+For a camera that is a `FrameSource` rather than a slot (the webcam, the tests' scripted source), the module supplies the adapter: `StreamFeed(source)` owns a `StreamProvider(source, mirror=False)`; `open()` / `close()` are the provider's `start()` / `stop()` (which open and close the source), `latest()` and `published_count` the provider's, `capture_error` the source's. What it requires of the source is the library's `FrameSource` plus that one accessor, the module's `CameraSource`:
 
 ```python
 class CameraSource(FrameSource, Protocol):
@@ -39,24 +77,19 @@ class CameraSource(FrameSource, Protocol):
     ) -> str | None: ...  # why the last read failed; None while healthy
 ```
 
-Every embodiment's source obeys the same three rules, so the pipeline behaves the same over any camera:
-
-- **It paces itself** to `fps` (sleeping the remainder of `1/fps` after each read), because the provider's capture loop calls `read()` back-to-back and a camera read faster than the hand stage consumes would be wasted work. Hand stage and classifier run at the same `fps`, so every read frame is looked at once.
-- **A missing frame is not the end of the stream.** The provider ends its loop for good on a `None` from `read()`, so "nothing yet" (a daemon before its first frame, a webcam not opened yet) must *not* be reported as `None`: the source waits one interval and tries again. Only `close()` makes `read()` return `None`. The provider therefore never `ended`s on its own — the camera is live for as long as the app runs.
-- **A failing read is visible, not fatal.** A raise is logged once per transition, recorded as `capture_error`, and the source keeps trying at the same pace; a later success clears it. A missing camera therefore shows on the Vision line rather than killing vision, and a transient failure heals.
-
-No mirroring (`StreamProvider(source, mirror=False)`): the classifier sees the frame as captured.
+Such a source obeys three rules: **it paces itself** to `fps` (the provider's capture loop calls `read()` back-to-back); **a missing frame is not the end of the stream** — the provider ends its loop for good on a `None` from `read()`, so "nothing yet" waits one interval and tries again, and only `close()` makes `read()` return `None`; **a failing read is visible, not fatal** — logged once per transition, recorded in `capture_error`, retried at the same pace, cleared by a later success. `WebcamSource` is the one implementation ([computer-embodiment.md](computer-embodiment.md)).
 
 ### The pipeline
 
-Exactly the hand demo's graph, with the embodiment's camera as source and one consumer:
+The hand demo's graph with the embodiment's feed in the provider's place and one consumer:
 
 ```
-CameraSource ─▶ StreamProvider ─▶ HandStage ─▶ GestureClassifier ─▶ watcher ─▶ on_gesture(hand, sign)
- (paced at fps)   (no mirror)       (fps)          (fps, threshold)     (fps)
+CameraFeed ──────────────────────▶ HandStage ─▶ GestureClassifier ─▶ watcher ─▶ on_gesture(hand, sign)
+ (robot: api.camera, the daemon's rate;   (fps)      (fps, threshold)     (fps)
+  computer: StreamFeed over the webcam, paced at fps)
 ```
 
-- `HandStage(provider, target_fps=fps, max_hands=max_hands, detector=…)` — `max_hands` from the config ([configuration.md](configuration.md), `vision.max_hands`, default **2**, the library's own default), default padding, rank (`"area"`) and hysteresis; the shipped MediaPipe detector unless one is injected. The app always passes `max_hands` explicitly, so a change of the library's default never silently changes what the camera looks at.
+- `HandStage(feed, target_fps=fps, max_hands=max_hands, detector=…)` — the feed is the stage's `Upstream[FrameLike]` directly, no provider of this module's in between; `max_hands` from the config ([configuration.md](configuration.md), `vision.max_hands`, default **2**, the library's own default), default padding, rank (`"area"`) and hysteresis; the shipped MediaPipe detector unless one is injected. The app always passes `max_hands` explicitly, so a change of the library's default never silently changes what the camera looks at.
   - **Why 2 by default.** `max_hands` is also MediaPipe's tracking capacity ([vision-modules hand.md](../../vision-modules/specs/hand.md), "One count"): with 1, the detector locks onto the first hand it sees and a second hand is not even considered until the first is lost — so a person whose relaxed hand was tracked first could sign with the other and never be seen. With 2, both hands of the person are detected, published and classified — and each gets its own World entry (below), so `max_hands` is also the number of `hand_gesture_<n>` entries. The price is up to one more ViT pass per frame while two hands are in view; if that starves the classifier on a slow machine (the Vision line's achieved rate shows it), `max_hands: 1` is the fallback.
 - `GestureClassifier(hands, target_fps=fps, threshold=threshold, device=device, classifier=…)` — the shipped HaGRID ViT unless one is injected. `threshold` is the library's own validation rule: a hand's `label` is its top class **only when its score reaches the threshold**, else `None`. The app's default is **0.55** ([configuration.md](configuration.md), `vision.threshold`), and the module adds no second threshold of its own.
 - **Models load lazily**, on each stage's worker thread, at the first frame (that is the library's rule — see [vision-modules pipeline.md](../../vision-modules/specs/pipeline.md)). The first run downloads the MediaPipe bundle and the ~340 MB ViT; until they are ready the classifier publishes nothing and the status shows no label. A load failure (no network on first run, a missing extra) is recorded by the library in the stage's `last_error` and the graph keeps running; this module surfaces it in `status()["error"]` — vision never crashes the app.
@@ -172,7 +205,7 @@ def hand_signs_prompt_section() -> (
 class GestureInput:
     def __init__(
         self,
-        source: CameraSource,
+        feed: CameraFeed,
         *,
         on_gesture: OnGesture,
         threshold: float = 0.55,
@@ -181,14 +214,17 @@ class GestureInput:
         hold_s: float = 0.5,
         device: str | None = None,
         models: GestureModels | None = None,
+        stall_s: float = 3.0,
     ) -> None: ...
 
     def start(
         self,
-    ) -> None: ...  # start the pipeline (upstream-first) and the watcher thread
+    ) -> (
+        None
+    ): ...  # open the feed, start the stages (upstream-first) and the watcher thread
     def stop(
         self,
-    ) -> None: ...  # stop the watcher, then the pipeline (downstream-first); joins
+    ) -> None: ...  # stop the watcher, then the stages (downstream-first), then close the feed; joins
     @property
     def running(self) -> bool: ...
     def save_detector_snapshot(
@@ -202,12 +238,12 @@ class GestureInput:
     ) -> dict: ...  # {"running", "signs", "hands", "max_hands", "hold_s", "target_fps", "stream_fps", "hand_fps", "classifier_fps", "capture_error", "error"}
 ```
 
-- `start()` / `stop()` are **synchronous** (threads, like the library's `Pipeline`), called from the app's main/Gradio thread, never from the loop. The source is opened by the provider on `start()` and closed on `stop()`. `stop()` joins every thread; `close()` hooks release the models. Both are idempotent.
-- `status()` is a cheap read the UI timer polls: `signs` is the last *delivered* value of every hand — past the hold filter — a list of length `max_hands` (`["two", None]`), `hands` one `{"label", "confidence"}` per hand in the latest classifier result, **in the library's slot order** (so entry *i* stays the same physical hand while it is in view) — each hand's validated top class (`None` below threshold or with no crop) and raw top score (`0.0` with no crop); an empty list with no hand or no result yet — `max_hands` the configured cap, `hold_s` the configured hold, `target_fps` the configured rate, `stream_fps` / `hand_fps` / `classifier_fps` each node's **achieved** rate (below), `capture_error` the camera source's, and `error` the message of the last exception a stage recorded (`hands.last_error` or `gestures.last_error`, the classifier's first), `None` when healthy.
-- **Achieved rates, the hand demo's way.** A stage's real rate is capped by its upstream and by the model's speed, so `target_fps` is a ceiling, not a fact. Every node's `published_count` increments exactly once per publish — the two stages' and the `StreamProvider`'s alike (the library's exact counter for this — `frame_id` would not do, it is inherited from the camera frame) — so the watcher samples the three counters once per window (`fps_window_s`, default 1 s) and keeps (Δcount / Δtime) as that node's rate; `None` until two samples exist. The stream's rate is the rate the camera actually delivered frames at (a `None` frame is not a publish), against the configured rate — the provider's `source_fps` would only echo the source's `fps()`, the pace, since neither the bridge nor a webcam reports a usable rate. The UI shows each next to its configured rate, so a camera returning nothing, or a classifier starved by a slow model, is visible at a glance.
+- `start()` / `stop()` are **synchronous** (threads, like the library's `Pipeline`), called from the app's main/Gradio thread, never from the loop. `start()` calls `feed.open()` and then starts the two stages (a `Pipeline([hands, gestures])`, upstream-first); `stop()` joins the watcher, stops the stages (downstream-first) and then calls `feed.close()`. `stop()` joins every thread; the stages' `close()` hooks release the models. Both are idempotent.
+- `status()` is a cheap read the UI timer polls: `signs` is the last *delivered* value of every hand — past the hold filter — a list of length `max_hands` (`["two", None]`), `hands` one `{"label", "confidence"}` per hand in the latest classifier result, **in the library's slot order** (so entry *i* stays the same physical hand while it is in view) — each hand's validated top class (`None` below threshold or with no crop) and raw top score (`0.0` with no crop); an empty list with no hand or no result yet — `max_hands` the configured cap, `hold_s` the configured hold, `target_fps` the configured rate, `stream_fps` / `hand_fps` / `classifier_fps` each node's **achieved** rate (below), `capture_error` the feed's own error or else the stall line (above), and `error` the message of the last exception a stage recorded (`hands.last_error` or `gestures.last_error`, the classifier's first), `None` when healthy.
+- **Achieved rates, the hand demo's way.** A stage's real rate is capped by its upstream and by the model's speed, so `target_fps` is a ceiling, not a fact. Every node's `published_count` increments exactly once per publish — the two stages' and the feed's alike (the bridge's `CameraFeed.published_count`, the `StreamProvider`'s; the library's exact counter for this — `frame_id` would not do, it is inherited from the camera frame) — so the watcher samples the three counters once per window (`fps_window_s`, default 1 s) and keeps (Δcount / Δtime) as that node's rate; `None` until two samples exist. The stream's rate is the rate the camera actually delivered frames at: the daemon's on the robot (10 fps on a local daemon, whatever the configured `fps`), the paced webcam's on the computer. The UI shows the camera's rate on its own and each stage's next to the configured rate, so a camera returning nothing, or a classifier starved by a slow model, is visible at a glance. The watcher also keeps the time `published_count` last advanced, for the stall line.
 - `max_hands` must be `>= 1` (the library's `HandStage` raises `ValueError` otherwise; the config validates it first). `hold_s` must be `>= 0` (the config validates it too).
 - `device` is forwarded to the classifier: `None` lets the library pick (`mps` → `cuda` → `cpu`).
-- **Snapshots, the hand demo's way.** `save_detector_snapshot(folder)` / `save_classifier_snapshot(folder)` write what the hand stage / the classifier **last consumed** — the full camera frame it detected on, the hand crop(s) it classified — through the library's `save_input(stage, path)` ([vision-modules snapshot.md](../../vision-modules/specs/snapshot.md)), under `<folder>/snapshot_<stage name>_<YYYYMMDDHHMMSS>.jpg` (`snapshot_path`; the classifier's crops get `_<i>` before the suffix, one per hand). They run on the **caller's** thread (the Gradio click handler), as the library requires — never on a worker — and **never raise**: a `ValueError` (nothing consumed yet, an unsupported suffix), `TypeError`, or `OSError` (an unwritable folder) comes back as a `⚠️ <stage>: …` status line, a classifier input with no hand as `⚠️ …: no crop to save`, and a success as `Saved \`<path>\`, …`. The UI shows that line under the buttons (see [app.md](app.md), "Vision line").
+- **Snapshots, the hand demo's way.** `save_detector_snapshot(folder)` / `save_classifier_snapshot(folder)` write what the hand stage / the classifier **last consumed** — the full camera frame it detected on, the hand crop(s) it classified — through the library's `save_input(stage, path)` ([vision-modules snapshot.md](../../vision-modules/specs/snapshot.md) — it accepts any `FrameLike`, the bridge's `CameraFrame` included; its writer is OpenCV's, the library's `opencv` extra, which the app's `vision` extra pulls — [project.md](project.md)), under `<folder>/snapshot_<stage name>_<YYYYMMDDHHMMSS>.jpg` (`snapshot_path`; the classifier's crops get `_<i>` before the suffix, one per hand). They run on the **caller's** thread (the Gradio click handler), as the library requires — never on a worker — and **never raise**: a `ValueError` (nothing consumed yet, an unsupported suffix), `TypeError`, or `OSError` (an unwritable folder) comes back as a `⚠️ <stage>: …` status line, a classifier input with no hand as `⚠️ …: no crop to save`, and a success as `Saved \`<path>\`, …`. The UI shows that line under the buttons (see [app.md](app.md), "Vision line").
 
 ### App integration
 
@@ -215,11 +251,11 @@ See [app.md](app.md) for the composition; the rules this module imposes on it:
 
 - Built in `build_system` **only when** the config's `vision` section has `enabled: true` ([configuration.md](configuration.md)) **and** the embodiment is up (no body ⇒ no camera ⇒ no vision, like ASR and the mic) **and** the agent built. Built **after** WICA, over `embodiment.camera(fps=cfg.vision.fps)` with `hold_s=cfg.vision.hold_s`, so `on_gesture` resolves against a live agent; the `hand_gesture_1` … `hand_gesture_<max_hands>` entries are registered — and `hand_signs_prompt_section()` appended to the persona — only in that case, so a vision-less run tells the model nothing about hands. Construction never loads a model or opens the camera (both happen on `start()`); a build failure is still caught into a `Vision: …` banner line rather than crashing.
 - `on_gesture(hand, value)` writes `world.update(f"hand_gesture_{hand}", value)` guarded on a running agent (as `_deliver_speech` is): a value arriving before start or after teardown is dropped.
-- Started after `wica.start()` (with the ASR bridge), stopped in `_shutdown` right after `wica.close()` and **before** the embodiment's `exit()` — the robot's source polls the api on the loop, so it must be joined while the media session is still open. Its `stop()` is a synchronous join, isolated like every other teardown step.
+- Started after `wica.start()` (with the ASR bridge), stopped in `_shutdown` right after `wica.close()` and **before** the embodiment's `exit()` — the robot's feed is the session's and resets to `None` at exit, so the stages are joined while it is still live; the webcam's provider is joined before anything else is torn down. Its `stop()` is a synchronous join, isolated like every other teardown step.
 
 ## Testing
 
-Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with a scripted `CameraSource` (synthetic frames, an injectable `capture_error`) and a scripted `HandDetector` / `ImageClassifier` (no camera, no model, no network), at a high `fps` so the tests run in well under a second:
+Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with a scripted `CameraFeed` (a settable synthetic frame republished under a new `frame_id`, an injectable `capture_error`, `open`/`close` recorded) and a scripted `HandDetector` / `ImageClassifier` (no camera, no model, no network), at a high `fps` so the tests run in well under a second:
 
 - Frames with a hand the classifier scores `like` at ≥ threshold deliver `(1, "like")` exactly once, even across many frames.
 - Then frames with no hand deliver `(1, None)` once; the hand back at `like` delivers `(1, "like")` again (`None → like → None → like` ⇒ three deliveries).
@@ -232,9 +268,11 @@ Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with 
 - With a short `fps_window_s`, `stream_fps` / `hand_fps` / `classifier_fps` go from `None` to a positive rate once frames flow, and `target_fps` is the configured rate.
 - Snapshots: before any frame both save methods return a `⚠️` line and write nothing; once frames flow, the detector snapshot writes `snapshot_HandStage_<ts>.jpg` (the full frame) and the classifier snapshot `snapshot_GestureClassifier_<ts>_0.jpg` (the crop), each reporting `Saved …`; with no hand in frame the classifier snapshot reports `no crop to save`; an unwritable folder reports the `OSError` instead of raising.
 - `hand_signs_prompt_section()` names every sign of the vocabulary (exactly the values of `SIGNS`), does not name `mute`, states the `stop` rule, and describes a sign state as what the person just did (never promising a "showing none" state).
-- The sources themselves are tested with their embodiments: `RobotCameraSource` in [reachy-embodiment.md](reachy-embodiment.md), `WebcamSource` in [computer-embodiment.md](computer-embodiment.md).
+- **Health:** with a feed that stops advancing, `status()["capture_error"]` is `None` until `stall_s` has passed and the stall line after; a frame landing clears it; a feed reporting its own `capture_error` shows that message instead of the stall line; `open()` is called once by `start()` and `close()` once by `stop()`, and nothing else on the feed.
+- **`StreamFeed`** over a scripted `CameraSource`: `open()` opens the source and starts publishing (`latest()` a `Frame` of the source's image, `published_count` counting); `close()` closes the source and stops the thread; `capture_error` is the source's; a source returning nothing yet never ends the provider.
+- The embodiments' feeds are tested with them: `RobotCameraFeed` in [reachy-embodiment.md](reachy-embodiment.md), `WebcamSource` in [computer-embodiment.md](computer-embodiment.md).
 - `stop()` joins the threads and the callback is not called afterwards.
-- In `tests/test_system.py`, with a `FakeEmbodiment` whose camera serves synthetic frames + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered, `hold_s` reaches the gesture input, and the hand-signs section is in the first prompt; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line and no line for the sign-less hand 1; `HAND_GESTURE_TTL` later the World has cleared the sign with no step and renders no hand entry; `two → None` does not trigger; the serializer renders `None` as an empty `Content`; a vision config with no embodiment builds no `GestureInput`; `enabled: false` builds none either (registers no entry, seeds no section); teardown stops vision before the embodiment exits.
+- In `tests/test_system.py`, with a `FakeEmbodiment` whose camera is a scripted feed of synthetic frames + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered, `hold_s` reaches the gesture input, and the hand-signs section is in the first prompt; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line and no line for the sign-less hand 1; `HAND_GESTURE_TTL` later the World has cleared the sign with no step and renders no hand entry; `two → None` does not trigger; the serializer renders `None` as an empty `Content`; a vision config with no embodiment builds no `GestureInput`; `enabled: false` builds none either (registers no entry, seeds no section); teardown stops vision before the embodiment exits.
 - `tests-e2e/test_gesture_input_live.py` runs the **real** models, at the default hold (so it also proves the hold clears on a steady photo): a scripted source serving each of `vision-modules`' bundled photos must deliver its sign for hand 1 — `hand_fist.jpg` and `hand_stop.jpg` → `"stop"`, `hand_palm.jpg` → `"five"`, `hand_one.jpg` → `"one"`, `hand_three2.jpg` → `"three"` — and `no_hand.jpg` must deliver nothing — skipped when the fixtures or the models are unavailable (see [testing.md](testing.md)).
 
 ## Open questions

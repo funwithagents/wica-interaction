@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 import pytest
 
-from wica_interaction.gesture_input import GestureInput
+from wica_interaction.gesture_input import GestureInput, StreamFeed
 
 # One delivery: (hand number, that hand's sign or None).
 Delivery = tuple[int, str | None]
@@ -83,7 +83,7 @@ def _run(frame: np.ndarray) -> tuple[list[Delivery], dict]:
     error), then return the deliveries and the final status."""
     deliveries: list[Delivery] = []
     gesture = GestureInput(
-        ScriptedCameraSource(frame),
+        StreamFeed(ScriptedCameraSource(frame)),
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         threshold=0.55,
         fps=5.0,
@@ -132,7 +132,7 @@ def test_real_models_deliver_nothing_with_no_hand() -> None:
     ones (confidence stays 0.0), so wait on the hand stage's output instead."""
     deliveries: list[Delivery] = []
     gesture = GestureInput(
-        ScriptedCameraSource(_fixture("no_hand.jpg")),
+        StreamFeed(ScriptedCameraSource(_fixture("no_hand.jpg"))),
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         fps=5.0,
     )

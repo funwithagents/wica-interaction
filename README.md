@@ -32,11 +32,11 @@ What every embodiment needs is a base dependency; what only one embodiment, prov
 
 | Extra | Pulls | For |
 |---|---|---|
-| *(base)* | `wica[gradio]`, `asr-engine`, `vision-modules`, `gradio`, `numpy` | the lifecycle, the UI, speech in, the vision plumbing |
+| *(base)* | `wica[gradio]`, `asr-engine`, `vision-modules` (numpy-only core), `gradio`, `numpy` | the lifecycle, the UI, speech in, the vision plumbing |
 | `computer` | `tts-engine` | the computer embodiment's voice |
 | `audio-processing` | `aec-audio-processing`, `samplerate` | the computer's echo cancellation / noise suppression |
 | `reachy` | `reachy-mini-bridge` | the Reachy Mini embodiment (pulls the upstream `reachy-mini` SDK) |
-| `vision` | `vision-modules[hand]` | the hand-sign input, either embodiment |
+| `vision` | `vision-modules[hand,opencv]` | the hand-sign input (the models, plus OpenCV for the webcam and the snapshot buttons), either embodiment |
 | `wica-anthropic` | `wica[anthropic]` | the Anthropic agent provider |
 | `wica-huggingface-hub` | `wica[huggingface-hub]` | the Hugging Face agent provider (Inference Providers hub) |
 | `wica-openai` | `wica[openai]` | the OpenAI agent provider |
@@ -69,7 +69,7 @@ One config file stands up each embodiment, and each committed example is a **tem
 uv run wica-interaction-computer --config config.computer.example.json
 ```
 
-**The Reachy Mini** ([config.reachy.example.json](config.reachy.example.json)): the agent's key and ASR's (the committed voice is the local `pocket` model, which needs none, downloading its weights on first run). As committed it targets a **headful `sim`** daemon (`"reachy": {"backend": "sim", "daemon": {"spawn": "auto", "headless": false}}`), which the bridge spawns itself and opens the MuJoCo viewer in (needs `mjpython` on `PATH` and an unlocked GUI session — see [reachy-mini-bridge docs/running-the-sim-daemon.md](../reachy-mini-bridge/docs/running-the-sim-daemon.md)); set `reachy.daemon.headless` to `true` for a windowless daemon. For the physical robot, change `reachy.backend` to `"real"` — the `reachy.daemon` block then spawns the daemon of a robot plugged in over USB (a wireless robot runs its own daemon: set `spawn` to `"never"` and point `reachy.robot.host` at it). For the offline `fake` backend, change it to `"fake"` **and delete the `reachy.daemon` block** (`fake` has no daemon, so the loader rejects spawning there). Either way keep `reachy.tts`, or the robot comes up without a voice:
+**The Reachy Mini** ([config.reachy.example.json](config.reachy.example.json)): the agent's key and ASR's (the committed voice is the local `pocket` model, which needs none, downloading its weights on first run). As committed it targets a **headful `sim`** daemon (`"reachy": {"backend": "sim", "daemon": {"spawn": "auto", "headless": false}}`), which the bridge spawns itself and opens the MuJoCo viewer in (needs `mjpython` on `PATH` and an unlocked GUI session — see [reachy-mini-bridge docs/running-the-sim-daemon.md](../reachy-mini-bridge/docs/running-the-sim-daemon.md)); set `reachy.daemon.headless` to `true` for a windowless daemon. For the physical robot, change `reachy.backend` to `"real"` — the `reachy.daemon` block then spawns the daemon of a robot plugged in over USB (a wireless robot runs its own daemon: set `spawn` to `"never"` and point `reachy.robot.host` at it). For the offline `fake` backend, change it to `"fake"` **and delete the `reachy.daemon` block** (`fake` has no daemon, so the loader rejects spawning there). Either way keep `reachy.tts`, or the robot comes up without a voice. The `reachy.faces` block (`"detector": "yunet"`) names the bridge's shipped face detector, which `reachy.motion.tracking` needs: the robot then follows the person in front of it (the detector's weights download on first run); for a robot that does not turn its head, set `tracking` to `false` and drop `faces`. Hand signs are read from the same camera feed the detector uses — the bridge reads the robot's camera once and every consumer samples it:
 
 ```
 uv run wica-interaction-reachy --config config.reachy.example.json

@@ -131,9 +131,10 @@ def _hand(label: str | None, confidence: float) -> str:
 
 def tick_vision(system: AppSystem) -> str:
     """Refresh the Vision line: whether the gesture input runs, every hand's raw top label and score
-    in slot order (or "no hand") under the configured cap, every hand's last delivered sign, each node's achieved rate next to the
-    configured one — the camera stream's poll rate, the two stages' target (the hand demo's
-    readout) — and any camera / stage error."""
+    in slot order (or "no hand") under the configured cap, every hand's last delivered sign, the
+    camera feed's achieved rate (its own — the robot's daemon-paced feed, or the paced webcam) and
+    each stage's next to the configured target (the hand demo's readout), and any camera (a
+    failure, a stall) / stage error."""
     gesture = system.gesture
     if gesture is None:
         return "_Vision off (`vision.enabled` is false, or no camera)._"
@@ -150,7 +151,7 @@ def tick_vision(system: AppSystem) -> str:
     status_md = (
         f"**Vision:** {'running' if status['running'] else 'stopped'} · "
         f"**hands (max {status['max_hands']}):** {seen or 'no hand'} · **signs:** {signs} · "
-        f"**stream:** {_fps(status['stream_fps'])} (poll {target:g}) · "
+        f"**camera:** {_fps(status['stream_fps'])} · "
         f"**hand stage:** {_fps(status['hand_fps'])} (target {target:g}) · "
         f"**classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
     )

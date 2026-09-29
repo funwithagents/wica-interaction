@@ -19,7 +19,7 @@ from typing import Any, Protocol
 from asr_engine.audio import AudioSource
 from wica import Command
 
-from wica_interaction.gesture_input import CameraSource
+from wica_interaction.gesture_input import CameraFeed
 
 # The `say` output Command: non-raising, "OK" on success, "TTS error: …" otherwise, awaiting real
 # playback so the Command stays `running` for the duration of the speech. Registered directly, so
@@ -63,8 +63,11 @@ class Embodiment(Protocol):
         """Why capture died on its own; ``None`` while healthy."""
         ...
 
-    def camera(self, *, fps: float) -> CameraSource:
-        """A paced ``FrameSource`` reporting its own ``capture_error``, for the gesture input."""
+    def camera(self, *, fps: float) -> CameraFeed:
+        """The gesture input's upstream: a latest-value frame slot with ``open``/``close`` and a
+        ``capture_error``. ``fps`` is the rate to deliver frames at *if the body can pace them* (a
+        webcam); a camera running at its own rate (the robot's feed) ignores it — the stages pace
+        themselves."""
         ...
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:

@@ -8,15 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
 from asr_engine.audio import AudioSource
+from vision_modules import Frame
 from wica import Command
 from wica.config import WicaConfig
 
-from wica_interaction.gesture_input import CameraSource
+from wica_interaction.gesture_input import CameraFeed
 
 
 def scripted_wica_config(
@@ -99,13 +101,74 @@ def asr_factory(
     return factory
 
 
-class ScriptedCameraSource:
-    """A `CameraSource` over one settable frame — the camera every vision test runs on.
+class ScriptedCameraFeed:
+    """A `CameraFeed` over one settable frame — the camera every vision test runs on.
 
-    Obeys the three rules the real sources do (specs/gesture-input.md, "Frames come from the
-    embodiment"): it paces itself to `fps`, a `None` frame is *not* the end of the stream (it waits
-    an interval and tries again), and only `close()` makes `read()` return `None`. `frame` and
-    `capture_error` are plain attributes a test sets mid-run.
+    The shape the gesture input samples (specs/gesture-input.md, "Frames come from the
+    embodiment"): `open()` starts a thread republishing `frame` under a fresh `frame_id` every
+    `1/fps` (a `None` frame publishes nothing, so a test can starve the feed), `close()` stops it,
+    `latest()` / `published_count` are what it published; `frame` and `capture_error` are plain
+    attributes a test sets mid-run, `opens` / `closes` count the lifecycle calls, `fps` is the rate
+    the body was asked for.
+    """
+
+    def __init__(self, frame: np.ndarray | None = None, *, fps: float = 100.0) -> None:
+        if fps <= 0:
+            raise ValueError("fps must be > 0")
+        self.frame = frame
+        self.fps = fps
+        self.capture_error: str | None = None
+        self.opens = 0
+        self.closes = 0
+        self._interval = 1.0 / fps
+        self._lock = threading.Lock()
+        self._latest: Frame | None = None
+        self._count = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def open(self) -> None:
+        self.opens += 1
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self.closes += 1
+        if self._thread is None:
+            return
+        self._stop.set()
+        self._thread.join()
+        self._thread = None
+
+    def latest(self) -> Frame | None:
+        with self._lock:
+            return self._latest
+
+    @property
+    def published_count(self) -> int:
+        with self._lock:
+            return self._count
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            frame = self.frame
+            if frame is None:
+                continue
+            with self._lock:
+                self._count += 1
+                self._latest = Frame(self._count, time.monotonic(), frame)
+
+
+class ScriptedCameraSource:
+    """A `CameraSource` over one settable frame — what the `StreamFeed` tests wrap.
+
+    Obeys the three rules such a source does (specs/gesture-input.md, "`StreamFeed`"): it paces
+    itself to `fps`, a `None` frame is *not* the end of the stream (it waits an interval and tries
+    again), and only `close()` makes `read()` return `None`. `frame` and `capture_error` are plain
+    attributes a test sets mid-run.
     """
 
     def __init__(self, frame: np.ndarray | None = None, *, fps: float = 100.0) -> None:
@@ -173,7 +236,7 @@ class FakeEmbodiment:
         self.entered = False
         self.exited = False
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.cameras: list[ScriptedCameraSource] = []
+        self.cameras: list[ScriptedCameraFeed] = []
         self.missing: list[str] = []
         self._voice = voice
         self._mic = mic
@@ -223,10 +286,10 @@ class FakeEmbodiment:
     def mic_error(self) -> str | None:
         return self._mic_error
 
-    def camera(self, *, fps: float) -> CameraSource:
-        source = ScriptedCameraSource(self._frames, fps=fps)
-        self.cameras.append(source)
-        return source
+    def camera(self, *, fps: float) -> CameraFeed:
+        feed = ScriptedCameraFeed(self._frames, fps=fps)
+        self.cameras.append(feed)
+        return feed
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:
         return self._commands

@@ -27,7 +27,7 @@ from typing import Any, Protocol
 from asr_engine.audio import AudioSource
 from wica import Command
 
-from wica_interaction.gesture_input import CameraSource
+from wica_interaction.gesture_input import CameraFeed
 
 Voice = Callable[[str], Awaitable[str]]  # the `say` output Command
 
@@ -58,7 +58,7 @@ class Embodiment(Protocol):
 
     def camera(
         self, *, fps: float
-    ) -> CameraSource: ...  # a paced FrameSource + capture_error
+    ) -> CameraFeed: ...  # a latest-value frame slot + open/close + capture_error
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]: ...  # action Commands
 
@@ -82,7 +82,7 @@ Each member is touched at exactly one point of the lifecycle ([app.md](app.md), 
 | `prompt_addendum` | `build_system`, before `Wica.init`: appended to the resolved persona (the same seam the hand-signs section uses — [app.md](app.md), build step 4) | `""` | the "Your emotions" section |
 | `mic` | `build_system`, as `ASREngine(cfg.asr_engine, audio_source=…)`. `None` means the engine opens its default local capture from the ASR config's `audio.device` | the coordinator's processed source, or `None` when no processing feature is on | `RobotMicSource` |
 | `mic_error` | the ASR panel's timer, through `AsrBridge.status()["capture_error"]` | always `None` | `RobotMicSource.capture_error` |
-| `camera(fps=…)` | `build_system`, only when `vision.enabled`, handed to `GestureInput` | a paced `WebcamSource` on the configured OpenCV device | `RobotCameraSource` polling the bridge on the loop |
+| `camera(fps=…)` | `build_system`, only when `vision.enabled`, handed to `GestureInput` as the hand stage's upstream ([gesture-input.md](gesture-input.md), "Frames come from the embodiment"). `fps` is the rate the body should deliver frames at *if it can pace them*; a body whose camera runs at its own rate ignores it (the stages pace themselves) | a `StreamFeed` over a `WebcamSource` paced at `fps` on the configured OpenCV device | `RobotCameraFeed`: the bridge's `api.camera` (the session's one camera reader, at the daemon's rate) behind no-op `open`/`close` |
 | `voice` | `wire`, as `wica.set_output_command(voice)`. `None` is for a body with **no speaker at all** (no output Command is set — the model's free text is then its voice); a body whose voice merely *failed to build* keeps its `say` wired (below) | `say` over `TTSTools(engine)`; with no engine it answers `"TTS error: <why>"` | `say` over `api.say`; with no synthesizer it answers `"TTS error: <why>"` |
 | `commands()` | `wire`, each item `register_command`ed after the dictation commands | `()` | `play_emotion`, `get_motors_state`, `set_motors_state` |
 | `exit()` | `_shutdown`, scheduled onto the loop after the agent, vision and ASR are stopped, before the loop stops | nothing to release | `ReachyMiniApi.__aexit__` |
@@ -104,7 +104,7 @@ Read the "called by" column top to bottom and it is the lifecycle: construct the
 
 ## Testing
 
-`tests/fakes.py` holds a `FakeEmbodiment` that records what the lifecycle asked of it: an `entered`/`exited` flag and an ordered `log` shared with the fake ASR engine (to pin teardown order), a `said` list behind its `voice`, an optional injected `mic` (an `AudioSource` fake) and `mic_error`, a scripted `camera` (frames for the gesture tests), `commands` to register, a `prompt_addendum`, `missing` lines, and `raise_on_enter`. The lifecycle tests in `tests/test_system.py` drive `build_system(config, FakeEmbodiment(...))`, then `wire`, then `_start`, against WICA's scripted `fake` provider, and assert ([app.md](app.md), "Testing"):
+`tests/fakes.py` holds a `FakeEmbodiment` that records what the lifecycle asked of it: an `entered`/`exited` flag and an ordered `log` shared with the fake ASR engine (to pin teardown order), a `said` list behind its `voice`, an optional injected `mic` (an `AudioSource` fake) and `mic_error`, a scripted `camera` (a feed of frames for the gesture tests), `commands` to register, a `prompt_addendum`, `missing` lines, and `raise_on_enter`. The lifecycle tests in `tests/test_system.py` drive `build_system(config, FakeEmbodiment(...))`, then `wire`, then `_start`, against WICA's scripted `fake` provider, and assert ([app.md](app.md), "Testing"):
 
 - the scripted `say` reaches `embodiment.said` (the voice is set as the output Command), and with `voice=None` no output Command is set;
 - each of `commands()` is registered and routes back to the fake when the model calls it;

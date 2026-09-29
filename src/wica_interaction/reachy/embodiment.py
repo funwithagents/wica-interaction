@@ -2,9 +2,10 @@
 
 This embodiment gathers everything robot-specific behind the [Embodiment](../embodiment.py)
 protocol the shared lifecycle is written against: ``say`` out of the robot's speaker,
-``RobotMicSource`` over its echo-cancelled mic, ``RobotCameraSource`` over its camera, and the
-action Commands of [robot_control.py](robot_control.py). All four ride the *same* api instance —
-one robot connection, one media session — built and entered in ``enter()`` on the app loop.
+``RobotMicSource`` over its echo-cancelled mic, ``RobotCameraFeed`` over its camera feed
+(``api.camera``, the bridge's one reader of the camera), and the action Commands of
+[robot_control.py](robot_control.py). All four ride the *same* api instance — one robot connection,
+one media session, one camera feed — built and entered in ``enter()`` on the app loop.
 
 Audio on Reachy Mini is a daemon-owned pipeline with an XMOS XVF3800 doing echo cancellation in
 firmware, which works only if playback goes *through* it: that is why speech is played through the
@@ -16,18 +17,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-import numpy as np
 from asr_engine.audio import AudioSource
+from reachy_mini_bridge import CameraFrame
 from reachy_mini_bridge.api import ReachyMiniApi
 from wica import Command
 
 from wica_interaction.embodiment import Voice
-from wica_interaction.gesture_input import CameraSource
+from wica_interaction.gesture_input import CameraFeed
 from wica_interaction.reachy.config import ReachyConfig
 from wica_interaction.reachy.robot_control import RobotControl, emotions_prompt_section
 
@@ -41,11 +40,6 @@ _MIC_QUEUE_MAXSIZE = 200
 
 # capture_error when the robot's mic iterator finishes on its own (the media session closed under us).
 _STREAM_ENDED = "mic stream ended"
-
-# Bound on one camera poll hop to the loop. The bridge runs the SDK read off the loop, so a poll is
-# normally a few ms; a session that stalls longer than this is reported as a capture error rather
-# than wedging the capture thread forever.
-_POLL_TIMEOUT_S = 5.0
 
 # Appended to a failed connection's message (the "no embodiment" banner line) on a backend that
 # needs something outside this process — a robot, a daemon, a simulator.
@@ -121,83 +115,44 @@ class RobotMicSource:
         self._error = _STREAM_ENDED
 
 
-class RobotCameraSource:
-    """The robot camera as a ``CameraSource``: a paced poll of the bridge's ``get_camera_frame()``
-    on the app loop.
+class RobotCameraFeed:
+    """The robot camera as a ``CameraFeed``: a thin adapter over the bridge's ``api.camera``.
 
-    ``read()`` runs on the ``StreamProvider``'s capture thread and hops each poll to the loop the api
-    was entered on. It paces itself to ``fps`` (the provider calls ``read()`` back-to-back), skips a
-    ``None`` frame (nothing buffered yet — the provider would otherwise end its loop for good), and
-    keeps polling through a failing verb, recording why in ``capture_error`` (cleared by the next
-    success) so a dead camera shows in the UI instead of silently killing vision. Only ``close()``
-    makes ``read()`` return ``None``.
+    The bridge reads its camera in exactly one place — ``api.camera``, a feed thread the session
+    owns, publishing the newest ``CameraFrame`` (``frame_id``, ``ts``, the BGR image, ``head_pose``)
+    for any number of consumers to sample without stealing frames from one another (upstream's
+    one-shot ``get_frame()`` hands each frame out once). The bridge's own face detection samples that
+    feed; so does this app's hand stage, through this adapter: ``latest()`` and ``published_count``
+    forward to it, nothing is copied, paced or re-numbered, and reading is an instant, thread-safe
+    call from the hand stage's own thread — no hop to the app loop, nothing async.
+
+    ``open()``/``close()`` are no-ops: the feed's lifecycle is the session's (started at
+    ``__aenter__``, stopped and reset to ``None`` at ``__aexit__``), and stopping it here would blind
+    the bridge's face detection and head tracking. ``capture_error`` is always ``None`` — the feed
+    has no failure of its own to report (a failing read is logged by the bridge and the last frame
+    stays published); a camera that goes quiet shows through the gesture input's stall line instead.
+    See specs/reachy-embodiment.md, "``RobotCameraFeed``".
     """
 
-    def __init__(
-        self, api: ReachyMiniApi, loop: asyncio.AbstractEventLoop, *, fps: float
-    ) -> None:
-        if fps <= 0:
-            raise ValueError("fps must be > 0")
+    def __init__(self, api: ReachyMiniApi) -> None:
         self._api = api
-        self._loop = loop
-        self._interval = 1.0 / fps
-        self._next_poll = time.monotonic()
-        self._closed = threading.Event()
-        self._error: str | None = None
+
+    def open(self) -> None:
+        """Nothing: the feed is the session's, started at enter."""
+
+    def close(self) -> None:
+        """Nothing: never stops the bridge's feed."""
+
+    def latest(self) -> CameraFrame | None:
+        return self._api.camera.latest()
+
+    @property
+    def published_count(self) -> int:
+        return self._api.camera.published_count
 
     @property
     def capture_error(self) -> str | None:
-        """Why the last poll failed; ``None`` while healthy (or before the first poll)."""
-        return self._error
-
-    def open(self) -> None:
-        """Called by the provider on every ``start()``: (re)arm the source so a provider restarted
-        after a ``stop()`` polls again. Nothing to open on the robot side — the api's media session
-        is the embodiment's, entered long before."""
-        self._closed.clear()
-        self._next_poll = time.monotonic()
-
-    def read(self) -> np.ndarray | None:
-        """The next camera frame, or ``None`` once closed. Never ``None`` for "no frame yet"."""
-        while not self._closed.is_set():
-            # Pace: one poll per interval, measured from the previous poll — a frame is returned
-            # the moment it is read (no added latency), and a `None` just waits for the next slot.
-            remaining = self._next_poll - time.monotonic()
-            if remaining > 0:
-                self._closed.wait(remaining)
-                continue
-            self._next_poll = time.monotonic() + self._interval
-            frame = self._poll()
-            if frame is not None:
-                return frame
         return None
-
-    def _poll(self) -> np.ndarray | None:
-        try:
-            frame = asyncio.run_coroutine_threadsafe(
-                self._api.get_camera_frame(), self._loop
-            ).result(_POLL_TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001 - any failure is surfaced, and polling goes on
-            message = f"camera read failed: {exc}"
-            if self._error != message:  # log the transition, not every poll
-                logger.warning(
-                    "robot camera read failed; vision is receiving no frames: %s", exc
-                )
-            self._error = message
-            return None
-        if self._error is not None:
-            logger.info("robot camera read recovered")
-            self._error = None
-        return frame
-
-    def close(self) -> None:
-        self._closed.set()
-
-    def fps(self) -> float:
-        """The nominal rate, per the ``FrameSource`` protocol: the poll rate this source paces
-        itself to (the robot camera reports none of its own through the bridge). The rate actually
-        achieved is the provider's ``published_count``, metered like every other node."""
-        return 1.0 / self._interval
 
 
 class ReachyEmbodiment:
@@ -219,7 +174,6 @@ class ReachyEmbodiment:
         self._config = config
         self._api: ReachyMiniApi | None = api
         self._injected = api is not None
-        self._loop: asyncio.AbstractEventLoop | None = None
         self._mic: RobotMicSource | None = None
         self._emotions: tuple[str, ...] | None = None
         self.missing: list[str] = []
@@ -228,7 +182,6 @@ class ReachyEmbodiment:
         """Bring the robot up: the api's daemon/connection/media session, the voice's health, the
         emotion names, the mic source. Any exception from ``__aenter__`` propagates — that is the
         "no embodiment" degrade the lifecycle catches."""
-        self._loop = asyncio.get_running_loop()
         api = self._api if self._api is not None else ReachyMiniApi(self._config.reachy)
         # Construction never connects; __aenter__ does, so any raise here (an upstream reachy_mini
         # error, the bridge's DaemonError/BridgeError) means "no embodiment". The offline hint rides
@@ -295,9 +248,11 @@ class ReachyEmbodiment:
     def mic_error(self) -> str | None:
         return self._mic.capture_error if self._mic is not None else None
 
-    def camera(self, *, fps: float) -> CameraSource:
-        assert self._api is not None and self._loop is not None
-        return RobotCameraSource(self._api, self._loop, fps=fps)
+    def camera(self, *, fps: float) -> CameraFeed:
+        """The bridge's camera feed behind ``RobotCameraFeed``. ``fps`` is ignored: the feed runs at
+        the daemon's rate (10 fps on a local daemon), the gesture stages pace themselves."""
+        assert self._api is not None
+        return RobotCameraFeed(self._api)
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:
         """The robot's action Commands, over the same api as the voice: the emotion (its description

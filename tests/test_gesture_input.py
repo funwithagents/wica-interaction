@@ -1,10 +1,11 @@
 """Functional tests for the hand-sign gesture input (`gesture_input`).
 
-Drives `GestureInput` end-to-end through the real `vision-modules` pipeline — `CameraSource →
-StreamProvider → HandStage → GestureClassifier → watcher` — over a scripted camera source serving
-synthetic frames, a scripted `HandDetector`, and a scripted `ImageClassifier` whose scores a test
-flips mid-run. No camera, no model, no network; a high fps keeps each test well under a second. The
-camera sources themselves are tested with their embodiments. See specs/gesture-input.md ("Testing").
+Drives `GestureInput` end-to-end through the real `vision-modules` pipeline — `CameraFeed →
+HandStage → GestureClassifier → watcher` — over a scripted camera feed publishing synthetic frames,
+a scripted `HandDetector`, and a scripted `ImageClassifier` whose scores a test flips mid-run. No
+camera, no model, no network; a high fps keeps each test well under a second. `StreamFeed` (a
+`FrameSource` as a feed) is tested here over a scripted source; the embodiments' feeds are tested
+with them. See specs/gesture-input.md ("Testing").
 """
 
 from __future__ import annotations
@@ -18,12 +19,13 @@ import numpy as np
 import pytest
 from vision_modules.hand import DetectedHand
 
-from tests.fakes import ScriptedCameraSource
+from tests.fakes import ScriptedCameraFeed, ScriptedCameraSource
 from wica_interaction.gesture_input import (
     SIGNS,
     GestureInput,
     GestureModels,
     HoldFilter,
+    StreamFeed,
     hand_signs_prompt_section,
     sign_shown,
     snapshot_path,
@@ -39,9 +41,9 @@ _HAND_FRAME = np.full((48, 64, 3), 200, dtype=np.uint8)
 _EMPTY_FRAME = np.zeros((48, 64, 3), dtype=np.uint8)
 
 
-def _camera(frame: np.ndarray | None = _HAND_FRAME) -> ScriptedCameraSource:
-    """The embodiment's camera, scripted: one settable frame at this file's fps."""
-    return ScriptedCameraSource(frame, fps=_FPS)
+def _camera(frame: np.ndarray | None = _HAND_FRAME) -> ScriptedCameraFeed:
+    """The embodiment's camera feed, scripted: one settable frame republished at this file's fps."""
+    return ScriptedCameraFeed(frame, fps=_FPS)
 
 
 class ScriptedDetector:
@@ -91,13 +93,14 @@ def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
 
 
 def _input(
-    camera: ScriptedCameraSource,
+    camera: ScriptedCameraFeed,
     classifier: ScriptedClassifier,
     deliveries: list[Delivery],
     *,
     threshold: float = 0.55,
     max_hands: int = 2,
     hold_s: float = 0.0,
+    stall_s: float = 3.0,
 ) -> GestureInput:
     """No hold unless a test asks for one: the reduction and change tests are about what each
     frame does; the hold has its own tests below."""
@@ -108,6 +111,7 @@ def _input(
         fps=_FPS,
         max_hands=max_hands,
         hold_s=hold_s,
+        stall_s=stall_s,
         models=GestureModels(detector=ScriptedDetector(), classifier=classifier),
     )
 
@@ -120,9 +124,9 @@ def test_a_sign_is_delivered_once_across_many_frames() -> None:
     gesture.start()
     try:
         assert _wait_until(lambda: deliveries == [(1, "like")])
-        reads_then = camera.reads
+        reads_then = camera.published_count
         assert _wait_until(
-            lambda: camera.reads >= reads_then + 10
+            lambda: camera.published_count >= reads_then + 10
         )  # many more frames went by
         assert deliveries == [(1, "like")]
         assert gesture.status()["signs"] == ["like", None]  # one per max_hands
@@ -554,12 +558,119 @@ def test_stop_joins_and_delivers_nothing_afterwards() -> None:
     assert _wait_until(lambda: deliveries == [(1, "stop")])
     gesture.stop()
     assert not gesture.running
-    reads_then = camera.reads
+    reads_then = camera.published_count
     camera.frame = _EMPTY_FRAME  # would deliver None if anything were still running
     time.sleep(0.1)
-    assert camera.reads == reads_then  # the camera is no longer polled
+    assert (
+        camera.published_count == reads_then
+    )  # the feed was closed: nothing publishes
     assert deliveries == [(1, "stop")]
+    assert (camera.opens, camera.closes) == (
+        1,
+        1,
+    )  # open() by start(), close() by stop()
     gesture.stop()  # idempotent
+    assert (camera.opens, camera.closes) == (1, 1)
+
+
+# --- Camera health: the feed's own error, or a stall ---------------------------------------------
+
+
+def test_a_feed_that_stops_publishing_reads_stalled_until_a_frame_lands() -> None:
+    """The robot's feed has no error of its own to report, so a quiet camera must show through the
+    module: no new frame for `stall_s` is the stall line, cleared by the next frame."""
+    camera = _camera()
+    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), [], stall_s=0.1)
+    gesture.start()
+    try:
+        assert _wait_until(lambda: camera.published_count > 0)
+        assert gesture.status()["capture_error"] is None
+        camera.frame = None  # the daemon stops delivering
+        time.sleep(0.05)
+        assert gesture.status()["capture_error"] is None  # not yet: within stall_s
+        assert _wait_until(
+            lambda: gesture.status()["capture_error"] == "no camera frame for 0.1 s"
+        )
+        camera.frame = _HAND_FRAME  # frames are back
+        assert _wait_until(lambda: gesture.status()["capture_error"] is None)
+    finally:
+        gesture.stop()
+
+
+def test_a_feed_that_never_publishes_reads_stalled_after_stall_s() -> None:
+    camera = _camera(None)
+    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), [], stall_s=0.1)
+    gesture.start()
+    try:
+        assert gesture.status()["capture_error"] is None
+        assert _wait_until(
+            lambda: gesture.status()["capture_error"] == "no camera frame for 0.1 s"
+        )
+    finally:
+        gesture.stop()
+
+
+def test_the_feeds_own_error_takes_precedence_over_the_stall_line() -> None:
+    camera = _camera(None)
+    camera.capture_error = "camera open failed: device 0 not found"
+    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), [], stall_s=0.05)
+    gesture.start()
+    try:
+        time.sleep(0.15)  # long past stall_s
+        assert (
+            gesture.status()["capture_error"]
+            == "camera open failed: device 0 not found"
+        )
+    finally:
+        gesture.stop()
+
+
+def test_stall_s_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="stall_s"):
+        _input(_camera(), ScriptedClassifier(_scores("fist", 0.9)), [], stall_s=0.0)
+
+
+# --- StreamFeed: a FrameSource as a feed ---------------------------------------------------------
+
+
+def test_stream_feed_publishes_the_sources_frames_between_open_and_close() -> None:
+    source = ScriptedCameraSource(_HAND_FRAME, fps=_FPS)
+    feed = StreamFeed(source)
+    assert feed.latest() is None and feed.published_count == 0
+    assert source.opens == 0  # construction opens nothing
+    feed.open()
+    try:
+        assert source.opens == 1
+        assert _wait_until(lambda: feed.published_count >= 3)
+        frame = feed.latest()
+        assert frame is not None and frame.image is _HAND_FRAME
+        assert (
+            frame.frame_id == feed.published_count
+            or frame.frame_id + 1 >= feed.published_count
+        )
+    finally:
+        feed.close()
+    assert source.closes == 1
+    count = feed.published_count
+    time.sleep(0.05)
+    assert feed.published_count == count  # the capture thread is gone
+
+
+def test_stream_feed_forwards_the_sources_error_and_survives_no_frame_yet() -> None:
+    source = ScriptedCameraSource(None, fps=_FPS)  # nothing to read yet
+    source.capture_error = "camera open failed: device 0 not found"
+    feed = StreamFeed(source)
+    feed.open()
+    try:
+        assert feed.capture_error == "camera open failed: device 0 not found"
+        time.sleep(0.05)
+        assert feed.latest() is None  # nothing yet — and the provider has not ended
+        source.capture_error = None
+        source.frame = _HAND_FRAME  # the camera comes back
+        assert _wait_until(lambda: feed.latest() is not None)
+        assert feed.capture_error is None
+    finally:
+        feed.close()
 
 
 def test_classifier_failure_is_reported_not_fatal() -> None:

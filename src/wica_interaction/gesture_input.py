@@ -2,7 +2,9 @@
 
 The vision half of the app's perception, over whatever camera the embodiment looks through (the
 robot's own, a webcam on the computer — specs/embodiment.md): ``GestureInput`` takes a
-``CameraSource``, it never builds one. It runs the library's
+``CameraFeed`` — a latest-value frame slot with a lifecycle and a health line: the bridge's own
+``api.camera`` behind the robot embodiment's adapter, or a ``StreamFeed`` (below) over a webcam
+``FrameSource`` — it never builds one, and never reads a camera itself. It runs the library's
 hand stage + HaGRID gesture classifier over it (up to ``max_hands`` hands per frame) and reduces
 **each hand** to one value of the app's own sign vocabulary — ``SIGNS`` maps the classifier's labels
 onto ``"stop"``, ``"like"``, ``"dislike"``, ``"ok"`` and the counts ``"one"`` … ``"five"``;
@@ -30,6 +32,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from vision_modules import (
+    FrameLike,
     FrameSource,
     GestureClassifier,
     HandDetector,
@@ -75,6 +78,12 @@ SIGNS: Mapping[str, str] = {
 # One second smooths a 5 fps target into a readable figure; the UI timer (0.2 s) reads the latest.
 _FPS_WINDOW_S = 1.0
 
+# How long the feed's `published_count` may stand still before the Vision line calls the camera
+# stalled (specs/gesture-input.md, "Frames come from the embodiment"). A local daemon delivers 10
+# fps and a paced webcam `vision.fps`, so 3 s of nothing is a dead camera (the headless sim's absent
+# camera, an unplugged webcam), not a slow one. Cleared the moment a frame lands.
+_STALL_S = 3.0
+
 
 def snapshot_path(folder: str | PathLike[str], stage_name: str, now: datetime) -> Path:
     """``<folder>/snapshot_<stage name>_<YYYYMMDDHHMMSS>.jpg`` — the hand demo's naming (local
@@ -114,21 +123,91 @@ def sign_shown(old: str | None, new: str | None) -> bool:
     return new is not None and new != old
 
 
-class CameraSource(FrameSource, Protocol):
-    """A ``FrameSource`` that paces itself to the configured fps and reports its own health.
+class CameraFeed(Protocol):
+    """A latest-value frame slot the hand stage samples, with its lifecycle and its health.
 
     What this module requires of the camera the embodiment hands it (specs/gesture-input.md,
-    "Frames come from the embodiment"): the library's ``FrameSource`` protocol — ``open``/``read``/
-    ``close``/``fps`` — plus ``capture_error``, so the Vision line can say *why* frames stopped.
-    Every implementation obeys the same three rules: it paces itself to ``fps``; a missing frame is
-    not the end of the stream (only ``close()`` makes ``read()`` return ``None``); and a failing
-    read is recorded in ``capture_error`` and retried, never fatal.
+    "Frames come from the embodiment"): the shape the library's stages sample — ``latest()``
+    returning items carrying ``frame_id``, ``ts`` and a BGR ``image`` (``Upstream[FrameLike]``) —
+    plus ``published_count`` (the achieved-rate counter), ``capture_error`` (the feed's own failure,
+    when it has one to report) and ``open``/``close``, the module's only calls into the feed's
+    lifecycle: ``start()`` opens it before the stages start, ``stop()`` closes it after they are
+    joined. A feed the embodiment owns end to end (the robot's, alive for the whole session) makes
+    both no-ops; a feed built for this module (a webcam's provider) starts and stops its capture
+    thread there. The vocabulary is deliberately ``open``/``close``, not ``start``/``stop``: the
+    bridge's own ``api.camera`` must never be stopped by this module (it would blind the bridge's
+    face detection), and not matching its surface keeps an adapter in between.
+    """
+
+    def open(self) -> None:
+        """Begin publishing (or nothing to do)."""
+        ...
+
+    def close(self) -> None:
+        """Stop publishing (or nothing to do)."""
+        ...
+
+    def latest(self) -> FrameLike | None:
+        """The newest frame, or ``None`` before the first (and, for a feed that resets, after)."""
+        ...
+
+    @property
+    def published_count(self) -> int:
+        """Frames published, ever — increments exactly once per published frame."""
+        ...
+
+    @property
+    def capture_error(self) -> str | None:
+        """The feed's own failure; ``None`` while healthy, or when it has none to report."""
+        ...
+
+
+class CameraSource(FrameSource, Protocol):
+    """A ``FrameSource`` that paces itself to the configured fps and reports its own health — what
+    ``StreamFeed`` wraps for a camera that is a source rather than a slot (the webcam).
+
+    The library's ``FrameSource`` protocol — ``open``/``read``/``close``/``fps`` — plus
+    ``capture_error``, so the Vision line can say *why* frames stopped. Every implementation obeys
+    the same three rules: it paces itself to ``fps``; a missing frame is not the end of the stream
+    (only ``close()`` makes ``read()`` return ``None`` — the provider would otherwise end its loop
+    for good); and a failing read is recorded in ``capture_error`` and retried, never fatal.
     """
 
     @property
     def capture_error(self) -> str | None:
         """Why the last read failed; ``None`` while healthy (or before the first read)."""
         ...
+
+
+class StreamFeed:
+    """A ``CameraSource`` as a ``CameraFeed``: the library's ``StreamProvider`` (no mirror — the
+    classifier sees the frame as captured) reading the source on its capture thread and publishing
+    the newest ``Frame``. ``open()``/``close()`` start and stop the provider, which opens and closes
+    the source; ``latest()`` and ``published_count`` are the provider's; ``capture_error`` the
+    source's. The computer embodiment hands its webcam over through this (specs/gesture-input.md,
+    "``StreamFeed``"); the robot needs none — the bridge already publishes a slot.
+    """
+
+    def __init__(self, source: CameraSource) -> None:
+        self._source = source
+        self._provider = StreamProvider(source, mirror=False)
+
+    def open(self) -> None:
+        self._provider.start()
+
+    def close(self) -> None:
+        self._provider.stop()
+
+    def latest(self) -> FrameLike | None:
+        return self._provider.latest()
+
+    @property
+    def published_count(self) -> int:
+        return self._provider.published_count
+
+    @property
+    def capture_error(self) -> str | None:
+        return self._source.capture_error
 
 
 class HoldFilter:
@@ -201,8 +280,9 @@ class GestureInput:
     """Runs the hand + gesture pipeline over the embodiment's camera and delivers each hand's sign
     changes.
 
-    Graph: ``CameraSource → StreamProvider → HandStage → GestureClassifier``, every stage at
-    ``fps``, plus a watcher thread (also at ``fps``) that reduces each new classifier result to one
+    Graph: ``CameraFeed → HandStage → GestureClassifier``, the feed sampled directly by the hand
+    stage (the robot's at the daemon's rate, a webcam's ``StreamFeed`` paced at ``fps``), both
+    stages at ``fps``, plus a watcher thread (also at ``fps``) that reduces each new classifier result to one
     value per hand slot — ``SIGNS[label]`` for a validated, mapped label, else ``None`` — runs it
     through that slot's ``HoldFilter`` (the value must hold, unbroken, for ``hold_s`` seconds —
     ``0`` delivers at once) and calls ``on_gesture(hand, sign)`` only for the hands whose held value
@@ -215,12 +295,16 @@ class GestureInput:
     module adds no second one. ``max_hands`` is always passed to the hand stage (never the library's
     default), so what the camera looks at is the app's setting, and it is also how many hands are
     reported. ``start``/``stop`` are synchronous and idempotent (threads, like the
-    library's ``Pipeline``); ``status()`` is the cheap read the UI timer polls.
+    library's ``Pipeline``): ``start`` opens the feed, then starts the stages and the watcher;
+    ``stop`` joins the watcher, stops the stages, then closes the feed. ``status()`` is the cheap
+    read the UI timer polls; its ``capture_error`` is the feed's own error when it has one, else a
+    stall line once the feed has published nothing for ``stall_s`` (a dead camera is visible even
+    on a feed, like the robot's, that has no error of its own to report).
     """
 
     def __init__(
         self,
-        source: CameraSource,
+        feed: CameraFeed,
         *,
         on_gesture: OnGesture,
         threshold: float = 0.55,
@@ -229,10 +313,14 @@ class GestureInput:
         hold_s: float = 0.5,
         device: str | None = None,
         models: GestureModels | None = None,
+        stall_s: float = _STALL_S,
         fps_window_s: float = _FPS_WINDOW_S,
     ) -> None:
+        if stall_s <= 0:
+            raise ValueError("stall_s must be > 0")
         models = models if models is not None else GestureModels()
         self._hold_s = hold_s
+        self._stall_s = stall_s
         # One hold per hand slot (hand n is `_holds[n - 1]`); each owns its last delivered value.
         self._holds = [HoldFilter(hold_s) for _ in range(max_hands)]
         self._on_gesture = on_gesture
@@ -243,10 +331,9 @@ class GestureInput:
         self._stream_meter = _FpsMeter()
         self._hand_meter = _FpsMeter()
         self._classifier_meter = _FpsMeter()
-        self._source = source
-        self._provider = StreamProvider(self._source, mirror=False)
+        self._feed = feed
         self._hands = HandStage(
-            self._provider,
+            feed,
             target_fps=fps,
             max_hands=max_hands,
             detector=models.detector,
@@ -258,18 +345,27 @@ class GestureInput:
             classifier=models.classifier,
             device=device,
         )
-        self._pipeline = Pipeline([self._provider, self._hands, self._gestures])
+        self._pipeline = Pipeline([self._hands, self._gestures])
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        # The feed's count and the time it last advanced (watcher-maintained), for the stall line.
+        self._feed_count = 0
+        self._feed_advanced_at = 0.0
         # Every hand of the latest result, in the library's slot order: (validated label, top score).
         self._seen: tuple[tuple[str | None, float], ...] = ()
 
     def start(self) -> None:
-        """Start the pipeline (upstream-first) and the watcher. A second call is a no-op."""
+        """Open the feed, start the stages (upstream-first) and the watcher. A second call is a
+        no-op."""
         if self._thread is not None:
             return
         self._stop_event.clear()
+        self._feed.open()
+        with self._lock:
+            # The stall clock starts now: a feed that never publishes reads stalled after stall_s.
+            self._feed_count = self._feed.published_count
+            self._feed_advanced_at = time.monotonic()
         self._pipeline.start()
         self._thread = threading.Thread(
             target=self._watch, name="gesture-input-watcher", daemon=True
@@ -277,13 +373,15 @@ class GestureInput:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop the watcher, then the pipeline (downstream-first); joins every thread. Idempotent."""
+        """Stop the watcher, then the stages (downstream-first), then close the feed; joins every
+        thread. Idempotent."""
         if self._thread is None:
             return
         self._stop_event.set()
         self._thread.join()
         self._thread = None
         self._pipeline.stop()
+        self._feed.close()
 
     @property
     def running(self) -> bool:
@@ -293,14 +391,23 @@ class GestureInput:
         """What the Vision line renders: every hand's last delivered sign (past the hold), each hand's
         latest label/score (slot order — entry *i* stays the same physical hand while it is in
         view), the hand cap, the hold, the target rate and each node's achieved rate — the camera stream, the hand stage, the
-        classifier (``None`` until a full sampling window has passed) — the camera's capture health,
+        classifier (``None`` until a full sampling window has passed) — the camera's health (the
+        feed's own error, else the stall line while it has published nothing for ``stall_s``),
         and the last stage error (the classifier's first — a failed model load lands there),
         ``None`` when healthy."""
         with self._lock:
             signs, seen = [hold.value for hold in self._holds], self._seen
             stream_fps = self._stream_meter.fps
             hand_fps, classifier_fps = self._hand_meter.fps, self._classifier_meter.fps
+            advanced_at = self._feed_advanced_at
         error = self._gestures.last_error or self._hands.last_error
+        capture_error = self._feed.capture_error
+        if (
+            capture_error is None
+            and self.running
+            and time.monotonic() - advanced_at >= self._stall_s
+        ):
+            capture_error = f"no camera frame for {self._stall_s:g} s"
         return {
             "running": self.running,
             "signs": signs,
@@ -313,7 +420,7 @@ class GestureInput:
             "stream_fps": stream_fps,
             "hand_fps": hand_fps,
             "classifier_fps": classifier_fps,
-            "capture_error": self._source.capture_error,
+            "capture_error": capture_error,
             "error": str(error) if error is not None else None,
         }
 
@@ -362,10 +469,14 @@ class GestureInput:
         next_sample = time.monotonic()
         while not self._stop_event.is_set():
             t0 = time.monotonic()
+            feed_count = self._feed.published_count
+            if feed_count != self._feed_count:
+                with self._lock:
+                    self._feed_count, self._feed_advanced_at = feed_count, t0
             if t0 >= next_sample:
                 # The achieved-rate meters, sampled once per window (like the demo's 1 s timer).
                 with self._lock:
-                    self._stream_meter.sample(self._provider.published_count)
+                    self._stream_meter.sample(feed_count)
                     self._hand_meter.sample(self._hands.published_count)
                     self._classifier_meter.sample(self._gestures.published_count)
                 next_sample = t0 + self._fps_window_s

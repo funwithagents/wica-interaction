@@ -790,8 +790,9 @@ def _vision_system(
     )
 
 
-def _camera_reads(embodiment: FakeEmbodiment) -> int:
-    return sum(camera.reads for camera in embodiment.cameras)
+def _camera_frames(embodiment: FakeEmbodiment) -> int:
+    """Frames the body's camera feed(s) published so far."""
+    return sum(camera.published_count for camera in embodiment.cameras)
 
 
 def _sign_steps(reactions: ReactionLog, hand: int) -> int:
@@ -832,8 +833,8 @@ def test_a_sign_wakes_the_agent_and_is_gone_from_the_prompt_after_its_ttl() -> N
 
         # Still shown, many frames later: no second step for it (the `say` finishing re-triggers one
         # step of its own — WICA's completion re-trigger — which is labelled by the say, not a sign).
-        reads_then = _camera_reads(embodiment)
-        assert _wait_until(lambda: _camera_reads(embodiment) >= reads_then + 10)
+        frames_then = _camera_frames(embodiment)
+        assert _wait_until(lambda: _camera_frames(embodiment) >= frames_then + 10)
         assert _sign_steps(reactions, 1) == 1
 
         # Expired: the World cleared the sign on its own (the hand is still up — the gesture input
@@ -846,8 +847,8 @@ def test_a_sign_wakes_the_agent_and_is_gone_from_the_prompt_after_its_ttl() -> N
         # Gone: the entry updates (silently), the agent is not woken.
         classifier.fist = 0.1
         assert _wait_until(lambda: system.gesture.status()["signs"][0] is None)  # type: ignore[union-attr]
-        reads_then = _camera_reads(embodiment)
-        assert _wait_until(lambda: _camera_reads(embodiment) >= reads_then + 10)
+        frames_then = _camera_frames(embodiment)
+        assert _wait_until(lambda: _camera_frames(embodiment) >= frames_then + 10)
         assert _sign_steps(reactions, 1) == 1
         assert not any("no sign" in label for label, _ in reactions.snapshot().choices)
         assert embodiment.said == ["okay, stopping"]
@@ -928,7 +929,7 @@ def test_vision_max_hands_fps_and_hold_reach_the_gesture_input() -> None:
         assert system.gesture.status()["target_fps"] == 20.0
         assert system.gesture.status()["hold_s"] == 0.25
         # The camera the body handed over was asked for the same rate.
-        assert [camera.fps() for camera in embodiment.cameras] == [20.0]
+        assert [camera.fps for camera in embodiment.cameras] == [20.0]
     finally:
         _shutdown(system)
 
@@ -958,11 +959,13 @@ def test_shutdown_stops_vision_before_the_body_exits() -> None:
         _wire(system)
         _start(system)
         assert system.gesture is not None and system.gesture.running
-        assert _wait_until(lambda: _camera_reads(embodiment) > 0)
+        assert _wait_until(lambda: _camera_frames(embodiment) > 0)
     finally:
         _shutdown(system)
     assert system.gesture is not None and not system.gesture.running
     assert embodiment.exited
-    reads_then = _camera_reads(embodiment)
+    frames_then = _camera_frames(embodiment)
     time.sleep(0.05)
-    assert _camera_reads(embodiment) == reads_then  # nothing reads the released camera
+    assert (
+        _camera_frames(embodiment) == frames_then
+    )  # the released camera publishes nothing

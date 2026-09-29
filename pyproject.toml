@@ -8,8 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 # What every embodiment needs: the agent + its Gradio observability panels, speech in, the vision
-# plumbing, the page. `vision-modules` core is numpy + opencv only (its heavy models are the
-# `vision` extra below); `numpy` is imported directly by gesture_input.py.
+# plumbing, the page. `vision-modules` core is numpy only — the stream/pipeline runtime and the
+# `FrameLike` protocol gesture_input.py imports; OpenCV and its heavy models are the `vision`
+# extra below. `numpy` is imported directly by gesture_input.py.
 dependencies = [
     "wica[gradio]",
     "asr-engine",
@@ -27,8 +28,10 @@ computer = ["tts-engine"]
 audio-processing = ["aec-audio-processing>=1.0.1", "samplerate>=0.2.4"]
 # The Reachy Mini embodiment (pulls the upstream reachy-mini SDK through the bridge).
 reachy = ["reachy-mini-bridge"]
-# The hand-sign input: MediaPipe + the torch/transformers HaGRID classifier, either embodiment.
-vision = ["vision-modules[hand]"]
+# The hand-sign input, either embodiment: MediaPipe + the torch/transformers HaGRID classifier, and
+# the library's `opencv` extra for its webcam source (the computer's camera) and its snapshot
+# writer (the Vision snapshot buttons) — both imported lazily, only when that feature runs.
+vision = ["vision-modules[hand,opencv]"]
 # The agent providers, one extra per WICA provider extra, all interchangeable: a config selects
 # one by its `provider` name, either embodiment.
 wica-anthropic = ["wica[anthropic]"]

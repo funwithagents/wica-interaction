@@ -165,3 +165,37 @@ def test_a_computer_section_is_rejected(tmp_path: Path) -> None:
     config["tts"] = {"engine": {}}
     with pytest.raises(ValueError, match="unknown section.*'tts'"):
         load_config(_write(tmp_path, config))
+
+
+# --- Face detection and head tracking: the bridge's `faces` block ---------------------------------
+
+
+def test_a_faces_block_reaches_the_bridge_config(tmp_path: Path) -> None:
+    config = _composed()
+    config["reachy"]["faces"] = {"detector": "yunet", "detection": True}
+    config["reachy"]["motion"] = {"tracking": True}
+    cfg = load_config(_write(tmp_path, config))
+    assert cfg.reachy.faces.detector == "yunet"
+    assert cfg.reachy.faces.detection is True
+    assert cfg.reachy.motion.tracking is True
+
+
+def test_tracking_without_a_detector_is_the_bridges_config_error(
+    tmp_path: Path,
+) -> None:
+    """The bridge's head tracker needs a detector (detection is opt-in since 2026-09-29): tracking
+    on with no `faces.detector` is rejected at load, naming both fields, as a ValueError."""
+    config = _composed()
+    config["reachy"]["motion"] = {"tracking": True}
+    with pytest.raises(ValueError, match="motion.tracking.*faces.detector"):
+        load_config(_write(tmp_path, config))
+
+
+@pytest.mark.parametrize(
+    "template", ["config.reachy.example.json", "config.reachy.french.example.json"]
+)
+def test_the_committed_templates_load(template: str) -> None:
+    """The shipped templates must open: they turn tracking on, so they must name a detector."""
+    cfg = load_config(str(Path(__file__).resolve().parents[2] / template))
+    assert cfg.reachy.faces.detector == "yunet"
+    assert cfg.reachy.motion.tracking is True

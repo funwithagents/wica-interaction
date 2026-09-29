@@ -160,8 +160,9 @@ def test_vision_line_shows_hand_label_score_and_signs() -> None:
     no_hand = tick_vision(_system_with_gesture(_Gesture()))
     assert "running" in no_hand and "signs: #1 —, #2 —" in no_hand.replace("**", "")
     assert "hands (max 2): no hand" in no_hand.replace("**", "")
-    # Before the first sampling window the achieved rates are a placeholder, the target shows.
-    assert "stream: — fps (poll 5)" in no_hand.replace("**", "")
+    # Before the first sampling window the achieved rates are a placeholder; the stages show their
+    # target, the camera (which runs at its own rate) none.
+    assert "camera: — fps ·" in no_hand.replace("**", "")
     assert "hand stage: — fps (target 5)" in no_hand.replace("**", "")
     assert "classifier: — fps (target 5)" in no_hand.replace("**", "")
 
@@ -170,7 +171,7 @@ def test_vision_line_shows_hand_label_score_and_signs() -> None:
             _Gesture(stream_fps=5.02, hand_fps=4.93, classifier_fps=2.5, target_fps=5.0)
         )
     ).replace("**", "")
-    assert "stream: 5.0 fps (poll 5)" in rates
+    assert "camera: 5.0 fps ·" in rates
     assert "hand stage: 4.9 fps (target 5)" in rates
     assert "classifier: 2.5 fps (target 5)" in rates
 
@@ -182,6 +183,15 @@ def test_vision_line_shows_hand_label_score_and_signs() -> None:
         )
     ).replace("**", "")
     assert "#1 fist (0.87)" in signing and "signs: #1 stop, #2 —" in signing
+    # The camera's rate is its own (the robot's feed runs at the daemon's rate, not the target);
+    # the stages show theirs next to the configured target.
+    rates = tick_vision(
+        _system_with_gesture(
+            _Gesture(stream_fps=10.0, hand_fps=4.9, classifier_fps=4.8)
+        )
+    ).replace("**", "")
+    assert "camera: 10.0 fps ·" in rates and "poll" not in rates
+    assert "hand stage: 4.9 fps (target 5)" in rates
 
     # A hand whose top class missed the threshold: the raw score shows, unvalidated, no sign.
     weak = tick_vision(
@@ -215,6 +225,11 @@ def test_vision_line_flags_camera_and_stage_errors() -> None:
         _system_with_gesture(_Gesture(capture_error="camera read failed: no camera"))
     )
     assert "camera" in camera and "no camera" in camera
+
+    stalled = tick_vision(
+        _system_with_gesture(_Gesture(capture_error="no camera frame for 3 s"))
+    )
+    assert "⚠️" in stalled and "no camera frame for 3 s" in stalled
 
     stage = tick_vision(_system_with_gesture(_Gesture(error="model download failed")))
     assert "error" in stage and "model download failed" in stage

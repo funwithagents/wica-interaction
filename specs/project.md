@@ -22,11 +22,11 @@ Structure and tooling for the WICA Interaction project itself: Python version, d
 
   | Extra | Pulls | For |
   |---|---|---|
-  | *(base)* | `wica[gradio]`, `asr-engine`, `vision-modules` (its core: numpy + opencv, imported by `gesture_input.py`; the models are the `vision` extra), `gradio>=6`, `numpy` | the lifecycle, the UI, speech in, the vision plumbing |
+  | *(base)* | `wica[gradio]`, `asr-engine`, `vision-modules` (its core: **numpy only** — the stream, pipeline and `FrameLike` runtime `gesture_input.py` imports; OpenCV and the models are the `vision` extra), `gradio>=6`, `numpy` | the lifecycle, the UI, speech in, the vision plumbing |
   | `computer` | `tts-engine` | the computer embodiment's voice |
   | `audio-processing` | `aec-audio-processing`, `samplerate` | the computer's echo cancellation / noise suppression |
   | `reachy` | `reachy-mini-bridge` | the Reachy Mini embodiment (pulls the upstream `reachy-mini` SDK) |
-  | `vision` | `vision-modules[hand]` | the hand-sign input (MediaPipe + the torch/transformers classifier), either embodiment |
+  | `vision` | `vision-modules[hand,opencv]` | the hand-sign input (MediaPipe + the torch/transformers classifier), either embodiment — with the library's `opencv` extra, which its `OpenCVSource` (the computer's webcam) and its snapshot writer (both embodiments' Vision snapshot buttons) import lazily; the library made OpenCV optional on 2026-09-29, and nothing here imports `cv2` outside the `vision` feature (the tests that do read fixtures with it come through `dev` → `all`) |
   | `wica-anthropic` | `wica[anthropic]` | the Anthropic agent provider |
   | `wica-huggingface-hub` | `wica[huggingface-hub]` | the Hugging Face agent provider (Inference Providers hub) |
   | `wica-openai` | `wica[openai]` | the OpenAI agent provider |

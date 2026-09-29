@@ -85,7 +85,7 @@ The members:
 - **`voice`** — the bound `say` below, **always**: with no engine it stays wired and answers with the TTS error, the same contract as the robot's ([embodiment.md](embodiment.md), "A voice that failed to build stays wired").
 - **`mic`** — `coordinator.source` when a coordinator was built (the processed mic, whatever features are on), else `None`: the ASR engine opens its default `AudioCapture` on `asr.engine.audio.device`.
 - **`mic_error`** — always `None`; a local capture that dies raises inside the engine, which reports it its own way.
-- **`camera(fps=…)`** — a `WebcamSource(config.camera.device, fps=fps)`, below.
+- **`camera(fps=…)`** — a `StreamFeed(WebcamSource(config.camera.device, fps=fps))`: the paced webcam source below, behind the gesture module's own `StreamProvider` adapter ([gesture-input.md](gesture-input.md), "`StreamFeed`"), so the hand stage samples a latest-value slot here as it does on the robot. `open()` starts the provider (which opens the webcam), `close()` stops it; `capture_error` is the source's.
 - **`commands()`** — `()`; the computer has nothing to act with.
 - **`prompt_addendum`** — `""`.
 - **`exit()`** — nothing to release: stopping the ASR bridge stops the injected source (capture + pump), and the sink's player drains at the end of every `say` ([audio-processing.md](audio-processing.md), "Teardown").
@@ -105,7 +105,7 @@ Delegates to [`TTSTools(engine).say`](../../tts-engine/specs/tools.md), reusing 
 
 ### `WebcamSource`
 
-The `CameraSource` ([gesture-input.md](gesture-input.md), "Frames come from the embodiment") over `vision-modules`' own `OpenCVSource` (`cv2.VideoCapture` behind the `FrameSource` protocol):
+The `CameraSource` ([gesture-input.md](gesture-input.md), "`StreamFeed`") over `vision-modules`' own `OpenCVSource` (`cv2.VideoCapture` behind the `FrameSource` protocol; OpenCV is the library's `opencv` extra, pulled by the app's `vision` extra — [project.md](project.md) — and imported only when the device is opened):
 
 ```python
 class WebcamSource:
@@ -122,7 +122,7 @@ class WebcamSource:
     def capture_error(self) -> str | None: ...
 ```
 
-- **It paces itself** to `fps`, exactly as the robot source does: the `StreamProvider` calls `read()` back-to-back, and a webcam delivering 30 fps into a 5 fps hand stage would be wasted captures.
+- **It paces itself** to `fps`: the `StreamProvider` calls `read()` back-to-back, and a webcam delivering 30 fps into a 5 fps hand stage would be wasted captures. (The robot's camera is a feed at the daemon's own rate and paces nothing — [reachy-embodiment.md](reachy-embodiment.md).)
 - **A device that cannot be opened is visible, not fatal.** `OpenCVSource.open()` raises when the device is missing; `WebcamSource` catches it into `capture_error` (`"camera open failed: …"`) and `read()` keeps retrying the open at the poll rate, so an unplugged webcam shows on the Vision line and heals when plugged in. A failed `read()` (the device went away) is recorded the same way and retried; only `close()` makes `read()` return `None`. The provider never `ended`s on its own.
 - **An open never outlives the source.** The retry-open runs on the capture thread while `close()` runs on the main one; the opened flag flips under the source's lock, and an open that completes after `close()` is closed again rather than kept.
 - No mirroring: the classifier sees the frame as captured. (The hand demo mirrors only for display.)
@@ -154,7 +154,7 @@ def main() -> None:
 - **Config:** `load_config` on a computer file yields the shared `AppConfig` plus `tts_engine`, `audio_processing`, `camera`; `tts` missing, `tts` without an `engine` block, a `camera` that is not an object or has an unknown key, a `reachy` section, each raise `ValueError` naming the file; `camera` absent ⇒ device `0`; the `audio_processing` cases are in [audio-processing.md](audio-processing.md).
 - **Voice:** with an injected fake `TTSEngine`, `say("hello")` reaches the engine once and returns `"OK"`; `say("")` returns the empty-text error without calling it; a `TTSError` maps to `"TTS error: …"`.
 - **Enter:** with a fake engine, `voice` is set, `mic` is `None` with processing off; a `coordinator_factory` returning a fake coordinator makes `mic` its `source`, and with echo cancellation on the engine is built with its `sink` and `bind_far_rate` is called with the engine's rate; a factory raising `ImportError` degrades to `Audio processing: …` in `missing` with a still-working voice; a `TTSEngine` build raising `ConfigError`, `ImportError` or any other exception degrades to `TTS: …` with `voice` still the `say`, which returns the TTS error naming the cause; `commands()` is empty and `prompt_addendum` is `""`.
-- **Webcam:** `WebcamSource` over an injected fake `OpenCVSource`-like object: `read()` paces to `fps`; an `open()` that raises sets `capture_error` and a later success clears it; `close()` makes `read()` return `None` promptly; an open that completes after `close()` is released.
+- **Webcam:** `WebcamSource` over an injected fake `OpenCVSource`-like object: `read()` paces to `fps`; an `open()` that raises sets `capture_error` and a later success clears it; `close()` makes `read()` return `None` promptly; an open that completes after `close()` is released. `camera(fps=…)` returns a `StreamFeed` whose `capture_error` is that webcam's (an unopenable device shows through it) and whose `open()` / `close()` open and close the device.
 
 A whole-loop live test (real mic + speakers + provider, asserting the agent replies and does not self-trigger) stays deferred to `tests-e2e/`.
 

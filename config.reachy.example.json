@@ -41,6 +41,7 @@
       }
     },
     "audio": { "xvf3800": null },
+    "faces": { "detector": "yunet", "detection": true },
     "motion": {
       "presence": true,
       "idle": "breathing",

@@ -259,6 +259,45 @@ def test_a_synthesis_failure_is_mapped_not_raised() -> None:
     assert engine.said == ["hi"]  # it did attempt to speak before failing
 
 
+# --- camera(): the webcam behind a StreamFeed ----------------------------------------------------
+
+
+def test_camera_is_the_webcam_behind_a_stream_feed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`camera(fps=…)` hands the gesture input a feed: `open()` opens the device (through the
+    module's provider), frames then publish at the paced rate, `close()` releases the device, and
+    `capture_error` is the webcam's own (an unopenable device shows through it)."""
+    inner = FakeOpenCVSource(_FRAME)
+    monkeypatch.setattr(embodiment_module, "OpenCVSource", lambda _device: inner)
+    embodiment = _entered(_config(camera=2), engine=FakeTTSEngine())
+    feed = embodiment.camera(fps=100.0)
+    assert inner.opens == 0  # nothing opened until the gesture input opens the feed
+    assert feed.latest() is None and feed.capture_error is None
+    feed.open()
+    try:
+        assert inner.opens == 1
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and feed.published_count < 3:
+            time.sleep(0.005)
+        assert feed.published_count >= 3
+        frame = feed.latest()
+        assert frame is not None and frame.image is _FRAME
+    finally:
+        feed.close()
+    assert inner.closes == 1
+
+    # An unopenable device: the webcam's error is the feed's, and open() does not raise.
+    inner.raise_on_open = "device 2 not found"
+    failing = embodiment.camera(fps=100.0)
+    failing.open()
+    try:
+        assert failing.capture_error is not None
+        assert "device 2 not found" in failing.capture_error
+    finally:
+        failing.close()
+
+
 # --- WebcamSource ---------------------------------------------------------------------------------
 
 

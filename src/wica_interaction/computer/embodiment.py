@@ -35,16 +35,18 @@ from wica_interaction.computer.audio_processing import (
 )
 from wica_interaction.computer.config import ComputerConfig
 from wica_interaction.embodiment import Voice
-from wica_interaction.gesture_input import CameraSource
+from wica_interaction.gesture_input import CameraFeed, StreamFeed
 
 logger = logging.getLogger(__name__)
 
 
 class WebcamSource:
-    """The local webcam as a ``CameraSource``, over ``vision-modules``' own ``OpenCVSource``.
+    """The local webcam as a ``CameraSource``, over ``vision-modules``' own ``OpenCVSource`` (OpenCV
+    is the library's ``opencv`` extra, pulled by the app's ``vision`` extra and imported only when
+    the device is opened). The embodiment hands it to the gesture input behind a ``StreamFeed``.
 
-    Obeys the three rules every camera source does (specs/gesture-input.md, "Frames come from the
-    embodiment"): it paces itself to ``fps`` (the provider calls ``read()`` back-to-back, and a
+    Obeys the three rules every camera source does (specs/gesture-input.md, "``StreamFeed``"): it
+    paces itself to ``fps`` (the provider calls ``read()`` back-to-back, and a
     webcam delivering 30 fps into a 5 fps hand stage would be wasted captures); a device that cannot
     be opened — or a read that fails — is recorded in ``capture_error`` and retried at the poll rate,
     so an unplugged webcam shows on the Vision line and heals when plugged back in; and only
@@ -247,8 +249,15 @@ class ComputerEmbodiment:
         own way."""
         return None
 
-    def camera(self, *, fps: float) -> CameraSource:
-        return WebcamSource(self._config.camera.device, fps=fps)
+    def camera(self, *, fps: float) -> CameraFeed:
+        """The webcam, paced at ``fps``, behind the gesture module's ``StreamProvider`` adapter: the
+        hand stage samples a latest-value slot here as it does on the robot; ``open()`` opens the
+        device, ``close()`` releases it, ``capture_error`` is the webcam's."""
+        # The opener is named here, not left to the default, so the module attribute is what is
+        # resolved at call time (a test swaps it for a fake device).
+        return StreamFeed(
+            WebcamSource(self._config.camera.device, fps=fps, opener=OpenCVSource)
+        )
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:
         """Empty: the computer has nothing to act with beyond speaking."""

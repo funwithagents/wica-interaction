@@ -1,36 +1,33 @@
 """Functional tests for the Reachy Mini embodiment (specs/reachy-embodiment.md, "Testing").
 
 Everything runs against a fake `ReachyMiniApi` — no daemon, no hardware, no cloud: the protocol
-members after `enter()`, the non-raising `say`, and the two sources the embodiment hands the rest of
-the app (`RobotMicSource` for ASR, `RobotCameraSource` for vision).
+members after `enter()`, the non-raising `say`, and the two feeds the embodiment hands the rest of
+the app (`RobotMicSource` for ASR, `RobotCameraFeed` for vision — the bridge's own `api.camera`
+behind an adapter that never touches its lifecycle).
 """
 
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Callable, Coroutine
 from typing import Any, cast
 
-import numpy as np
 import pytest
 from reachy_mini_bridge.api import ReachyMiniApi
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica import Command
 
 from tests.reachy.fakes import FakeReachyMiniApi
+from tests.test_gesture_input import ScriptedClassifier, ScriptedDetector, _scores
 from wica_interaction.config import AppConfig
+from wica_interaction.gesture_input import GestureInput, GestureModels
 from wica_interaction.reachy.config import ReachyConfig
 from wica_interaction.reachy.embodiment import (
     ReachyEmbodiment,
-    RobotCameraSource,
+    RobotCameraFeed,
     RobotMicSource,
 )
-
-_FPS = 100.0
-
-_HAND_FRAME = np.full((48, 64, 3), 200, dtype=np.uint8)
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -64,7 +61,7 @@ def test_enter_brings_the_robot_up_and_wires_every_member() -> None:
     assert embodiment.voice is not None
     assert isinstance(embodiment.mic, RobotMicSource)
     assert embodiment.mic_error is None
-    assert isinstance(embodiment.camera(fps=5.0), RobotCameraSource)
+    assert isinstance(embodiment.camera(fps=5.0), RobotCameraFeed)
     assert embodiment.missing == []
 
 
@@ -438,86 +435,61 @@ def test_mic_source_is_restartable_with_a_fresh_queue() -> None:
     assert chunks == [b"1", b"2", b"1", b"2"]
 
 
-# --- RobotCameraSource ----------------------------------------------------------------------------
+# --- RobotCameraFeed ------------------------------------------------------------------------------
 
 
-class FakeCameraApi:
-    """The one verb `RobotCameraSource` calls: `get_camera_frame()`, served from a settable `frame`
-    (`None` ⇒ "nothing buffered yet"); `fail_with` makes it raise instead. Counts the polls."""
-
-    def __init__(self, frame: np.ndarray | None = _HAND_FRAME) -> None:
-        self.frame: np.ndarray | None = frame
-        self.fail_with: str | None = None
-        self.polls = 0
-
-    async def get_camera_frame(self) -> np.ndarray | None:
-        self.polls += 1
-        if self.fail_with is not None:
-            raise RuntimeError(self.fail_with)
-        return self.frame
-
-
-@pytest.fixture
-def loop() -> Iterator[asyncio.AbstractEventLoop]:
-    """A running loop on its own thread — the app loop the camera source hops onto."""
-    loop = asyncio.new_event_loop()
-    thread = threading.Thread(target=loop.run_forever, daemon=True)
-    thread.start()
-    yield loop
-    loop.call_soon_threadsafe(loop.stop)
-    thread.join(timeout=2.0)
-    loop.close()
+def test_camera_feed_forwards_the_bridges_feed_without_copying() -> None:
+    """`latest()` is the bridge's very frame object (shared, read-only, the one its detector read),
+    `published_count` its count; `None` before the session's first frame."""
+    api = FakeReachyMiniApi()
+    embodiment = _entered(api)
+    feed = embodiment.camera(fps=5.0)
+    assert feed.latest() is None and feed.published_count == 0
+    published = api.camera.publish()
+    assert feed.latest() is published  # the same object, not a copy
+    assert feed.published_count == 1
+    api.camera.publish()
+    latest = feed.latest()
+    assert latest is not None and latest.frame_id == 2 and feed.published_count == 2
+    assert latest.image is api.camera.frame
+    assert feed.capture_error is None  # the feed has no error of its own to report
 
 
-def test_camera_source_skips_none_frames_instead_of_ending(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
-    """ "Nothing buffered yet" is not the end of the stream: read() waits for a real frame."""
-    api = FakeCameraApi(frame=None)
-    source = RobotCameraSource(cast(ReachyMiniApi, api), loop, fps=_FPS)
-    threading.Timer(0.05, lambda: setattr(api, "frame", _HAND_FRAME)).start()
-    frame = source.read()
-    assert frame is not None and frame is _HAND_FRAME
-    assert api.polls >= 2  # it polled through the None(s) rather than returning one
+def test_camera_feed_lifecycle_never_touches_the_bridges_feed() -> None:
+    """`open()`/`close()` are no-ops: the feed is the session's, and stopping it would blind the
+    bridge's face detection."""
+    api = FakeReachyMiniApi()
+    feed = RobotCameraFeed(cast(ReachyMiniApi, api))
+    feed.open()
+    feed.close()
+    feed.open()
+    assert (api.camera.starts, api.camera.stops) == (0, 0)
 
 
-def test_camera_source_reports_and_recovers_from_a_failing_poll(
-    loop: asyncio.AbstractEventLoop,
-) -> None:
-    api = FakeCameraApi()
-    api.fail_with = "no camera"
-    source = RobotCameraSource(cast(ReachyMiniApi, api), loop, fps=_FPS)
-    threading.Timer(0.05, lambda: setattr(api, "fail_with", None)).start()
-    frame = (
-        source.read()
-    )  # blocks through the failures, returns once the verb works again
-    assert frame is _HAND_FRAME
-    assert source.capture_error is None  # cleared by the success
-    api.fail_with = "camera gone"
-    threading.Timer(0.05, source.close).start()
-    assert (
-        source.read() is None
-    )  # closed while failing ⇒ None, and the reason stays visible
-    assert source.capture_error == "camera read failed: camera gone"
-
-
-def test_camera_source_close_unblocks_read(loop: asyncio.AbstractEventLoop) -> None:
-    source = RobotCameraSource(
-        cast(ReachyMiniApi, FakeCameraApi(frame=None)), loop, fps=1.0
+def test_a_sign_on_the_robots_feed_reaches_the_gesture_input() -> None:
+    """The robot path end to end: the bridge's feed → `RobotCameraFeed` → the real hand stage and
+    classifier (scripted backends) → a delivered sign. No `StreamProvider`, no loop hop."""
+    api = FakeReachyMiniApi()
+    embodiment = _entered(api)
+    deliveries: list[tuple[int, str | None]] = []
+    gesture = GestureInput(
+        embodiment.camera(fps=100.0),
+        on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
+        fps=100.0,
+        hold_s=0.0,
+        models=GestureModels(
+            detector=ScriptedDetector(),
+            classifier=ScriptedClassifier(_scores("fist", 0.9)),
+        ),
     )
-    threading.Timer(0.05, source.close).start()
-    t0 = time.monotonic()
-    assert source.read() is None
-    assert time.monotonic() - t0 < 0.5  # did not wait out the 1 s interval
-
-
-def test_camera_source_paces_polls_to_fps(loop: asyncio.AbstractEventLoop) -> None:
-    api = FakeCameraApi()
-    source = RobotCameraSource(cast(ReachyMiniApi, api), loop, fps=50.0)
-    assert source.fps() == 50.0  # the protocol's nominal rate is the poll rate
-    t0 = time.monotonic()
-    for _ in range(6):
-        assert source.read() is not None
-    elapsed = time.monotonic() - t0
-    assert elapsed >= 5 * 0.02 * 0.9  # 6 reads span at least 5 intervals (with slack)
-    assert api.polls == 6
+    gesture.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and deliveries != [(1, "stop")]:
+            api.camera.publish()  # the bridge's reader thread, played by the test
+            time.sleep(0.01)
+        assert deliveries == [(1, "stop")]
+        assert gesture.status()["capture_error"] is None
+    finally:
+        gesture.stop()
+    assert (api.camera.starts, api.camera.stops) == (0, 0)
