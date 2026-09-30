@@ -167,16 +167,23 @@ def test_a_computer_section_is_rejected(tmp_path: Path) -> None:
         load_config(_write(tmp_path, config))
 
 
-# --- Face detection and head tracking: the bridge's `faces` block ---------------------------------
+# --- Face detection and head tracking: the bridge's `face_detection` block ------------------------
 
 
-def test_a_faces_block_reaches_the_bridge_config(tmp_path: Path) -> None:
+def test_a_face_detection_block_reaches_the_bridge_config(tmp_path: Path) -> None:
     config = _composed()
-    config["reachy"]["faces"] = {"detector": "yunet", "detection": True}
+    config["reachy"]["face_detection"] = {
+        "detector": "yunet",
+        "enabled": True,
+        "width": 640,
+        "target_fps": 5,
+    }
     config["reachy"]["motion"] = {"tracking": True}
     cfg = load_config(_write(tmp_path, config))
-    assert cfg.reachy.faces.detector == "yunet"
-    assert cfg.reachy.faces.detection is True
+    assert cfg.reachy.face_detection.detector == "yunet"
+    assert cfg.reachy.face_detection.enabled is True
+    assert cfg.reachy.face_detection.width == 640
+    assert cfg.reachy.face_detection.target_fps == 5
     assert cfg.reachy.motion.tracking is True
 
 
@@ -184,10 +191,10 @@ def test_tracking_without_a_detector_is_the_bridges_config_error(
     tmp_path: Path,
 ) -> None:
     """The bridge's head tracker needs a detector (detection is opt-in since 2026-09-29): tracking
-    on with no `faces.detector` is rejected at load, naming both fields, as a ValueError."""
+    on with no `face_detection.detector` is rejected at load, naming both fields, as a ValueError."""
     config = _composed()
     config["reachy"]["motion"] = {"tracking": True}
-    with pytest.raises(ValueError, match="motion.tracking.*faces.detector"):
+    with pytest.raises(ValueError, match="motion.tracking.*face_detection.detector"):
         load_config(_write(tmp_path, config))
 
 
@@ -197,5 +204,5 @@ def test_tracking_without_a_detector_is_the_bridges_config_error(
 def test_the_committed_templates_load(template: str) -> None:
     """The shipped templates must open: they turn tracking on, so they must name a detector."""
     cfg = load_config(str(Path(__file__).resolve().parents[2] / template))
-    assert cfg.reachy.faces.detector == "yunet"
+    assert cfg.reachy.face_detection.detector == "yunet"
     assert cfg.reachy.motion.tracking is True

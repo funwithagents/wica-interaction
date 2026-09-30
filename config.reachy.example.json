@@ -1,10 +1,13 @@
 {
   "wica": {
     "agent": {
-      "provider": "anthropic",
-      "model": "claude-sonnet-5",
-      "api_key_env": "WICA_ANTHROPIC_API_KEY",
-      "system_prompt_file": "prompts/reachy.md"
+      "provider": "huggingface-hub",
+      "model": "openai/gpt-oss-120b",
+      "hf_provider": "cerebras",
+      "api_key_env": "WICA_HF_TOKEN",
+      "system_prompt_file": "prompts/reachy.md",
+      "context_window" : 128000,
+      "history_budget" : 0.5
     }
   },
   "asr": {
@@ -30,6 +33,9 @@
         "device": null,
         "hfov_deg": 70.0
       },
+      "sim_displays": {
+        "camera_overlay": true
+      },
       "preload_datasets": true,
       "startup_timeout": 45.0
     },
@@ -41,7 +47,12 @@
       }
     },
     "audio": { "xvf3800": null },
-    "faces": { "detector": "yunet", "detection": true },
+    "face_detection": {
+      "detector": "yunet",
+      "enabled": true,
+      "width": 640,
+      "target_fps": null
+    },
     "motion": {
       "presence": true,
       "idle": "breathing",
