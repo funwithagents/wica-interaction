@@ -2,10 +2,11 @@
 
 This embodiment gathers everything robot-specific behind the [Embodiment](../embodiment.py)
 protocol the shared lifecycle is written against: ``say`` out of the robot's speaker,
-``RobotMicSource`` over its echo-cancelled mic, ``RobotCameraFeed`` over its camera feed
+``RobotMicSource`` over its echo-cancelled mic (one subscriber of ``bridge.mic``, the bridge's one
+reader of the microphone), ``RobotCameraFeed`` over its camera feed
 (``bridge.camera``, the bridge's one reader of the camera), and the action Commands of
 [robot_control.py](robot_control.py). All four ride the *same* bridge instance — one robot connection,
-one media session, one camera feed — built and started in ``enter()`` on the app loop: the
+one media session, one mic feed, one camera feed — built and started in ``enter()`` on the app loop: the
 bridge's session is its ``start()`` / ``stop()`` pair, which is what a host with lifecycle hooks of
 its own (this protocol's ``enter`` / ``exit``) drives, instead of the ``async with`` sugar over it.
 
@@ -55,8 +56,9 @@ class RobotMicSource:
 
     Implements the ASR engine's synchronous ``AudioSource`` protocol (``start() -> Queue``, ``stop()``
     — see asr-engine specs/audio-source.md): the engine calls ``start()`` (not awaited) from inside its
-    start coroutine to obtain the queue it drains, and ``stop()`` on teardown. ``bridge.audio_input()``
-    already yields int16 LE mono PCM at ``bridge.mic_sample_rate`` (16 kHz) — the streaming-ASR contract —
+    start coroutine to obtain the queue it drains, and ``stop()`` on teardown. ``bridge.audio_input()`` is
+    one subscriber of the bridge's mic feed — every chunk, in order, never split with another consumer
+    — and already yields int16 LE mono PCM at ``bridge.mic_sample_rate`` (16 kHz) — the streaming-ASR contract —
     so the pump just iterates and enqueues each chunk; no resampling or reformatting. The queue is
     bounded and drops its oldest chunk when full (see ``_MIC_QUEUE_MAXSIZE``). If the stream raises or
     ends on its own, the pump logs it and records why in ``capture_error`` — so a dead mic is visible in

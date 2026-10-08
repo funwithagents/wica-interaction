@@ -264,7 +264,7 @@ class FakeMicBridge:
         self.active = 0
         self.yielded = 0
 
-    async def audio_input(self, *, mono: bool = True) -> Any:
+    async def audio_input(self, *, mono: bool = True, preroll_s: float = 0.0) -> Any:
         self.started += 1
         self.active += 1
         try:
