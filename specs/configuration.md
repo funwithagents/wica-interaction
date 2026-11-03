@@ -17,10 +17,10 @@ The whole app is stood up from **one JSON config file** carrying the sub-configu
 
 Each sibling engine already defines and validates its own config, and we do **not** duplicate or fork those schemas:
 
-- **WICA** — [`WicaConfig.from_dict(data, base_dir=…)`](../../wica-framework/specs/config.md) parses an `{"agent": {...}}` document (provider/model/key/`system_prompt_file`/`model_kwargs`).
-- **ASR** — [`ASREngineConfig.from_dict(engine_block)`](../../asr-engine/specs/configuration.md) builds the ASR engine config from an `engine` block.
-- **TTS** (computer) — [`TTSEngineConfig.from_dict(engine_block)`](../../tts-engine/specs/configuration.md), the same shape one level down.
-- **`reachy`** — [`ReachyMiniConfig.from_dict(...)`](../../reachy-mini-bridge/specs/core/config.md), the bridge's own declarative config, voice included.
+- **WICA** — `WicaConfig.from_dict(data, base_dir=…)` (`wica-framework/specs/config.md`) parses an `{"agent": {...}}` document (provider/model/key/`system_prompt_file`/`model_kwargs`).
+- **ASR** — `ASREngineConfig.from_dict(engine_block)` (`asr-engine/specs/configuration.md`) builds the ASR engine config from an `engine` block.
+- **TTS** (computer) — `TTSEngineConfig.from_dict(engine_block)` (`tts-engine/specs/configuration.md`), the same shape one level down.
+- **`reachy`** — `ReachyMiniConfig.from_dict(...)` (`reachy-mini-bridge/specs/core/config.md`), the bridge's own declarative config, voice included.
 
 Nesting each engine's native document verbatim (rather than flattening the keys) keeps the file a thin *composition* of schemas the engines already own: an engine adding or renaming a field needs no change here, and a reader can follow each section straight to that engine's config spec.
 

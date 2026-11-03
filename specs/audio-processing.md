@@ -23,8 +23,8 @@ The Reachy Mini embodiment needs none of this: its XVF3800 does it in firmware (
 
 Both engines expose a public injection seam, and `ComputerEmbodiment.enter()` builds both in one place — a pure composition, no engine edits:
 
-- **TTS far-end reference** — `TTSEngine(cfg, sink=<AudioSink>)`: the engine calls `sink.feed(chunk)` with every synthesized PCM chunk and `sink.drain()` at the end ([tts audio-sink.md](../../tts-engine/specs/audio-sink.md)). Our sink is the reference tap — wired **only when echo cancellation is on**.
-- **ASR cleaned input** — `ASREngine(cfg, audio_source=<AudioSource>)`: `source.start()` returns the `asyncio.Queue[bytes]` the engine drains ([asr audio-source.md](../../asr-engine/specs/audio-source.md)). Our source runs each mic frame through the processor — it is the embodiment's `mic` whenever **any** feature is enabled.
+- **TTS far-end reference** — `TTSEngine(cfg, sink=<AudioSink>)`: the engine calls `sink.feed(chunk)` with every synthesized PCM chunk and `sink.drain()` at the end (`tts-engine/specs/audio-sink.md`). Our sink is the reference tap — wired **only when echo cancellation is on**.
+- **ASR cleaned input** — `ASREngine(cfg, audio_source=<AudioSource>)`: `source.start()` returns the `asyncio.Queue[bytes]` the engine drains (`asr-engine/specs/audio-source.md`). Our source runs each mic frame through the processor — it is the embodiment's `mic` whenever **any** feature is enabled.
 
 With every feature **disabled** (the default), the embodiment's `mic` is `None` and the TTS engine gets no sink: the engines run exactly as before, zero overhead, no new failure modes.
 

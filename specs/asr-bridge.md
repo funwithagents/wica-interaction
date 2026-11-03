@@ -11,7 +11,7 @@ tests:
 
 ## Purpose
 
-The **speech-in** half of the app: it owns the live [`ASREngine`](../../asr-engine/specs/engine.md) — fed whatever audio source the embodiment provides (the robot's echo-cancelled stream, the computer's processed or raw mic) — turns its stream of speech *segments* into WICA World updates, and exposes the **dictation** control the agent can invoke. It is the one place that knows how ASR segmentation maps onto "a thing the user said", so the rest of the app (the WICA agent, the UI) never touches the ASR engine directly.
+The **speech-in** half of the app: it owns the live `ASREngine` (`asr-engine/specs/engine.md`) — fed whatever audio source the embodiment provides (the robot's echo-cancelled stream, the computer's processed or raw mic) — turns its stream of speech *segments* into WICA World updates, and exposes the **dictation** control the agent can invoke. It is the one place that knows how ASR segmentation maps onto "a thing the user said", so the rest of the app (the WICA agent, the UI) never touches the ASR engine directly.
 
 Two consumers read from it:
 
@@ -35,7 +35,7 @@ The `on_final_segment` callback is **injected**, not the World itself, so the br
 
 ## The mic is the embodiment's
 
-The `ASREngine` reads from an injected **`audio_source`** ([`AudioSource`](../../asr-engine/specs/audio-source.md): a synchronous `start() -> asyncio.Queue[bytes]` / `stop()` the engine drives). Which source — and whether there is one at all — is the embodiment's choice, not this module's ([embodiment.md](embodiment.md), `mic`):
+The `ASREngine` reads from an injected **`audio_source`** (`AudioSource`, `asr-engine/specs/audio-source.md`: a synchronous `start() -> asyncio.Queue[bytes]` / `stop()` the engine drives). Which source — and whether there is one at all — is the embodiment's choice, not this module's ([embodiment.md](embodiment.md), `mic`):
 
 - the Reachy Mini embodiment supplies a `RobotMicSource` pumping the robot's echo-cancelled 16 kHz stream ([reachy-embodiment.md](reachy-embodiment.md));
 - the computer embodiment supplies the audio-processing coordinator's `source` when a feature is on ([audio-processing.md](audio-processing.md)), or `None`, in which case the engine opens its own `AudioCapture` on the ASR config's `audio.device`.
@@ -99,7 +99,7 @@ async def start_dictation(segmentation_mode: str | None = None) -> str:
     """
 ```
 
-Semantics (a thin wrapper over the ASR engine's dictation — [asr-engine engine.md](../../asr-engine/specs/engine.md), "Dictation"):
+Semantics (a thin wrapper over the ASR engine's dictation — `asr-engine/specs/engine.md`, "Dictation"):
 
 - Calls `engine.start_dictation(end_on_final_segment=True, segmentation_mode=segmentation_mode)`. The hard-wired **`end_on_final_segment=True`** is the "reset on segment end" behaviour: the mode swaps to `dictation_default_segmentation_mode` (typically `timeout` or `trigger_word`) for exactly one passage, then the engine reverts to `utterance` once that passage's final segment closes. The agent need not remember to turn it off.
 - **Dictation does not change where speech goes.** Segments still flow through `_on_segment`: interims still stream into the ASR panel, and the closed segment still becomes `speech_input`. The *only* difference is segmentation — how long the app waits before closing a segment — so a dictated passage arrives as one big `speech_input`. The agent is still fed and still replies.

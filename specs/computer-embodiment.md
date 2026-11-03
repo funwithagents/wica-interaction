@@ -15,7 +15,7 @@ tests:
 
 ## Purpose
 
-The agent embodied in **the machine the app runs on**: speech in from a local microphone, speech out through the local speakers via a [`tts-engine`](../../tts-engine/AGENTS.md) `TTSEngine`, optionally the mic cleaned by [audio processing](audio-processing.md) (WebRTC echo cancellation and noise suppression) and the person's hand signs read through a **webcam**. It has no actions beyond speaking. This is the former `vocal-interaction-wica` app, ported here as one implementation of the [Embodiment](embodiment.md) protocol; its persona is a plain voice assistant, [prompts/computer.md](../prompts/computer.md). It runs as `wica-interaction-computer --config <file>`.
+The agent embodied in **the machine the app runs on**: speech in from a local microphone, speech out through the local speakers via a `tts-engine` `TTSEngine`, optionally the mic cleaned by [audio processing](audio-processing.md) (WebRTC echo cancellation and noise suppression) and the person's hand signs read through a **webcam**. It has no actions beyond speaking. This is the former `vocal-interaction-wica` app, ported here as one implementation of the [Embodiment](embodiment.md) protocol; its persona is a plain voice assistant, [prompts/computer.md](../prompts/computer.md). It runs as `wica-interaction-computer --config <file>`.
 
 ## Configuration
 
@@ -101,7 +101,7 @@ async def say(self, text: str) -> str:
     """
 ```
 
-Delegates to [`TTSTools(engine).say`](../../tts-engine/specs/tools.md), reusing its guarded, non-raising contract rather than calling `engine.say` directly: an empty string returns `"TTS error: text must not be empty"`, a synthesis failure `"TTS error: <message>"`, success `"OK"`. With no engine (the build failed in `enter()`), it returns `"TTS error: <the build error>"` without touching anything. It blocks until playback finishes (streaming playback inside the engine), so the Command stays `running` in the World for the real duration of the speech. As a bound method its docstring is what the model sees as the voice's description ([embodiment.md](embodiment.md)).
+Delegates to `TTSTools(engine).say` (`tts-engine/specs/tools.md`), reusing its guarded, non-raising contract rather than calling `engine.say` directly: an empty string returns `"TTS error: text must not be empty"`, a synthesis failure `"TTS error: <message>"`, success `"OK"`. With no engine (the build failed in `enter()`), it returns `"TTS error: <the build error>"` without touching anything. It blocks until playback finishes (streaming playback inside the engine), so the Command stays `running` in the World for the real duration of the speech. As a bound method its docstring is what the model sees as the voice's description ([embodiment.md](embodiment.md)).
 
 ### `WebcamSource`
 
