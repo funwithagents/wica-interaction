@@ -73,19 +73,29 @@ dev = [
 [tool.uv.sources]
 # Self-reference for the `dev` group above, which pulls the package's own extras.
 wica-interaction = { workspace = true }
-# First-party sibling repos. `asr-engine` and `tts-engine` come from GitHub, `rev = "main"`: the
-# lock records the exact commit, and `uv lock --upgrade-package <name>` moves it. `tts-engine`'s
-# URL is the bridge's own requirement verbatim (`tts-engine @ git+https://github.com/
+# First-party sibling repos, every one from GitHub, `rev = "main"`: the lock records the exact
+# commit each resolved to, and `uv lock --upgrade-package <name>` moves it (specs/project.md,
+# "Sibling sources"). No local path dependency: an install needs no checkout next door.
+# `tts-engine`'s URL is the bridge's own requirement verbatim (`tts-engine @ git+https://github.com/
 # funwithagents/tts-engine@main`) — uv refuses two different URLs for one package, and `rev`
 # (not `branch`) is what makes the two references identical, so the graph resolves without an
-# override. `wica` and `reachy-mini-bridge` are still local path dependencies from the parent
-# folder while they are developed alongside this app; they move to GitHub URLs the same way once
-# they settle (specs/project.md, "Sibling sources").
-wica = { path = "../wica-framework", editable = true }
+# override.
+wica = { git = "https://github.com/funwithagents/wica-framework", rev = "main" }
 asr-engine = { git = "https://github.com/funwithagents/asr-engine", rev = "main" }
 tts-engine = { git = "https://github.com/funwithagents/tts-engine", rev = "main" }
-reachy-mini-bridge = { path = "../reachy-mini-bridge", editable = true }
-vision-modules = { path = "../vision-modules", editable = true }
+reachy-mini-bridge = { git = "https://github.com/funwithagents/reachy-mini-bridge", rev = "main" }
+vision-modules = { git = "https://github.com/funwithagents/vision-modules", rev = "main" }
+# PyPI's Linux torch wheel is the CUDA build and drags gigabytes of NVIDIA libraries; on Linux
+# torch resolves from PyTorch's CPU index instead, the same choice as the siblings that pull it
+# (`vision-modules[hand]`, `tts-engine[pocket]`). `explicit`: only `torch` comes from there.
+# macOS and Windows keep PyPI's wheel, CPU-only there. Declared here because a dependency's
+# own index choice is not something a consumer can rely on inheriting.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.uv]
 # reachy-mini (a reachy-mini-bridge dependency) gates PyGObject to Linux (macOS/Windows use the
@@ -93,7 +103,7 @@ vision-modules = { path = "../vision-modules", editable = true }
 # universal lock would try to *build* them on a non-Linux host just to read their metadata (needs
 # system cairo) and fail. Declaring their metadata lets uv resolve the Linux side of the lock
 # without building them; markers still keep them off non-Linux installs. (Mirrors the bridge's own
-# pyproject, since path deps don't inherit `[tool.uv]` settings.)
+# pyproject, since a dependency's `[tool.uv]` settings are not inherited.)
 dependency-metadata = [
     { name = "pygobject", version = "3.46.0", requires-dist = ["pycairo>=1.16.0"] },
     { name = "pycairo", version = "1.29.1" },

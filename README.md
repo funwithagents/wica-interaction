@@ -3,7 +3,7 @@
 One interaction application built on the **WICA** agentic framework, in which a person **speaks** to an AI agent and the agent **speaks — and, given a body, acts — back**. The same program runs in different **embodiments**, chosen by the command you launch:
 
 - **`wica-interaction-computer`** — the agent on the machine it runs on: a local microphone, the speakers (a [`tts-engine`](https://github.com/funwithagents/tts-engine) voice), optionally a webcam for hand signs. A plain voice assistant.
-- **`wica-interaction-reachy`** — the agent in a [Reachy Mini](https://github.com/pollen-robotics/reachy_mini): it speaks out of the robot's speaker, listens through the robot's echo-cancelled mic, sees through the robot's camera, plays emotions and manages its motors, all through [`reachy-mini-bridge`](../reachy-mini-bridge)'s `ReachyMiniBridge`.
+- **`wica-interaction-reachy`** — the agent in a [Reachy Mini](https://github.com/pollen-robotics/reachy_mini): it speaks out of the robot's speaker, listens through the robot's echo-cancelled mic, sees through the robot's camera, plays emotions and manages its motors, all through [`reachy-mini-bridge`](https://github.com/funwithagents/reachy-mini-bridge)'s `ReachyMiniBridge`.
 
 Everything WICA-side is shared — the World and its `speech_input` entry, the dictation commands, the hand-sign entries, the transcript and observability panels, the whole lifecycle. What varies is captured by one small protocol, the [Embodiment](specs/embodiment.md): where audio comes in and goes out, what the agent can act with, and what it sees through. Everything runs in-process (no MCP servers) behind a small Gradio UI: WICA's own observability panels (the reusable `wica.contrib.gradio` components) next to the app's live ASR and Vision panel.
 
@@ -16,15 +16,15 @@ Everything WICA-side is shared — the World and its `speech_input` entry, the d
 
 ## Sibling dependencies
 
-First-party repos, per [specs/project.md](specs/project.md). Two are consumed from GitHub (`main`, pinned to an exact commit by `uv.lock`), three are still local path dependencies in the parent folder while they are developed alongside this app:
+First-party repos, per [specs/project.md](specs/project.md). All five are consumed from GitHub (`main`, pinned to an exact commit by `uv.lock`); nothing here depends on a checkout next door:
 
-- `wica` (`../wica-framework`) — the agentic framework, plus its reusable Gradio panels.
+- `wica` ([github.com/funwithagents/wica-framework](https://github.com/funwithagents/wica-framework)) — the agentic framework, plus its reusable Gradio panels.
 - `asr-engine` ([github.com/funwithagents/asr-engine](https://github.com/funwithagents/asr-engine)) — speech-to-text over whichever mic the embodiment provides.
 - `tts-engine` ([github.com/funwithagents/tts-engine](https://github.com/funwithagents/tts-engine)) — the computer's voice, and the voice the bridge builds for the robot.
-- `reachy-mini-bridge` (`../reachy-mini-bridge`) — the robot's interaction API: connects to the robot, manages the daemon, and builds the voice itself from the config's `reachy.tts` block.
-- `vision-modules` (`../vision-modules`) — the hand stage + HaGRID gesture classifier behind the hand-sign input: each hand's sign (`stop`, `like`, `dislike`, `ok`, `one` … `five`), once it has held for `vision.hold_s` (0.5 s), reaches the agent as its own World entry (see [specs/gesture-input.md](specs/gesture-input.md)). The models download on first run (a MediaPipe bundle and a ~340 MB ViT); enable it with a `vision` config section.
+- `reachy-mini-bridge` ([github.com/funwithagents/reachy-mini-bridge](https://github.com/funwithagents/reachy-mini-bridge)) — the robot's interaction API: connects to the robot, manages the daemon, and builds the voice itself from the config's `reachy.tts` block.
+- `vision-modules` ([github.com/funwithagents/vision-modules](https://github.com/funwithagents/vision-modules)) — the hand stage + HaGRID gesture classifier behind the hand-sign input: each hand's sign (`stop`, `like`, `dislike`, `ok`, `one` … `five`), once it has held for `vision.hold_s` (0.5 s), reaches the agent as its own World entry (see [specs/gesture-input.md](specs/gesture-input.md)). The models download on first run (a MediaPipe bundle and a ~340 MB ViT); enable it with a `vision` config section.
 
-To pick up a newer `asr-engine` or `tts-engine` commit: `uv lock --upgrade-package asr-engine` (or `tts-engine`), then `uv sync --dev`, and commit `uv.lock`.
+To pick up a newer commit of any of them: `uv lock --upgrade-package <name>` (for instance `reachy-mini-bridge`), then `uv sync --dev`, and commit `uv.lock`. To work on a sibling locally against this app, point its `[tool.uv.sources]` entry at the checkout for the duration (`{ path = "../<repo>", editable = true }`; `tts-engine` also needs `[tool.uv] override-dependencies = ["tts-engine"]`, see the spec) — an uncommitted convenience, never the declared dependency.
 
 ## Extras
 
