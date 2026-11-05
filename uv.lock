@@ -345,6 +345,28 @@ wheels = [
 ]
 
 [[package]]
+name = "cartesia"
+version = "4.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ef/cd/8841344c7753667f00357abdafdb3417a7ba86abdb7de43e93b6c09ea154/cartesia-4.2.0.tar.gz", hash = "sha256:c36c905f8a459eafaa555dc75d811f2d47770bc4a784e59b9428f3668248ac99", size = 342000, upload-time = "2026-09-02T21:35:03.479Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/52/eb40886f218f8613f1fd62d3aa2d3d92595bd1eca8c1a2ecfed6d4dcf4e2/cartesia-4.2.0-py3-none-any.whl", hash = "sha256:8ad6648670819da99e43722b52151ba0b050eb1898da485af8f3767f24b43715", size = 220715, upload-time = "2026-09-02T21:35:05.076Z" },
+]
+
+[package.optional-dependencies]
+websockets = [
+    { name = "websockets" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.7.22"
 source = { registry = "https://pypi.org/simple" }
@@ -579,6 +601,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cloudpickle"
+version = "3.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/fb/576f067976d320f5f0114a8d9fa1215425441bb35627b1993e5afd8111e5/cloudpickle-3.1.2.tar.gz", hash = "sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414", size = 22330, upload-time = "2025-11-03T09:25:26.604Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a", size = 22228, upload-time = "2025-11-03T09:25:25.534Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -737,7 +768,7 @@ wheels = [
 
 [[package]]
 name = "deepgram-sdk"
-version = "7.9.0"
+version = "7.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -746,9 +777,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/95/f6/15e28d0f3f3e1f0a0a62eb2bf0e7c29e1eb51f31ec4eba32e0c17f1a694c/deepgram_sdk-7.9.0.tar.gz", hash = "sha256:b009a9b2b7b83b4c7c7973bd5ea3012e5c2afc3630c160c700c27ea6b1f8054a", size = 246695, upload-time = "2026-09-14T12:31:55.214Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/49/12689f545758e15b6f02a4b79fb5f3332728959649c87fdeb70ea4e666bf/deepgram_sdk-7.16.0.tar.gz", hash = "sha256:29fb1e73e40b053b3f86751f1cd208c7bd2531087e05728ec7322fd4f49c63e4", size = 261070, upload-time = "2026-10-28T10:34:24.923Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/6f/4f14a969f11977d96a7391e2b96c9d8cf9f0c4423b79208738ae8648abb8/deepgram_sdk-7.9.0-py3-none-any.whl", hash = "sha256:aee48719891727d855990e58b6e797b521d1f24716e3a2d869aa327051f1f150", size = 644051, upload-time = "2026-09-14T12:31:53.717Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/15/a37569dcdfb220375ef08b2b9d7c33c8c07e90d50418925fb5d2caff414d/deepgram_sdk-7.16.0-py3-none-any.whl", hash = "sha256:8a2fa9363def5d179ff7b26bf4daf9002c369499aab6742abb0a5864617ccb1f", size = 680260, upload-time = "2026-10-28T10:34:23.27Z" },
 ]
 
 [[package]]
@@ -758,6 +789,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527f8a2e8885fc8015d3e6f5775df186e443e0964a11c3/distro-1.9.0.tar.gz", hash = "sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed", size = 60722, upload-time = "2023-12-24T09:54:32.31Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
+]
+
+[[package]]
+name = "dlinfo"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/8e/8f2f94cd40af1b51e8e371a83b385d622170d42f98776441a6118f4dd682/dlinfo-2.0.0.tar.gz", hash = "sha256:88a2bc04f51d01bc604cdc9eb1c3cc0bde89057532ca6a3e71a41f6235433e17", size = 12727, upload-time = "2025-01-16T15:43:10.756Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/90/022c79d6e5e6f843268c10b84d4a021ee3afba0621d3c176d3ff2024bfc8/dlinfo-2.0.0-py3-none-any.whl", hash = "sha256:b32cc18e3ea67c0ca9ca409e5b41eed863bd1363dbc9dd3de90fedf11b61e7bc", size = 3654, upload-time = "2025-01-16T15:43:09.474Z" },
 ]
 
 [[package]]
@@ -796,6 +836,19 @@ wheels = [
 ]
 
 [[package]]
+name = "espeakng-loader"
+version = "0.2.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/92/f44ed7f531143c3c6c97d56e2b0f9be8728dc05e18b96d46eb539230ed46/espeakng_loader-0.2.4-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:b77477ae2ddf62a748e04e49714eabb2f3a24f344166200b00539083bd669904", size = 9938387, upload-time = "2025-01-17T01:22:42.064Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/26/258c0cd43b9bc1043301c5f61767d6a6c3b679df82790c9cb43a3277b865/espeakng_loader-0.2.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:d27cdca31112226e7299d8562e889d3e38a1e48055c9ee381b45d669072ee59f", size = 9892565, upload-time = "2025-01-17T01:22:40.365Z" },
+    { url = "https://files.pythonhosted.org/packages/de/1e/25ec5ab07528c0fbb215a61800a38eca05c8a99445515a02d7fa5debcb32/espeakng_loader-0.2.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:08721baf27d13d461f6be6eed9a65277e70d68234ff484fd8b9897b222cdcb6d", size = 10078484, upload-time = "2025-01-17T01:22:43.373Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/ad/1b768d8daffc2996e07bbcb6f534d8de3202cd75fce1f1c45eced1ce6465/espeakng_loader-0.2.4-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:d1e798141b46a050cdb75fcf3c17db969bb2c40394f3f4a48910655d547508b9", size = 10037736, upload-time = "2025-01-17T01:22:42.576Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/ed/a3d872fbad4f3a3f3db0e8c31768ab14e77cd77306de16b8b20b1e1df7ea/espeakng_loader-0.2.4-py3-none-win_amd64.whl", hash = "sha256:41f1e08ac9deda2efd1ea9de0b81dab9f5ae3c4b24284f76533d0a7b1dd7abd7", size = 9437292, upload-time = "2025-01-17T01:23:27.463Z" },
+    { url = "https://files.pythonhosted.org/packages/29/64/0b75bc50ec53b4e000bac913625511215aa96124adf5dba8c4baa17c02cd/espeakng_loader-0.2.4-py3-none-win_arm64.whl", hash = "sha256:d7a2928843eaeb2df82f99a370f44e8a630f59b02f9b0d1f168a03c4eeb76b89", size = 9426841, upload-time = "2025-01-17T01:23:21.766Z" },
+]
+
+[[package]]
 name = "etils"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -809,6 +862,15 @@ epath = [
     { name = "fsspec" },
     { name = "typing-extensions" },
     { name = "zipp" },
+]
+
+[[package]]
+name = "eval-type-backport"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/15/273a4baf8248d6d76220723c3caf039d283774b31a7c46ba686120145b76/eval_type_backport-0.4.0.tar.gz", hash = "sha256:8397d25e6524c2e67b9576bb0636be27dea2192017711220c534ec2de921e9b0", size = 10260, upload-time = "2026-06-02T13:22:06.059Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/a7/bb99bf5e6f78736ddb53480f2c3ff3702ffe2196a7c5e1661c03081d398e/eval_type_backport-0.4.0-py3-none-any.whl", hash = "sha256:ad5e2a8db71b6696a56eafb938b0f5a337d3217f256b8e158b469422b4772b20", size = 6432, upload-time = "2026-06-02T13:22:04.827Z" },
 ]
 
 [[package]]
@@ -1044,7 +1106,7 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "2.25.0"
+version = "2.34.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1058,9 +1120,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/62/0a/a3b7856ca840031d4393dbdd97b67fe811b20061315ed68b67b5c85ca80d/google_genai-2.25.0.tar.gz", hash = "sha256:ab603baa5eee0205926ad0f8d7f93e0400df6d67650e99c33e01ab228ea16ad6", size = 699564, upload-time = "2026-09-22T17:23:01.238Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/89/4621aee9cb183efa5b8a187f0e315c49fddcfb8cd7f238b4a3bf4946dcd0/google_genai-2.34.0.tar.gz", hash = "sha256:8e182cf3f73384167b96861cf0aef5102b5070f2db1ea11002879e913806ef37", size = 791853, upload-time = "2026-10-29T06:43:23.706Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/a8/178dbb9d1d6cac721b01592e291146a024bae5ee3224e36569348921dd6c/google_genai-2.25.0-py3-none-any.whl", hash = "sha256:2e8f3a5f76ed00d5ffc3153f6089bc7d3511054eed53ad9cfc6095a7dc59b028", size = 1159631, upload-time = "2026-09-22T17:22:59.291Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/42/c24db865d9231b1c672ea26242a4dcf340e200bb1a9823dce4aa9c4c07a4/google_genai-2.34.0-py3-none-any.whl", hash = "sha256:a4cb02aebc4c357f863d2938132f0e3f7967fc5e00b8a4078673f68aad340665", size = 1258155, upload-time = "2026-10-29T06:43:21.121Z" },
 ]
 
 [[package]]
@@ -1387,15 +1449,15 @@ wheels = [
 
 [[package]]
 name = "httpcore2"
-version = "2.12.0"
+version = "2.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "h11" },
     { name = "truststore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/61/afa9d6b7452f9eca73f73d45324eb0bb52f098fd5e6049bf6b8263be9b4e/httpcore2-2.16.0.tar.gz", hash = "sha256:c72cd0413563b17e1cd8354677dff887466f8ec2551679759e93126534428643", size = 69886, upload-time = "2026-10-21T07:09:45.31Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/74/d370e55600d9bcfa0d9794b0166126d49291a3d2b20c268fc98c453a4948/httpcore2-2.12.0-py3-none-any.whl", hash = "sha256:7e04258ce01013d7d615e5b910a3b27fac937d7a95038227e79652b4ba3b4ceb", size = 83074, upload-time = "2026-08-18T13:22:05.854Z" },
+    { url = "https://files.pythonhosted.org/packages/af/c2/ce417c397afa5181f0e3c6ff01a4d01639414e1adef08730d97571297151/httpcore2-2.16.0-py3-none-any.whl", hash = "sha256:5c4358319f2602d984ad93182c9fee5160f22e9da7babdda870a5e7c4e2dc34f", size = 85070, upload-time = "2026-10-21T07:09:42.802Z" },
 ]
 
 [[package]]
@@ -1450,8 +1512,17 @@ wheels = [
 ]
 
 [[package]]
+name = "httpx-sse"
+version = "0.4.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d", size = 15943, upload-time = "2025-10-10T21:48:22.271Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc", size = 8960, upload-time = "2025-10-10T21:48:21.158Z" },
+]
+
+[[package]]
 name = "httpx2"
-version = "2.12.0"
+version = "2.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "sys_platform != 'emscripten'" },
@@ -1461,9 +1532,9 @@ dependencies = [
     { name = "truststore", marker = "sys_platform != 'emscripten'" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/f8/579a8b51e42e38ee32647df9f08aa25643ae788e275cc625b199829c4671/httpx2-2.12.0.tar.gz", hash = "sha256:7631fe9887a8a2275f4a2540e053aa670fcc50742864a9ae7c66e609fdcf12cf", size = 100040, upload-time = "2026-08-18T13:22:09.086Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/73/5ca2cedf5e4e50423d1c258877865a6b62793633b561c58499f8aeb33b7e/httpx2-2.16.0.tar.gz", hash = "sha256:0d54c98128e8f2ff7fbbde0fca8c359e5f032edeaaaac443cdb7f31f685bcd7f", size = 103116, upload-time = "2026-10-21T07:09:46.348Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/95/411ba65569158e862368917aaf56597f3e5fa3b91b0502919638465a08f3/httpx2-2.12.0-py3-none-any.whl", hash = "sha256:cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36", size = 95427, upload-time = "2026-08-18T13:22:06.834Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/3d/2e4bc4fd1ef9770871669adb348d612a6e4786b303a23f9935b81c48dd60/httpx2-2.16.0-py3-none-any.whl", hash = "sha256:fd2c5d7909e8d86fe92d53020c310ca0e4e431b838c207c5754b9bbf0308d49a", size = 97880, upload-time = "2026-10-21T07:09:44.01Z" },
 ]
 
 [[package]]
@@ -1612,6 +1683,18 @@ wheels = [
 ]
 
 [[package]]
+name = "joblib"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudpickle" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/1d/537ab090f302b838943a1b56497dd53059b9a9b46a074936470173a2e207/joblib-1.6.0.tar.gz", hash = "sha256:2ccc96785b12046c08fd6d55839c12857831b54a3c1673ffadd2f04bfc4eda03", size = 327903, upload-time = "2026-08-31T09:39:04.122Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/53/84099323c2ec4be98d935f63c033ac4151ee83836ca1050ede3b3aadf155/joblib-1.6.0-py3-none-any.whl", hash = "sha256:3dbbf9f6e4b592a2357b854608e980fe6390d131d7a82f011a377ef2ebef7aba", size = 306115, upload-time = "2026-08-31T09:39:02.298Z" },
+]
+
+[[package]]
 name = "jsonpatch"
 version = "1.33"
 source = { registry = "https://pypi.org/simple" }
@@ -1621,6 +1704,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/42/78/18813351fe5d63acad16aec57f94ec2b70a09e53ca98145589e185423873/jsonpatch-1.33.tar.gz", hash = "sha256:9fcd4009c41e6d12348b4a0ff2563ba56a2923a7dfee731d004e212e1ee5030c", size = 21699, upload-time = "2023-06-26T12:07:29.144Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/73/07/02e16ed01e04a374e644b575638ec7987ae846d25ad97bcc9945a3ee4b0e/jsonpatch-1.33-py2.py3-none-any.whl", hash = "sha256:0ae28c0cd062bbd8b8ecc26d7d164fbbea9652a1a3693f3b956c1eae5145dade", size = 12898, upload-time = "2023-06-16T21:01:28.466Z" },
+]
+
+[[package]]
+name = "jsonpath-python"
+version = "1.1.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/18/4ca8742534a5993ff383f7602e325ce2d5d7cc93d72ac5e1cdedbea8a458/jsonpath_python-1.1.6.tar.gz", hash = "sha256:dded9932b4ec41fb8726e09c83afa4e6be618f938c2db287cc2a81723c639671", size = 88178, upload-time = "2026-05-07T01:26:34.482Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/8a/1270a6803bd821cbfcdda387eaa13cb41a7b1f7b9bd145979b3bfb9d6cb7/jsonpath_python-1.1.6-py3-none-any.whl", hash = "sha256:a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4", size = 14453, upload-time = "2026-05-07T01:26:33.306Z" },
 ]
 
 [[package]]
@@ -1743,6 +1835,21 @@ wheels = [
 ]
 
 [[package]]
+name = "kokoro-onnx"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "espeakng-loader" },
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "phonemizer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6b/ef/b58dedba0a1417f16352352787fbcfcbaa0b907e284c2ea3ebaf5541109a/kokoro_onnx-0.6.1.tar.gz", hash = "sha256:7bbdb66dd53775f71088a99999a9aefdad240740daf54cb09410d8bb1e294e35", size = 69799, upload-time = "2026-08-19T00:40:37.021Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/60/e1/a27e5a70a525a5ee1fd5357596f07b724d02ff317f134e86cb6e3d9db968/kokoro_onnx-0.6.1-py3-none-any.whl", hash = "sha256:50c8de4950d601df41428ee5462a48c8a78bef441bf671f2492e070ef44d8a32", size = 26084, upload-time = "2026-08-19T00:40:35.746Z" },
+]
+
+[[package]]
 name = "langchain"
 version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1818,6 +1925,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2c/e8/4068ad02179253f55958e59e442e5b6e8cb95ffc5e805cc4db0b1ef61d4e/langchain_huggingface-1.2.2.tar.gz", hash = "sha256:1dd91ec415190d2704e93ec149618e3145075863ba37e74afc9080d685dc2743", size = 255513, upload-time = "2026-04-16T19:57:41.046Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0a/ed/648b87f9b67153ade616f360bf4145b76ed428b4adb89525938f611e9828/langchain_huggingface-1.2.2-py3-none-any.whl", hash = "sha256:f94944b0c0d5afc687568d426c87ed5236907464c41e72108ed76eee1a690f6d", size = 31926, upload-time = "2026-04-16T19:57:40.079Z" },
+]
+
+[[package]]
+name = "langchain-mistralai"
+version = "1.1.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "langchain-core" },
+    { name = "pydantic" },
+    { name = "tokenizers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/70/92/d15c0640bf77908b765d76f46d7123d7b82b34b04dfad2838b68143f38f7/langchain_mistralai-1.1.6.tar.gz", hash = "sha256:c2694828adee61a497c571e25eaba1472095cd1d1f260a7fe15a6e60f9ece039", size = 157112, upload-time = "2026-07-05T21:30:23.059Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/db/b727cd6e8083a48e4d0aba542f1454a50510d59b24476888af94b038be15/langchain_mistralai-1.1.6-py3-none-any.whl", hash = "sha256:0aa59b313b406ee934dc0431873b0e11849d8d746a6a7e281103c6848a9b1319", size = 22806, upload-time = "2026-07-05T21:30:21.84Z" },
 ]
 
 [[package]]
@@ -2153,6 +2276,25 @@ wheels = [
 ]
 
 [[package]]
+name = "mistralai"
+version = "3.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "eval-type-backport" },
+    { name = "httpx2" },
+    { name = "jsonpath-python" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "pydantic" },
+    { name = "python-dateutil" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3f/ca/10a0515ded34170e1ea451a6d1c7124361e4fab8ba5d5024db34db1fb9d3/mistralai-3.7.0.tar.gz", hash = "sha256:97cc525b8ddc96fb8b5bb08f466dd3d22f904f21ddfe45103da76c25fe601bf2", size = 773897, upload-time = "2026-11-01T20:07:28.894Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/c3/428b852ffffcf6b35d046124121e75824827d222d8ada3cb19c32a47f92e/mistralai-3.7.0-py3-none-any.whl", hash = "sha256:23ceda7ae52557578427af5a9caffb2222cd11dd7d43eb1792ded35b2a84d939", size = 1818807, upload-time = "2026-11-01T20:07:26.562Z" },
+]
+
+[[package]]
 name = "mpmath"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2449,7 +2591,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "3.19.2"
+version = "3.42.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2459,9 +2601,14 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7c/91/2d5722388a50cc86e162779df5fbfe0afa652a6e2d5c9ee616e081a82098/openai-3.19.2.tar.gz", hash = "sha256:de185f9834ad064d965ec42bd0766731cf66bceea16a7670294a835d207019e6", size = 1716953, upload-time = "2026-09-24T00:06:07.315Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/7b/e01d5288d13e3bae3714ed39df402f99f88f422dcd978c5ce94848037200/openai-3.42.1.tar.gz", hash = "sha256:4222d919374648ff572753626e942f26eb1ece8a5e0e9a2708c9be4d560f070f", size = 2356422, upload-time = "2026-11-01T20:57:02.607Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/20/4fe123e60525375878c67d1d8d051c9c5dec81cc56a579ba9304ca743303/openai-3.19.2-py3-none-any.whl", hash = "sha256:66247fcd07266e72536e90656dc27f3b0bb1e9d8696d4013fc55402c0b96a5c2", size = 2071459, upload-time = "2026-09-24T00:06:05.416Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/11/37b847d8a057000193974eeea1bcc681355ae50d35865f2eb2b323de6153/openai-3.42.1-py3-none-any.whl", hash = "sha256:c1959518a8e26f81a3564357082cb684540be639a21fece35ac5619415a3eadc", size = 2397433, upload-time = "2026-11-01T20:57:00.622Z" },
+]
+
+[package.optional-dependencies]
+realtime = [
+    { name = "websockets" },
 ]
 
 [[package]]
@@ -2512,6 +2659,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ee/8b/aa9e2d8b8dfa7c946f7dec5d1f8f6ba8eca062f43509a06bdb5ce93d26c0/opentelemetry_api-1.44.0.tar.gz", hash = "sha256:67647e5e9566edcf421166fdf022b3537f818635daa852b289e34604dc6fb33a", size = 72406, upload-time = "2026-07-16T15:25:32.678Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/6f/a04e900f465ff3221ccc395522503e2d10e79fa21f2723c8e177aae1e0d1/opentelemetry_api-1.44.0-py3-none-any.whl", hash = "sha256:94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef", size = 60018, upload-time = "2026-07-16T15:25:11.657Z" },
+]
+
+[[package]]
+name = "opentelemetry-semantic-conventions"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/73/0cbdebcb4cf545fdd328da14f5137e37d0770c3f26185e478b0d15d94f50/opentelemetry_semantic_conventions-0.65b0.tar.gz", hash = "sha256:f9b2b81e9d5b64f11bc952075e7e9c7fb0aab075c7fd1c46d597f1b919852d60", size = 148774, upload-time = "2026-07-16T15:25:46.902Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/0e/49df70d9b81fb5cbae4bbf2a49d865b09bcbcbc4eb53f5851b1027738d78/opentelemetry_semantic_conventions-0.65b0-py3-none-any.whl", hash = "sha256:1cacde7b0ad306f84c5ef08c3dbe1bbaf20165bba6f8bff43b670e555a086bcb", size = 204645, upload-time = "2026-07-16T15:25:30.688Z" },
 ]
 
 [[package]]
@@ -2661,6 +2821,30 @@ wheels = [
 ]
 
 [[package]]
+name = "pathvalidate"
+version = "3.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/2a/52a8da6fe965dea6192eb716b357558e103aea0a1e9a8352ad575a8406ca/pathvalidate-3.3.1.tar.gz", hash = "sha256:b18c07212bfead624345bb8e1d6141cdcf15a39736994ea0b94035ad2b1ba177", size = 63262, upload-time = "2025-06-15T09:07:20.736Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/70/875f4a23bfc4731703a5835487d0d2fb999031bd415e7d17c0ae615c18b7/pathvalidate-3.3.1-py3-none-any.whl", hash = "sha256:5263baab691f8e1af96092fa5137ee17df5bdfbd6cff1fcac4d6ef4bc2e1735f", size = 24305, upload-time = "2025-06-15T09:07:19.117Z" },
+]
+
+[[package]]
+name = "phonemizer"
+version = "3.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "dlinfo" },
+    { name = "joblib" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/f8/6965b81854d1a5e4a0cb77a7b9df2ec97e2609e6c5d4e4c001232bc28635/phonemizer-3.6.0.tar.gz", hash = "sha256:9808c897773a23def58d89e1a3ac3506f56e8d04ee806d3ee80214880e2c9261", size = 109008, upload-time = "2026-11-02T23:28:52.302Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/70/681cea1684270c8d70b4e0fd7f17aaeb4e97fa9fc17b7bc2a6dee6a74e96/phonemizer-3.6.0-py3-none-any.whl", hash = "sha256:efb0703d3204f334756cafc9c97390c588446469c69214af4092836ca128cbab", size = 125087, upload-time = "2026-11-02T23:28:51.033Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2738,6 +2922,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ae/15/4500e320e6b101ec3b719ae85b697d9940b6cda672bc555bd6016fc60c6f/pip-26.2.1.tar.gz", hash = "sha256:f6ad667e89a1fe78046c8f13232b247200f5258d7828f3f7883d660878e0813f", size = 1848877, upload-time = "2026-08-04T22:51:14.148Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl", hash = "sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e", size = 1816632, upload-time = "2026-08-04T22:51:12.472Z" },
+]
+
+[[package]]
+name = "piper-tts"
+version = "1.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "onnxruntime" },
+    { name = "pathvalidate" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/02/cc/95b18b58d9c235d8e0bcece7321b7a7347873c14f9fea2c734b31ef04ff2/piper_tts-1.8.0.tar.gz", hash = "sha256:830588aded347df579c91a32703e0fc2a3685d84f1e3533b14f2de69135d4904", size = 24276117, upload-time = "2026-09-04T16:47:31.908Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/2f/ad6db2adc635f85e9d2abd8e59bed3f04062c7b33817d519347fd79ad19f/piper_tts-1.8.0-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:98c7dd791b2be0f8732e5c9cefd86c54200ac0360e43c643c937bf18ac0e941a", size = 34111822, upload-time = "2026-09-04T16:47:14.384Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/f9/90e75adb55b3470a73030598c36f9969fe568e8458c066fa9b4fbc78a4c1/piper_tts-1.8.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:33e7425933e9290fe651ae127916ed1ca6104cfa3d94e9049295dd3a5c449382", size = 34119781, upload-time = "2026-09-04T16:47:17.823Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/90/de832b09736db8c26c9b5dd25cb408ed065b1d9535e05c78947aec056e36/piper_tts-1.8.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3f60c1917de6d8e8033f395878ad3f88f6dfee88a8b05f98971a275f76a38484", size = 34131751, upload-time = "2026-09-04T16:47:21.094Z" },
+    { url = "https://files.pythonhosted.org/packages/84/81/0112a7d510911f33018dc24023d1655bb772f84a4e95fe7f0180f66bbd17/piper_tts-1.8.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:25b4d3f31ff70c8fa7151908e00aaa5650cbdf16bca8fcf21299f3941b89a7d3", size = 34131442, upload-time = "2026-09-04T16:47:24.326Z" },
+    { url = "https://files.pythonhosted.org/packages/12/9c/c736d1961cf9ce0655278731b9430df41892ca2ded7b09dabcb340612158/piper_tts-1.8.0-cp39-abi3-win_amd64.whl", hash = "sha256:5da9bfdb05dfe15da3536859d422e605483ffa6d2b3ec2c5b9593bae6b5aa6a4", size = 34119688, upload-time = "2026-09-04T16:47:28.339Z" },
 ]
 
 [[package]]
@@ -2932,6 +3133,25 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/78/0acd37ca84ce3ddffaa92ef0f571e073faa6d8ff1f0559ab1272188ea2be/psutil-7.2.2-cp36-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b58fabe35e80b264a4e3bb23e6b96f9e45a3df7fb7eed419ac0e5947c61e47cc", size = 148266, upload-time = "2026-01-28T18:15:31.597Z" },
     { url = "https://files.pythonhosted.org/packages/b4/90/e2159492b5426be0c1fef7acba807a03511f97c5f86b3caeda6ad92351a7/psutil-7.2.2-cp37-abi3-win_amd64.whl", hash = "sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988", size = 137737, upload-time = "2026-01-28T18:15:33.849Z" },
     { url = "https://files.pythonhosted.org/packages/8c/c7/7bb2e321574b10df20cbde462a94e2b71d05f9bbda251ef27d104668306a/psutil-7.2.2-cp37-abi3-win_arm64.whl", hash = "sha256:8c233660f575a5a89e6d4cb65d9f938126312bca76d8fe087b947b3a1aaac9ee", size = 134617, upload-time = "2026-01-28T18:15:36.514Z" },
+]
+
+[[package]]
+name = "ptts"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/b6/d904102f788ffba8daaa49b88d73cb6195ad1eb00db1ab9b0ce840ef20f4/ptts-0.5.0.tar.gz", hash = "sha256:bb3c79bcfb6a10cf83899a3c806fec30919c646b47b5860aecf4b1c512e65f4c", size = 294857, upload-time = "2026-10-27T09:32:27.766Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5b/d6/ce52bf51c403e44d28987f9e31cc949249e42bca1f1737a6c4372f8331b3/ptts-0.5.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:8d4ae2045a1526dfa8c38c3488138778b8185f0d2f3a75d1dc39ac008b33b67b", size = 6894671, upload-time = "2026-10-27T09:32:14.384Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/9d/b3c570384dd2d91c5d4033fee002c17dd8c30940d34966daf94ec16323bb/ptts-0.5.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:9abddb2178ab7fbff10c6909b8a0e4db7165a91212c34a986b00cf13066a0ce3", size = 6832616, upload-time = "2026-10-27T09:32:16.136Z" },
+    { url = "https://files.pythonhosted.org/packages/90/6e/e2df7e1e090582a68373ae524a1b3cb47bb91981c53d5d5576751a37f78a/ptts-0.5.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:cbfaf26d00d6054bb118efe125f3b9907f982f4519e2a95d0b0005d4c5d00ec6", size = 6792140, upload-time = "2026-10-27T09:32:17.922Z" },
+    { url = "https://files.pythonhosted.org/packages/64/83/493867acbb08b9737e434a1b616b318f6b70a36b461a64b01a0a4e0c0f49/ptts-0.5.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:953739873e0200d40db7f515677a43f13805d1f0df0ff750db15a3b73cbbca45", size = 7462719, upload-time = "2026-10-27T09:32:19.711Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/d4/2fc1267365509faf825f03b484eaae71f56f628833a8b9125ac35f0ddf4a/ptts-0.5.0-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:1f1bc89cf9c8e8da369724aa013b140966c1cae4e43167261bd6c6730dac2a19", size = 6971389, upload-time = "2026-10-27T09:32:21.301Z" },
+    { url = "https://files.pythonhosted.org/packages/47/32/7ece69fcaad76e348fcc39ef8598db94458038df7fe65568e91e4cd6e7cd/ptts-0.5.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a8422bdfaa8d6dba53bb21554307fe68f7e32b6064c03f272932da05a5847386", size = 7493927, upload-time = "2026-10-27T09:32:23.335Z" },
+    { url = "https://files.pythonhosted.org/packages/37/82/4677ab2abf66fb785a5a39ba65393a4b9c09dc8801ecafe32aa425f27699/ptts-0.5.0-cp39-abi3-win_amd64.whl", hash = "sha256:92a4ef33f5a1faad16a2b6c883c1bb00accdf884d58ef2d7c57d8717b1ea4fcd", size = 6837629, upload-time = "2026-10-27T09:32:24.962Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/6e/1f070eac385072d373706245dab0faa30bf14f1c241ef4609fa03250b6da/ptts-0.5.0-cp39-abi3-win_arm64.whl", hash = "sha256:ea3f14fd0b067e443b7e1821cf3f910a4e6e9ea78cd431960167d19aaac72e43", size = 6556598, upload-time = "2026-10-27T09:32:26.479Z" },
 ]
 
 [[package]]
@@ -3269,6 +3489,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f6/45/eafb0bba0f9988f6a2520f9ca2df2c82ddfa8d67c95d6625452e97b204a5/questionary-2.1.1.tar.gz", hash = "sha256:3d7e980292bb0107abaa79c68dd3eee3c561b83a0f89ae482860b181c8bd412d", size = 25845, upload-time = "2025-08-28T19:00:20.851Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3c/26/1062c7ec1b053db9e499b4d2d5bc231743201b74051c973dadeac80a8f43/questionary-2.1.1-py3-none-any.whl", hash = "sha256:a51af13f345f1cdea62347589fbb6df3b290306ab8930713bfae4d475a7d4a59", size = 36753, upload-time = "2025-08-28T19:00:19.56Z" },
+]
+
+[[package]]
+name = "qwentts-cpp-python"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/37/8ba17242cfc7434687f35e9089a44fd1392efd3121952fb6d659f0b38dd8/qwentts_cpp_python-0.5.0-py3-none-macosx_14_0_arm64.whl", hash = "sha256:04546453b573afc5f0fbc8ba3c8fc810fef6367c4b603b9b5a1ef0dd459ed1a9", size = 1259944, upload-time = "2026-09-30T22:01:32.98Z" },
 ]
 
 [[package]]
@@ -4139,15 +4371,47 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cartesia = [
+    { name = "cartesia", extra = ["websockets"] },
+]
+deepgram = [
+    { name = "deepgram-sdk" },
+]
 elevenlabs = [
     { name = "elevenlabs" },
     { name = "miniaudio" },
 ]
+gemini = [
+    { name = "google-genai" },
+]
 gradium = [
     { name = "gradium" },
 ]
+kokoro = [
+    { name = "huggingface-hub" },
+    { name = "kokoro-onnx" },
+]
+mistral = [
+    { name = "mistralai" },
+]
+openai = [
+    { name = "openai", extra = ["realtime"] },
+]
+openai-compatible = [
+    { name = "openai" },
+]
+phonon = [
+    { name = "ptts" },
+]
+piper = [
+    { name = "huggingface-hub" },
+    { name = "piper-tts" },
+]
 pocket = [
     { name = "pocket-tts" },
+]
+qwen3 = [
+    { name = "qwentts-cpp-python", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
 
 [[package]]
@@ -4494,6 +4758,9 @@ gradio = [
 huggingface-hub = [
     { name = "langchain-huggingface" },
 ]
+mistralai = [
+    { name = "langchain-mistralai" },
+]
 openai = [
     { name = "langchain-openai" },
 ]
@@ -4516,9 +4783,9 @@ all = [
     { name = "asr-engine", extra = ["deepgram"] },
     { name = "reachy-mini-bridge" },
     { name = "samplerate" },
-    { name = "tts-engine", extra = ["elevenlabs", "gradium", "pocket"] },
+    { name = "tts-engine", extra = ["cartesia", "deepgram", "elevenlabs", "gemini", "gradium", "kokoro", "mistral", "openai", "openai-compatible", "phonon", "piper", "pocket", "qwen3"] },
     { name = "vision-modules", extra = ["hand", "opencv"] },
-    { name = "wica", extra = ["anthropic", "google-genai", "huggingface-hub", "openai"] },
+    { name = "wica", extra = ["anthropic", "google-genai", "huggingface-hub", "mistralai", "openai"] },
 ]
 asr-deepgram = [
     { name = "asr-engine", extra = ["deepgram"] },
@@ -4533,14 +4800,44 @@ computer = [
 reachy = [
     { name = "reachy-mini-bridge" },
 ]
+tts-cartesia = [
+    { name = "tts-engine", extra = ["cartesia"] },
+]
+tts-deepgram = [
+    { name = "tts-engine", extra = ["deepgram"] },
+]
 tts-elevenlabs = [
     { name = "tts-engine", extra = ["elevenlabs"] },
+]
+tts-gemini = [
+    { name = "tts-engine", extra = ["gemini"] },
 ]
 tts-gradium = [
     { name = "tts-engine", extra = ["gradium"] },
 ]
+tts-kokoro = [
+    { name = "tts-engine", extra = ["kokoro"] },
+]
+tts-mistral = [
+    { name = "tts-engine", extra = ["mistral"] },
+]
+tts-openai = [
+    { name = "tts-engine", extra = ["openai"] },
+]
+tts-openai-compatible = [
+    { name = "tts-engine", extra = ["openai-compatible"] },
+]
+tts-phonon = [
+    { name = "tts-engine", extra = ["phonon"] },
+]
+tts-piper = [
+    { name = "tts-engine", extra = ["piper"] },
+]
 tts-pocket = [
     { name = "tts-engine", extra = ["pocket"] },
+]
+tts-qwen3 = [
+    { name = "tts-engine", extra = ["qwen3"] },
 ]
 vision = [
     { name = "vision-modules", extra = ["hand", "opencv"] },
@@ -4554,6 +4851,9 @@ wica-google-genai = [
 wica-huggingface-hub = [
     { name = "wica", extra = ["huggingface-hub"] },
 ]
+wica-mistralai = [
+    { name = "wica", extra = ["mistralai"] },
+]
 wica-openai = [
     { name = "wica", extra = ["openai"] },
 ]
@@ -4564,7 +4864,7 @@ dev = [
     { name = "pytest" },
     { name = "reachy-mini-bridge", extra = ["sim"] },
     { name = "ruff" },
-    { name = "wica-interaction", extra = ["all"] },
+    { name = "wica-interaction", extra = ["asr-deepgram", "audio-processing", "computer", "reachy", "tts-elevenlabs", "tts-gradium", "tts-pocket", "vision", "wica-anthropic", "wica-google-genai", "wica-huggingface-hub", "wica-mistralai", "wica-openai"] },
 ]
 
 [package.metadata]
@@ -4577,19 +4877,34 @@ requires-dist = [
     { name = "reachy-mini-bridge", marker = "extra == 'reachy'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main" },
     { name = "samplerate", marker = "extra == 'audio-processing'", specifier = ">=0.2.4" },
     { name = "tts-engine", marker = "extra == 'computer'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["cartesia"], marker = "extra == 'tts-cartesia'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["deepgram"], marker = "extra == 'tts-deepgram'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
     { name = "tts-engine", extras = ["elevenlabs"], marker = "extra == 'tts-elevenlabs'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["gemini"], marker = "extra == 'tts-gemini'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
     { name = "tts-engine", extras = ["gradium"], marker = "extra == 'tts-gradium'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["kokoro"], marker = "extra == 'tts-kokoro'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["mistral"], marker = "extra == 'tts-mistral'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["openai"], marker = "extra == 'tts-openai'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["openai-compatible"], marker = "extra == 'tts-openai-compatible'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["phonon"], marker = "extra == 'tts-phonon'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["piper"], marker = "extra == 'tts-piper'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
     { name = "tts-engine", extras = ["pocket"], marker = "extra == 'tts-pocket'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["qwen3"], marker = "extra == 'tts-qwen3'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
     { name = "vision-modules", git = "https://github.com/funwithagents/vision-modules?rev=main" },
     { name = "vision-modules", extras = ["hand", "opencv"], marker = "extra == 'vision'", git = "https://github.com/funwithagents/vision-modules?rev=main" },
     { name = "wica", extras = ["anthropic"], marker = "extra == 'wica-anthropic'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
     { name = "wica", extras = ["google-genai"], marker = "extra == 'wica-google-genai'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
     { name = "wica", extras = ["gradio"], git = "https://github.com/funwithagents/wica-framework?rev=main" },
     { name = "wica", extras = ["huggingface-hub"], marker = "extra == 'wica-huggingface-hub'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
+    { name = "wica", extras = ["mistralai"], marker = "extra == 'wica-mistralai'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
     { name = "wica", extras = ["openai"], marker = "extra == 'wica-openai'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
-    { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision", "wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-pocket"], marker = "extra == 'all'", editable = "." },
+    { name = "wica-interaction", extras = ["asr-deepgram"], marker = "extra == 'all'", editable = "." },
+    { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision"], marker = "extra == 'all'", editable = "." },
+    { name = "wica-interaction", extras = ["tts-elevenlabs", "tts-gradium", "tts-mistral", "tts-deepgram", "tts-gemini", "tts-cartesia", "tts-openai", "tts-openai-compatible"], marker = "extra == 'all'", editable = "." },
+    { name = "wica-interaction", extras = ["tts-pocket", "tts-phonon", "tts-qwen3", "tts-kokoro", "tts-piper"], marker = "extra == 'all'", editable = "." },
+    { name = "wica-interaction", extras = ["wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "wica-mistralai"], marker = "extra == 'all'", editable = "." },
 ]
-provides-extras = ["computer", "audio-processing", "reachy", "vision", "wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-pocket", "all"]
+provides-extras = ["computer", "audio-processing", "reachy", "vision", "wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "wica-mistralai", "asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-mistral", "tts-deepgram", "tts-gemini", "tts-cartesia", "tts-openai", "tts-openai-compatible", "tts-pocket", "tts-phonon", "tts-qwen3", "tts-kokoro", "tts-piper", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4597,7 +4912,9 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "reachy-mini-bridge", extras = ["sim"], git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main" },
     { name = "ruff", specifier = ">=0.16.6" },
-    { name = "wica-interaction", extras = ["all"], editable = "." },
+    { name = "wica-interaction", extras = ["asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-pocket"], editable = "." },
+    { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision"], editable = "." },
+    { name = "wica-interaction", extras = ["wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "wica-mistralai"], editable = "." },
 ]
 
 [[package]]

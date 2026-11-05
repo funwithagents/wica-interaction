@@ -38,16 +38,35 @@ wica-anthropic = ["wica[anthropic]"]
 wica-huggingface-hub = ["wica[huggingface-hub]"]
 wica-openai = ["wica[openai]"]
 wica-google-genai = ["wica[google-genai]"]
-# The ASR provider the example configs select.
+wica-mistralai = ["wica[mistralai]"]
+# The speech-in provider. asr-engine's other two, `kyutai-mlx` and `kyutai-torch`, are not
+# mirrored: their `moshi-mlx` / `moshi` pin numpy<2.3, which the base's vision-modules
+# (numpy>=2.5.3) rules out, so declaring either makes the lock unsolvable.
 asr-deepgram = ["asr-engine[deepgram]"]
 # The voices, for *both* embodiments (the bridge builds the robot's voice from the same
-# tts-engine): two cloud providers, and the local model (torch + a first-run weight download).
-# Adding one here means adding it to `override-dependencies` below too (see there).
+# tts-engine): one extra per tts-engine provider extra, so the engine's "install
+# tts-engine[<name>]" hint always has a `tts-<name>` here. Hosted providers first, then the
+# local models (pocket: torch + a first-run weight download; qwen3: Apple silicon only, gated by
+# tts-engine's own marker; piper: GPL-3.0+).
 tts-elevenlabs = ["tts-engine[elevenlabs]"]
 tts-gradium = ["tts-engine[gradium]"]
+tts-mistral = ["tts-engine[mistral]"]
+tts-deepgram = ["tts-engine[deepgram]"]
+tts-gemini = ["tts-engine[gemini]"]
+tts-cartesia = ["tts-engine[cartesia]"]
+tts-openai = ["tts-engine[openai]"]
+tts-openai-compatible = ["tts-engine[openai-compatible]"]
 tts-pocket = ["tts-engine[pocket]"]
+tts-phonon = ["tts-engine[phonon]"]
+tts-qwen3 = ["tts-engine[qwen3]"]
+tts-kokoro = ["tts-engine[kokoro]"]
+tts-piper = ["tts-engine[piper]"]
 all = [
-    "wica-interaction[computer,audio-processing,reachy,vision,wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,asr-deepgram,tts-elevenlabs,tts-gradium,tts-pocket]",
+    "wica-interaction[computer,audio-processing,reachy,vision]",
+    "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,wica-mistralai]",
+    "wica-interaction[asr-deepgram]",
+    "wica-interaction[tts-elevenlabs,tts-gradium,tts-mistral,tts-deepgram,tts-gemini,tts-cartesia,tts-openai,tts-openai-compatible]",
+    "wica-interaction[tts-pocket,tts-phonon,tts-qwen3,tts-kokoro,tts-piper]",
 ]
 
 [project.scripts]
@@ -63,8 +82,12 @@ dev = [
     "pyright>=1.1.411",
     "pytest>=9.1.1",
     "ruff>=0.16.6",
-    # Every extra, so the default `uv sync` runs both entry points and the whole test tier.
-    "wica-interaction[all]",
+    # What the example configs and the test tier run, not `all`: both embodiments and their
+    # features, every (light) agent provider, and the speech providers the example configs select.
+    # The other speech providers are resolved by `uv lock` all the same, just not installed.
+    "wica-interaction[computer,audio-processing,reachy,vision]",
+    "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,wica-mistralai]",
+    "wica-interaction[asr-deepgram,tts-elevenlabs,tts-gradium,tts-pocket]",
     # The sim robot backend (the upstream MuJoCo mockup) for manual/e2e testing against a simulated
     # robot; kept dev-only — a real-robot deployment needs none of it.
     "reachy-mini-bridge[sim]",

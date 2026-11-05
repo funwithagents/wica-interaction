@@ -54,7 +54,7 @@ class ComputerConfig:
     camera: CameraConfig
 ```
 
-- **`tts` (required)** — a tts-engine document; its `engine` block goes verbatim to `TTSEngineConfig.from_dict`, so the provider (`module.type`: `elevenlabs`, `gradium`, `pocket`, …), its key reference and voice, and the `player.device` (the speaker) are the engine's own schema. The provider named must have its extra installed (`tts-elevenlabs`, `tts-gradium`, `tts-pocket` — [project.md](project.md)).
+- **`tts` (required)** — a tts-engine document; its `engine` block goes verbatim to `TTSEngineConfig.from_dict`, so the provider (`module.type`: `elevenlabs`, `gradium`, `pocket`, …), its key reference and voice, and the `player.device` (the speaker) are the engine's own schema. The provider named must have its extra installed (`tts-<name>`, one per tts-engine provider: `tts-elevenlabs`, `tts-gradium`, `tts-pocket`, … — [project.md](project.md), "Extras").
 - **`audio_processing` (optional)** — absent ⇒ every feature off; the schema and semantics are in [audio-processing.md](audio-processing.md).
 - **`camera` (optional)** — the webcam `GestureInput` reads when `vision.enabled`; `device` is what `cv2.VideoCapture` takes (an index, default `0`, or a path/URL). Absent ⇒ device `0`. A non-object section, an unknown key, or a `device` that is neither an int nor a string raises `ValueError` from `load_config`, naming the file and the field.
 - The microphone is the ASR config's own `asr.engine.audio.device` (the engine opens it), so it needs no section here.

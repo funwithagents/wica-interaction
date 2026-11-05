@@ -41,11 +41,16 @@ What every embodiment needs is a base dependency; what only one embodiment, prov
 | `wica-huggingface-hub` | `wica[huggingface-hub]` | the Hugging Face agent provider (Inference Providers hub) |
 | `wica-openai` | `wica[openai]` | the OpenAI agent provider |
 | `wica-google-genai` | `wica[google-genai]` | the Gemini agent provider (Gemini Developer API) |
+| `wica-mistralai` | `wica[mistralai]` | the Mistral agent provider (La Plateforme) |
 | `asr-deepgram` | `asr-engine[deepgram]` | the ASR provider the example configs select |
 | `tts-elevenlabs` | `tts-engine[elevenlabs]` | the ElevenLabs cloud voice — both embodiments |
 | `tts-gradium` | `tts-engine[gradium]` | the Gradium cloud voice — both embodiments |
+| `tts-mistral`, `tts-deepgram`, `tts-gemini`, `tts-cartesia`, `tts-openai`, `tts-openai-compatible` | `tts-engine[<name>]` | the other hosted voices — both embodiments |
 | `tts-pocket` | `tts-engine[pocket]` | the local voice (torch + a first-run weight download) — both embodiments |
-| `all` | every extra above | the dev environment (`uv sync --dev` installs it) |
+| `tts-phonon`, `tts-qwen3`, `tts-kokoro`, `tts-piper` | `tts-engine[<name>]` | the other local voices (qwen3: Apple silicon only; piper: GPL-3.0+) — both embodiments |
+| `all` | every extra above | everything in one install |
+
+`uv sync --dev` installs what the example configs and the tests run — both embodiments and their features, every agent provider, `asr-deepgram` and the three voices the templates select (`tts-elevenlabs`, `tts-gradium`, `tts-pocket`) — not `all`. asr-engine's Kyutai extras are not offered: their numpy pin conflicts with `vision-modules` ([specs/project.md](specs/project.md)).
 
 A computer-only install picks one agent provider, one ASR provider and one voice, for instance `uv sync --no-dev --extra computer --extra wica-openai --extra asr-deepgram --extra tts-elevenlabs` — no robot SDK anywhere in the graph.
 
