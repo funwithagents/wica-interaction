@@ -159,7 +159,8 @@ tests-e2e/
 ### Skips and failures
 
 - **By default, a missing prerequisite skips**, as in the rest of the live tier: a missing key through `require_env`, a missing cable device when its first open fails, a missing sim capability through the bridge's `requires` gate. A local run with only part of the setup then passes on what it can run.
-- **`WICA_E2E_FAIL_ON_MISSING=1` turns each of those skips into a failure.** In CI a skip would turn the job green with nothing tested: a secret not passed, a null sink not created, a sim that came up without its camera. With the variable set, the run fails and names what is missing. The conftest also sets the bridge's `REACHY_MINI_E2E_REQUIRED_CAPS` to the capabilities this tier needs (`camera`, `props:hand`), the bridge's own switch for the same rule. CI sets the variable; a local run usually does not.
+- **`WICA_E2E_FAIL_ON_MISSING=1` turns each of those skips into a failure.** In CI a skip would turn the job green with nothing tested: a secret not passed, a null sink not created, a sim that came up without its camera. With the variable set, the run fails and names what is missing. It covers this tier's own prerequisites, the keys and the devices. CI sets it; a local run usually does not.
+- **The sim's capabilities keep the bridge's own switch.** CI sets `REACHY_MINI_E2E_REQUIRED_CAPS=camera,props:hand` itself, so a sim that comes up without its camera or the hand props fails the robot's tests. The conftest does not derive it from `WICA_E2E_FAIL_ON_MISSING`: each switch belongs to the code that checks it, and the workflow shows both. The bridge's capabilities cannot hold our keys and devices, because it learns capabilities by probing a running sim, and the computer's tests never start one.
 - **A failed run is re-run before it is believed.** Retries are not built in, so the report shows every failure, flaky ones included.
 
 ### Evidence on failure
