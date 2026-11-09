@@ -1,6 +1,6 @@
 # CI cache keyed on the source builds
 
-**Status:** In progress
+**Status:** Done
 
 Implements the settled behavior in `specs/ci.md` ("The workflow", the "Caches" bullet): the uv cache is keyed on the locked entries of the sdist-only packages instead of the whole `uv.lock`, so a lock change that does not touch them — a sibling bump — no longer rebuilds `aec-audio-processing` (about two minutes on Linux and macOS) on every job. It leaves out publishing wheels for `aec-audio-processing` upstream, which would remove the build for users too.
 
