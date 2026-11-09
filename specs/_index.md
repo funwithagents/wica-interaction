@@ -1,8 +1,8 @@
 # WICA Interaction
 
-An interaction application built on the **WICA** agentic framework, which handles multimodal interaction by serializing the multimodal context into text for an LLM to reason over, then connecting that reasoning to commands/tools for output. A person **speaks** to the agent and it **speaks (and acts) back**, through whichever **embodiment** the app is launched with: the **computer** it runs on (a microphone, speakers, optionally a webcam — the former `vocal-interaction-wica` app) or a **Reachy Mini** robot (speaking, listening and seeing through the robot, playing emotions, managing its motors). Speech in is an **ASR** engine over the embodiment's mic; reasoning is WICA; hand signs come from the sibling [`vision-modules`](https://github.com/funwithagents/vision-modules) pipeline over the embodiment's camera; speech out and actions are the embodiment's. The underlying packages (`wica`, `asr-engine`, `tts-engine`, `reachy-mini-bridge`, `vision-modules`) are first-party sibling packages consumed from GitHub as git dependencies (each pinned to an exact commit by `uv.lock`), selected by extras.
+The design of WICA Interaction, one spec per concept: an interaction application on the **WICA** agentic framework in which a person **speaks** to the agent and it **speaks (and acts) back**, through whichever **embodiment** it is launched with — the computer it runs on, or a Reachy Mini robot. These specs are the normative design: every guarantee with its rationale and its open questions. To *use* the app, start at the [README](../README.md) and the [documentation by task](../docs/index.md) instead.
 
-> **New here?** Read [_overview.md](_overview.md) first for the global vision — what the app is, the end-to-end data flow, the embodiments, and how the specs below fit together.
+> **New here?** Read [_overview.md](_overview.md) first for the architecture — what the app is, the end-to-end data flow, the embodiments, and how the specs below fit together.
 
 ## Specs
 

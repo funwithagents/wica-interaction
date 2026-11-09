@@ -10,11 +10,16 @@ Where things live. This is a coarse, module-level map — for the full file inve
 
 | Path | What's there |
 |---|---|
+| `README.md` | The landing page: what the app is, its status, the install recipes, the quick start, the links into `docs/`, how it is developed |
+| `CONTRIBUTING.md` | How the project is run: one maintainer, no external pull requests for now, feedback through issues |
+| `docs/` | The consumer documentation, entered through [docs/index.md](docs/index.md) (by task): [getting-started.md](docs/getting-started.md); `reference/` — the config file ([configuration.md](docs/reference/configuration.md): every section, the templates, what a loader rejects), the install ([install.md](docs/reference/install.md): the extras, the platforms, the first-run downloads) and the agent's surface ([agent.md](docs/reference/agent.md): the World entries, the Commands, the persona sections, the transcript); `guides/` — one page per task (the computer, the Reachy Mini, hand signs, dictation, personas, benchmarking, limits, troubleshooting). One home per fact: a reference page owns it, every other page links there; the specs stay the normative design, and this file the operating manual ([specs/project.md](specs/project.md) "Repo shape") |
+| `prompts/` | One persona per embodiment, `computer.md` and `reachy.md`, selected by the config's `wica.agent.system_prompt_file` ([specs/app.md](specs/app.md) "World, Commands, persona") |
+| `config.computer.example.json`, `config.reachy.example.json` | One config template per embodiment, copied and adapted by a user ([specs/configuration.md](specs/configuration.md)) |
 | `src/wica_interaction/` | The library itself — one module per shared concept, one subpackage per embodiment (see below) |
 | `specs/` | Pre-implementation design docs, one per concept, each with a `**Status:**` — indexed by [specs/_index.md](specs/_index.md) |
 | `plans/` | Implementation plans turning settled specs into buildable steps — indexed by [plans/_index.md](plans/_index.md) |
-| `tests/` | Fast, deterministic, no-network tests; mirrors the `src/wica_interaction/` module structure, embodiment subpackages included (`tests/computer/`, `tests/reachy/`) |
-| `tests-e2e/` | Opt-in live tests that call real external services (not collected by default `pytest`) |
+| `tests/` | Fast, deterministic, no-network tests; mirrors the `src/wica_interaction/` module structure, embodiment subpackages included (`tests/computer/`, `tests/reachy/`); `test_project_map.py` keeps this map and the spec frontmatter honest, `test_docs.py` the documentation (links and anchors, the tables that mirror code — [specs/project.md](specs/project.md) "Documentation checks") |
+| `tests-e2e/` | Opt-in live tests that call real external services or load real models (not collected by default `pytest`); today the hand-sign pipeline over the real vision models |
 
 ### `src/wica_interaction/` modules
 
@@ -78,7 +83,13 @@ The mapping is **many-to-many**: a file can be governed by several specs, so the
 
 ### Live/e2e tests
 
-Some tests call real external services over the network. They live in `tests-e2e/`, a directory separate from `tests/`, so the default `uv run pytest` never runs them — no network access or credentials are needed for the normal dev loop. Run them explicitly, and only when you actually want to verify against a live service. Tests that lack their required credentials should **skip**, not fail, so the tier is safe to run with only the keys you happen to have.
+Some tests call real external services over the network, or load real models. They live in `tests-e2e/`, a directory separate from `tests/`, so the default `uv run pytest` never runs them — no network access or credentials are needed for the normal dev loop. Run them explicitly (`uv run pytest tests-e2e -rs`, the `-rs` printing why each skipped test skipped), and only when you actually want to verify against a live service. Tests that lack their required credentials should **skip**, not fail, so the tier is safe to run with only the keys you happen to have: `tests-e2e/support.require_env(NAME)` skips when the variable is unset. Today the tier holds the hand-sign pipeline over the real vision models (`test_gesture_input_live.py`), which skips when the models or `vision-modules`' bundled photos are unavailable (the first run downloads the models — a few hundred megabytes).
+
+## Developing against a sibling checkout
+
+The five first-party dependencies (`wica`, `asr-engine`, `tts-engine`, `reachy-mini-bridge`, `vision-modules`) are git sources on their `main` branch, each pinned to an exact commit by `uv.lock` ([specs/project.md](specs/project.md) "Sibling sources"). To pick up a newer commit of one: `uv lock --upgrade-package <name>` (for instance `reachy-mini-bridge`), then `uv sync --dev`, and commit `uv.lock` with the change that needs it.
+
+To work on a sibling locally against this app, point its `[tool.uv.sources]` entry at the checkout for the duration — `<name> = { path = "../<repo>", editable = true }` — then `uv sync --dev`. `tts-engine` alone also needs `[tool.uv] override-dependencies = ["tts-engine"]`, because the bridge names it by a GitHub URL in its own metadata and uv refuses two different URLs for one package (the spec has the detail). Either edit is an **uncommitted convenience**: revert it before committing — the declared dependency is always the GitHub source.
 
 ## Implementation plans
 
@@ -99,5 +110,6 @@ uv sync --dev
 uv run ruff check .
 uv run ruff format .
 uv run pyright
-uv run pytest
+uv run pytest                 # the fast tier
+uv run pytest tests-e2e -rs   # the live tier, opt-in: what has its models or keys runs, the rest skips
 ```

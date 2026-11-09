@@ -1,83 +1,116 @@
 # wica-interaction
 
-One interaction application built on the **WICA** agentic framework, in which a person **speaks** to an AI agent and the agent **speaks — and, given a body, acts — back**. The same program runs in different **embodiments**, chosen by the command you launch:
+**An interaction application on the [WICA](https://github.com/funwithagents/wica-framework) agentic framework: a person speaks to an AI agent, and the agent speaks back, and acts back when it has a body.** The same program runs in different **embodiments**, chosen by the command you launch:
 
-- **`wica-interaction-computer`** — the agent on the machine it runs on: a local microphone, the speakers (a [`tts-engine`](https://github.com/funwithagents/tts-engine) voice), optionally a webcam for hand signs. A plain voice assistant.
-- **`wica-interaction-reachy`** — the agent in a [Reachy Mini](https://github.com/pollen-robotics/reachy_mini): it speaks out of the robot's speaker, listens through the robot's echo-cancelled mic, sees through the robot's camera, plays emotions and manages its motors, all through [`reachy-mini-bridge`](https://github.com/funwithagents/reachy-mini-bridge)'s `ReachyMiniBridge`.
+- **`wica-interaction-computer`**: the agent on the machine it runs on. A microphone, the speakers, optionally a webcam for hand signs. A voice assistant.
+- **`wica-interaction-reachy`**: the agent in a [Reachy Mini](https://github.com/pollen-robotics/reachy_mini). It speaks out of the robot's speaker, listens through the robot's echo-cancelled microphone, sees hand signs through the robot's camera, plays emotions and manages its motors.
 
-Everything WICA-side is shared — the World and its `speech_input` entry, the dictation commands, the hand-sign entries, the transcript and observability panels, the whole lifecycle. What varies is captured by one small protocol, the [Embodiment](specs/embodiment.md): where audio comes in and goes out, what the agent can act with, and what it sees through. Everything runs in-process (no MCP servers) behind a small Gradio UI: WICA's own observability panels (the reusable `wica.contrib.gradio` components) next to the app's live ASR and Vision panel.
+Speech in is a live speech recognizer, speech out real audio, and the robot really moves. Everything the agent is, the World it reasons over, its Commands, its persona, the page you watch it on, is shared; what a body adds is captured by one small protocol, the [Embodiment](specs/embodiment.md).
+
+**Start here:**
+
+- [docs/getting-started.md](docs/getting-started.md): install, a template, the keys, the computer app, then the robot in the simulator and on a Reachy Mini.
+- [docs/index.md](docs/index.md): the documentation, by task.
+- On this page: [what you get](#what-you-get), [install](#install), the [quick start](#quick-start).
+
+## Project status
+
+> [!WARNING]
+> - **Under development: the config and the code change.** The app is at version 0.1 and is shaped as it is used, together with the five first-party packages it is built on; a config field or a persona rule can change between commits, without a deprecation period.
+> - **Run on macOS (Apple silicon)**: the computer embodiment, and the robot embodiment on the MuJoCo simulator and on a **Reachy Mini Lite** over USB. Linux and Windows resolve from the lock file but have not been run; the wireless Reachy Mini is untested here as in the bridge ([docs/reference/install.md](docs/reference/install.md#platforms)).
+
+> [!TIP]
+> **Feedback is welcome: open an issue.** Bug reports, questions, reports from a platform, a robot or a model the author does not test on, and what you would want the config or the personas to do differently all go to [the issue tracker](https://github.com/funwithagents/wica-interaction/issues). The project is developed by one person and is not taking pull requests yet; [CONTRIBUTING.md](CONTRIBUTING.md) says why and how to help anyway.
+
+## What you get
+
+| Feature | What it is |
+|---|---|
+| **A spoken conversation** | A speech recognizer over the body's microphone turns each closed utterance into one `speech_input` the agent reasons over; the agent answers through `say`, a Command that plays real audio and stays visibly running for the duration of the speech ([docs/reference/agent.md](docs/reference/agent.md)) |
+| **One app, several bodies** | The computer and the Reachy Mini are two implementations of one protocol: where audio comes in and goes out, what the agent can act with, what it sees through. The lifecycle, the World, the dictation Commands and the page are written once ([specs/embodiment.md](specs/embodiment.md)) |
+| **A robot that acts** | On the Reachy Mini the agent plays emotions and manages the motors through Commands over [`reachy-mini-bridge`](https://github.com/funwithagents/reachy-mini-bridge); the robot breathes, sways with its voice and follows the person's face on its own ([docs/guides/reachy-mini.md](docs/guides/reachy-mini.md)) |
+| **Hand signs** | The body's camera runs through [`vision-modules`](https://github.com/funwithagents/vision-modules)' hand pipeline; a small vocabulary (`stop`, `like`, `dislike`, `ok`, `one` to `five`), one sign per hand, reaches the agent once it has held for half a second, and the agent decides what a sign means, except `stop` ([docs/guides/hand-signs.md](docs/guides/hand-signs.md)) |
+| **Dictation** | The agent switches speech capture to one longer passage when asked, ended by a pause or a trigger word, and reverts on its own ([docs/guides/dictation.md](docs/guides/dictation.md)) |
+| **No echo** | The agent never hears its own voice: the robot's XVF3800 cancels it in hardware, the computer runs an opt-in WebRTC echo canceller fed with what the voice plays ([docs/guides/computer.md](docs/guides/computer.md#echo-cancellation)) |
+| **One JSON config** | The agent provider, the speech recognizer, the voice, the robot backend, the camera and the persona are one file; each engine section is that engine's own document, nested verbatim ([docs/reference/configuration.md](docs/reference/configuration.md)) |
+| **Provider choice** | Anthropic, OpenAI, Gemini, Mistral or the Hugging Face Hub for the agent; Deepgram for speech in; thirteen voices, hosted or local, for speech out, each an extra you install only if you use it ([docs/reference/install.md](docs/reference/install.md#extras)) |
+| **Watch it work** | A Gradio page: the conversation with every Command's execution state live, the live speech recognition and the Vision line, a typed-text box, and WICA's World and reaction panels behind a debug toggle |
+| **Opens even when degraded** | A missing key, an absent extra, a robot that cannot be reached: each lands as one banner line, and what still works keeps working, typed text driving the agent at the least ([docs/guides/troubleshooting.md](docs/guides/troubleshooting.md#the-banner)) |
+
+## Install
+
+Python 3.12+ and [`uv`](https://docs.astral.sh/uv/), from a checkout. Pick a body, an agent provider, a speech recognizer and a voice as extras; the three recipes most people want:
+
+```
+git clone https://github.com/funwithagents/wica-interaction.git && cd wica-interaction
+
+# the computer, as the template configures it
+uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --extra tts-elevenlabs --extra audio-processing --extra vision
+
+# the Reachy Mini, as the template configures it (the simulator needs the dev environment below)
+uv sync --no-dev --extra reachy --extra wica-huggingface-hub --extra asr-deepgram --extra tts-pocket --extra vision
+
+# the development environment: both bodies, every agent provider, the simulator, the tooling
+uv sync --dev
+```
+
+Every extra, the platforms, the system packages and the first-run downloads are in [docs/reference/install.md](docs/reference/install.md).
+
+## Quick start
+
+One config file stands up each embodiment; the committed files are templates to copy and adapt ([docs/reference/configuration.md](docs/reference/configuration.md)). Keys are referenced by environment variable, never stored.
+
+```
+export WICA_ANTHROPIC_API_KEY=sk-...   # the agent
+export DEEPGRAM_API_KEY=...            # speech in
+export ELEVENLABS_API_KEY=...          # the voice
+uv run wica-interaction-computer --config config.computer.example.json
+```
+
+Open the address Gradio prints and talk. Each thing you say shows as 🗣️ on the left; the agent's reply is a **🗣️ say** item that stays running while you hear it. Without a key the page still opens, says what to set, and the text box drives the agent wherever its own key is set.
+
+The robot, in the simulator the bridge spawns for you (the MuJoCo viewer opens; needs `uv sync --dev`, and on macOS an unlocked GUI session):
+
+```
+export WICA_HF_TOKEN=hf_...            # the agent (the template uses the Hugging Face Hub)
+export DEEPGRAM_API_KEY=...
+uv run wica-interaction-reachy --config config.reachy.example.json
+```
+
+The template's voice is the local `pocket` model, which needs no key and downloads its weights on first run. For a Reachy Mini Lite plugged in over USB, set `reachy.backend` to `"real"`; the complete walk-through, the simulator's options and the robot's, continues in [docs/getting-started.md](docs/getting-started.md).
 
 ## Documentation
 
-- **[specs/_overview.md](specs/_overview.md)** — global view: what the app is, the end-to-end data flow, the embodiments, and how the modules fit. Start here.
-- **[specs/_index.md](specs/_index.md)** — index of the specs and their status.
-- **[plans/_index.md](plans/_index.md)** — implementation plans and their status.
-- **[AGENTS.md](AGENTS.md)** — operating manual: specs/plans/status discipline, the project map, commands, verification.
+Start at [docs/index.md](docs/index.md), the documentation by task. The pages used most:
 
-## Sibling dependencies
+| | |
+|---|---|
+| [docs/getting-started.md](docs/getting-started.md) | Install, a template, the keys, the first run on the computer, then the robot |
+| [docs/reference/configuration.md](docs/reference/configuration.md) | The one JSON file section by section, the templates, what a loader rejects |
+| [docs/reference/install.md](docs/reference/install.md) | Every extra, the platforms, the system packages, the first-run downloads |
+| [docs/reference/agent.md](docs/reference/agent.md) | What the model sees and can do: the World entries, the Commands, the persona sections, the transcript |
+| [docs/guides/](docs/index.md#by-task) | The computer, the Reachy Mini, hand signs, dictation, personas, benchmarking, limits, troubleshooting |
 
-First-party repos, per [specs/project.md](specs/project.md). All five are consumed from GitHub (`main`, pinned to an exact commit by `uv.lock`); nothing here depends on a checkout next door:
+## How it is developed
 
-- `wica` ([github.com/funwithagents/wica-framework](https://github.com/funwithagents/wica-framework)) — the agentic framework, plus its reusable Gradio panels.
-- `asr-engine` ([github.com/funwithagents/asr-engine](https://github.com/funwithagents/asr-engine)) — speech-to-text over whichever mic the embodiment provides.
-- `tts-engine` ([github.com/funwithagents/tts-engine](https://github.com/funwithagents/tts-engine)) — the computer's voice, and the voice the bridge builds for the robot.
-- `reachy-mini-bridge` ([github.com/funwithagents/reachy-mini-bridge](https://github.com/funwithagents/reachy-mini-bridge)) — the robot's interaction API: connects to the robot, manages the daemon, and builds the voice itself from the config's `reachy.tts` block.
-- `vision-modules` ([github.com/funwithagents/vision-modules](https://github.com/funwithagents/vision-modules)) — the hand stage + HaGRID gesture classifier behind the hand-sign input: each hand's sign (`stop`, `like`, `dislike`, `ok`, `one` … `five`), once it has held for `vision.hold_s` (0.5 s), reaches the agent as its own World entry (see [specs/gesture-input.md](specs/gesture-input.md)). The models download on first run (a MediaPipe bundle and a ~340 MB ViT); enable it with a `vision` config section.
+WICA Interaction is a spec-driven project, like the packages it is built on: every feature is designed before it is coded and pinned by tests at two levels.
 
-To pick up a newer commit of any of them: `uv lock --upgrade-package <name>` (for instance `reachy-mini-bridge`), then `uv sync --dev`, and commit `uv.lock`. To work on a sibling locally against this app, point its `[tool.uv.sources]` entry at the checkout for the duration (`{ path = "../<repo>", editable = true }`; `tts-engine` also needs `[tool.uv] override-dependencies = ["tts-engine"]`, see the spec) — an uncommitted convenience, never the declared dependency.
+- **Specs first.** Each concept has one spec under [specs/](specs/), the normative design with its rationale and its open questions, indexed by [specs/_index.md](specs/_index.md) with a status; [specs/_overview.md](specs/_overview.md) is the architecture in one page. An implementation plan under [plans/](plans/_index.md) turns a settled spec into code. Each spec names the code and tests it governs, and tests keep that map, the statuses and the documentation's links honest.
+- **Two test tiers.** `tests/` is fast and deterministic: no network, no key, no audio device, no camera, no robot; the lifecycle runs over a fake body and WICA's scripted `fake` provider. `tests-e2e/` is opt-in and calls real services, skipping what it lacks a key or a model for ([specs/testing.md](specs/testing.md)).
+- **Five first-party packages**, each from its GitHub repository and pinned to a commit by `uv.lock`: [wica](https://github.com/funwithagents/wica-framework) (the agent and its Gradio panels), [asr-engine](https://github.com/funwithagents/asr-engine) (speech in), [tts-engine](https://github.com/funwithagents/tts-engine) (the voices), [reachy-mini-bridge](https://github.com/funwithagents/reachy-mini-bridge) (the robot), [vision-modules](https://github.com/funwithagents/vision-modules) (the hand pipeline).
+- **[AGENTS.md](AGENTS.md) is the operating manual** for anyone, or any coding agent, working in the repository: the project map (which module does what, with its spec), the verification gate, how to run the live tier, how to develop against a sibling checkout, and how the specs and their statuses are kept in step with the code.
 
-## Extras
-
-What every embodiment needs is a base dependency; what only one embodiment, provider or optional feature needs is an extra, so a deployment installs only what it runs ([specs/project.md](specs/project.md)):
-
-| Extra | Pulls | For |
-|---|---|---|
-| *(base)* | `wica[gradio]`, `asr-engine`, `vision-modules` (numpy-only core), `gradio`, `numpy` | the lifecycle, the UI, speech in, the vision plumbing |
-| `computer` | `tts-engine` | the computer embodiment's voice |
-| `audio-processing` | `aec-audio-processing`, `samplerate` | the computer's echo cancellation / noise suppression |
-| `reachy` | `reachy-mini-bridge` | the Reachy Mini embodiment (pulls the upstream `reachy-mini` SDK) |
-| `vision` | `vision-modules[hand,opencv]` | the hand-sign input (the models, plus OpenCV for the webcam and the snapshot buttons), either embodiment |
-| `wica-anthropic` | `wica[anthropic]` | the Anthropic agent provider |
-| `wica-huggingface-hub` | `wica[huggingface-hub]` | the Hugging Face agent provider (Inference Providers hub) |
-| `wica-openai` | `wica[openai]` | the OpenAI agent provider |
-| `wica-google-genai` | `wica[google-genai]` | the Gemini agent provider (Gemini Developer API) |
-| `wica-mistralai` | `wica[mistralai]` | the Mistral agent provider (La Plateforme) |
-| `asr-deepgram` | `asr-engine[deepgram]` | the ASR provider the example configs select |
-| `tts-elevenlabs` | `tts-engine[elevenlabs]` | the ElevenLabs cloud voice — both embodiments |
-| `tts-gradium` | `tts-engine[gradium]` | the Gradium cloud voice — both embodiments |
-| `tts-mistral`, `tts-deepgram`, `tts-gemini`, `tts-cartesia`, `tts-openai`, `tts-openai-compatible` | `tts-engine[<name>]` | the other hosted voices — both embodiments |
-| `tts-pocket` | `tts-engine[pocket]` | the local voice (torch + a first-run weight download) — both embodiments |
-| `tts-phonon`, `tts-qwen3`, `tts-kokoro`, `tts-piper` | `tts-engine[<name>]` | the other local voices (qwen3: Apple silicon only; piper: GPL-3.0+) — both embodiments |
-| `all` | every extra above | everything in one install |
-
-`uv sync --dev` installs what the example configs and the tests run — both embodiments and their features, every agent provider, `asr-deepgram` and the three voices the templates select (`tts-elevenlabs`, `tts-gradium`, `tts-pocket`) — not `all`. asr-engine's Kyutai extras are not offered: their numpy pin conflicts with `vision-modules` ([specs/project.md](specs/project.md)).
-
-A computer-only install picks one agent provider, one ASR provider and one voice, for instance `uv sync --no-dev --extra computer --extra wica-openai --extra asr-deepgram --extra tts-elevenlabs` — no robot SDK anywhere in the graph.
-
-## Development
+The same gate, locally:
 
 ```
 uv sync --dev
 uv run ruff check .
 uv run ruff format .
 uv run pyright
-uv run pytest
+uv run pytest                 # the fast tier
+uv run pytest tests-e2e       # the live tier: what has its models or keys runs, the rest skips
 ```
 
-## Running
+## License
 
-One config file stands up each embodiment, and each committed example is a **template** — copy it, fill in the API keys, and adapt it; `--config` is required, with no default.
-
-**The computer** ([config.computer.example.json](config.computer.example.json)): the agent's key (`WICA_ANTHROPIC_API_KEY`), ASR's (`DEEPGRAM_API_KEY`) and the voice's (`ELEVENLABS_API_KEY`). Echo cancellation is on by default, so the agent does not hear itself through the speakers; `vision.enabled` is on, reading hand signs through the webcam `camera.device` names — set it to `false` to run without a camera.
-
-```
-uv run wica-interaction-computer --config config.computer.example.json
-```
-
-**The Reachy Mini** ([config.reachy.example.json](config.reachy.example.json)): the agent's key and ASR's (the committed voice is the local `pocket` model, which needs none, downloading its weights on first run). As committed it targets a **headful `sim`** daemon (`"reachy": {"backend": "sim", "daemon": {"spawn": "auto", "headless": false}}`), which the bridge spawns itself and opens the MuJoCo viewer in (needs `mjpython` on `PATH` and an unlocked GUI session — see `reachy-mini-bridge/docs/guides/running-daemons.md`); set `reachy.daemon.headless` to `true` for a windowless daemon. For the physical robot, change `reachy.backend` to `"real"` — the `reachy.daemon` block then spawns the daemon of a robot plugged in over USB (a wireless robot runs its own daemon: set `spawn` to `"never"` and point `reachy.robot.host` at it). For the offline `fake` backend, change it to `"fake"` **and delete the `reachy.daemon` block** (`fake` has no daemon, so the loader rejects spawning there). Either way keep `reachy.tts`, or the robot comes up without a voice. The `reachy.face_detection` block (`"detector": "yunet"`) names the bridge's shipped face detector, which `reachy.motion.tracking` needs: the robot then follows the person in front of it (the detector's weights download on first run); for a robot that does not turn its head, set `tracking` to `false` and drop `face_detection`; its `width` and `target_fps` trade detection precision and rate against CPU. Hand signs are read from the same camera feed the detector uses — the bridge reads the robot's camera once and every consumer samples it:
-
-```
-uv run wica-interaction-reachy --config config.reachy.example.json
-```
-
-Whichever you launch, the app **opens even when something could not be built** and says what to fix in a banner: with no body the agent still reasons over typed text, with a body but no voice `say` stays wired and reports a TTS error (on either embodiment), and with no ASR key the typed-text box is the way in.
+MIT, see [LICENSE](LICENSE). Some voice extras pull in differently licensed packages or weights (`tts-piper` is GPL-3.0+); tts-engine's module pages say so.

@@ -74,6 +74,8 @@ Each embodiment is stood up from a single JSON file: the shared sections `wica`,
 
 ## Where to start reading
 
+To **run** the app rather than change it, the user documentation is the place: [../docs/index.md](../docs/index.md), by task, with [../docs/getting-started.md](../docs/getting-started.md) first and the config file in [../docs/reference/configuration.md](../docs/reference/configuration.md). The specs below are for the design and its rationale:
+
 - The whole product & UI: [app.md](app.md)
 - The seam between the app and a body: [embodiment.md](embodiment.md), then [computer-embodiment.md](computer-embodiment.md) / [reachy-embodiment.md](reachy-embodiment.md)
 - The speech-in rule and dictation: [asr-bridge.md](asr-bridge.md)
