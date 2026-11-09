@@ -49,7 +49,7 @@ Resources a test *creates* are its own to release. In particular, every lifecycl
 
 ## Live tier: skip without credentials
 
-A live test needs real credentials, and it must **skip — never fail** — when they're absent, so you exercise only the services you hold keys for and a contributor (or CI) with none is never broken. `tests-e2e/support.require_env(NAME)` implements this: it returns the env var or calls `pytest.skip(...)` when it's unset. Credentials come from the environment, never committed. Today the tier holds one scenario, the gesture input over the real vision models ([gesture-input.md](gesture-input.md)), skipped when the models are unavailable; the whole-loop live tests the embodiment specs defer (a robot actually speaking and moving; a real mic + speakers not self-triggering) are its intended next occupants.
+A live test needs real credentials, and it must **skip — never fail** — when they're absent, so you exercise only the services you hold keys for and a contributor (or CI) with none is never broken. `tests-e2e/support.require_env(NAME)` implements this: it returns the env var or calls `pytest.skip(...)` when it's unset. Credentials come from the environment, never committed. Today the tier holds one scenario, the gesture input over the real vision models ([gesture-input.md](gesture-input.md)), skipped when the models are unavailable. The end-to-end tier designed in [e2e.md](e2e.md) replaces it: every module real, only the devices replaced, on both embodiments.
 
 ## Tooling
 
@@ -58,4 +58,4 @@ A live test needs real credentials, and it must **skip — never fail** — when
 
 ## Open questions
 
-1. **The live tier in CI.** The static gate and the fast tier run on GitHub's hosted runners ([ci.md](ci.md)); the live tier's jobs come with the end-to-end work.
+1. **The live tier in CI.** The static gate and the fast tier run on GitHub's hosted runners ([ci.md](ci.md)); the live tier's jobs come with the end-to-end work ([e2e.md](e2e.md)).
