@@ -71,9 +71,9 @@ What the lock file resolves on each platform, checked on 2026-11-09, apart from 
 | Platform | Resolves | Not available | Run |
 |---|---|---|---|
 | macOS, Apple silicon | everything | | **yes**: developed here; the computer embodiment, and the robot embodiment on the simulator and on a Reachy Mini Lite over USB |
-| Linux x86_64 | everything, with the [system packages](#system-packages) below | | not yet; expected from the dependencies (every sibling runs its tests there) |
+| Linux x86_64 | everything, with the [system packages](#system-packages) below | | the fast tier, in CI on every change |
 | Linux arm64 (a Raspberry Pi, a Jetson) | everything but the `vision` extra | hand signs: MediaPipe ships no wheel, so the `vision` extra does not install, and neither does the `dev` group that pulls it | not yet |
-| Windows x86_64 | everything | | not yet; the bridge has run only its unit tests on Windows, so the robot path is unvalidated there, and the simulator's viewer and a Lite over USB are untried |
+| Windows x86_64 | everything | | the fast tier, in CI on every change; the app itself has not run there, the robot path is unvalidated, and the simulator's viewer and a Lite over USB are untried |
 | macOS, Intel | the base, the agent providers, the hosted voices, the robot | hand signs and the local voices: torch, MediaPipe and onnxruntime ship no wheel for an Intel Mac | not yet |
 
 The Reachy Mini side follows the bridge's own matrix, one table of what each setup needs and gives and how far it is validated: [backends and capabilities](https://github.com/funwithagents/reachy-mini-bridge/blob/main/docs/reference/backends-and-capabilities.md). The wireless Reachy Mini is untested by the bridge's author too.

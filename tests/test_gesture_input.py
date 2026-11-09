@@ -358,13 +358,15 @@ def test_a_sign_is_delivered_after_the_hold_and_not_before() -> None:
     arrives once, and the status echoes the hold."""
     camera = _camera()
     deliveries: list[Delivery] = []
+    # Holds in these tests are 0.5 s: wide enough that the "not yet" checks land inside them
+    # even on a hosted macOS runner, whose sleeps and waits run several times long.
     gesture = _input(
-        camera, ScriptedClassifier(_scores("like", 0.9)), deliveries, hold_s=0.2
+        camera, ScriptedClassifier(_scores("like", 0.9)), deliveries, hold_s=0.5
     )
     t0 = time.monotonic()
     gesture.start()
     try:
-        assert gesture.status()["hold_s"] == 0.2
+        assert gesture.status()["hold_s"] == 0.5
         # The classifier is publishing well before the hold elapses, yet nothing is delivered.
         assert _wait_until(
             lambda: [h["label"] for h in gesture.status()["hands"]] == ["like"]
@@ -372,7 +374,7 @@ def test_a_sign_is_delivered_after_the_hold_and_not_before() -> None:
         assert deliveries == []
         assert gesture.status()["signs"] == [None, None]
         assert _wait_until(lambda: deliveries == [(1, "like")])
-        assert time.monotonic() - t0 >= 0.2
+        assert time.monotonic() - t0 >= 0.5
         assert gesture.status()["signs"] == ["like", None]
         time.sleep(0.1)  # many more frames at 100 fps
         assert deliveries == [(1, "like")]
@@ -386,14 +388,14 @@ def test_a_flickering_sign_never_arrives_until_it_settles() -> None:
     camera = _camera()
     deliveries: list[Delivery] = []
     classifier = ScriptedClassifier(_scores("stop", 0.9))
-    gesture = _input(camera, classifier, deliveries, hold_s=0.2)
+    gesture = _input(camera, classifier, deliveries, hold_s=0.5)
     gesture.start()
     try:
-        deadline = time.monotonic() + 0.6
+        deadline = time.monotonic() + 1.5
         flip = False
         while (
             time.monotonic() < deadline
-        ):  # flip every ~50 ms, well under the 200 ms hold
+        ):  # flip every ~50 ms, well under the 500 ms hold
             classifier.scores = _scores("palm" if flip else "stop", 0.9)
             flip = not flip
             time.sleep(0.05)
@@ -580,7 +582,9 @@ def test_a_feed_that_stops_publishing_reads_stalled_until_a_frame_lands() -> Non
     """The robot's feed has no error of its own to report, so a quiet camera must show through the
     module: no new frame for `stall_s` is the stall line, cleared by the next frame."""
     camera = _camera()
-    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), [], stall_s=0.1)
+    # A wide stall window: the "not yet" check below must land inside it even on a hosted
+    # macOS runner, whose sleeps run several times long.
+    gesture = _input(camera, ScriptedClassifier(_scores("fist", 0.9)), [], stall_s=0.5)
     gesture.start()
     try:
         assert _wait_until(lambda: camera.published_count > 0)
@@ -589,7 +593,7 @@ def test_a_feed_that_stops_publishing_reads_stalled_until_a_frame_lands() -> Non
         time.sleep(0.05)
         assert gesture.status()["capture_error"] is None  # not yet: within stall_s
         assert _wait_until(
-            lambda: gesture.status()["capture_error"] == "no camera frame for 0.1 s"
+            lambda: gesture.status()["capture_error"] == "no camera frame for 0.5 s"
         )
         camera.frame = _HAND_FRAME  # frames are back
         assert _wait_until(lambda: gesture.status()["capture_error"] is None)

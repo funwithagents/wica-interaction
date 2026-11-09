@@ -19,6 +19,7 @@ Where things live. This is a coarse, module-level map — for the full file inve
 | `specs/` | Pre-implementation design docs, one per concept, each with a `**Status:**` — indexed by [specs/_index.md](specs/_index.md) |
 | `plans/` | Implementation plans turning settled specs into buildable steps — indexed by [plans/_index.md](plans/_index.md) |
 | `tests/` | Fast, deterministic, no-network tests; mirrors the `src/wica_interaction/` module structure, embodiment subpackages included (`tests/computer/`, `tests/reachy/`); `test_project_map.py` keeps this map and the spec frontmatter honest, `test_docs.py` the documentation (links and anchors, the tables that mirror code — [specs/project.md](specs/project.md) "Documentation checks") |
+| `.github/workflows/` | The CI workflow: the static gate and the fast tier on every pull request and push to `main` ([specs/ci.md](specs/ci.md)) |
 | `tests-e2e/` | Opt-in live tests that call real external services or load real models (not collected by default `pytest`); today the hand-sign pipeline over the real vision models |
 
 ### `src/wica_interaction/` modules
