@@ -6,7 +6,7 @@
 # the fast tier needs no device, no network and no key, and is where each platform's install
 # and code paths meet a real machine. Linux arm64 is left out: MediaPipe ships no wheel there,
 # so the dev group does not install. No secret is needed. The live tier's jobs join with the
-# end-to-end work (analysis/202611091830_e2e-full-pipeline.md, §14).
+# end-to-end work.
 
 name: CI
 

@@ -2,17 +2,16 @@
 
 **Status:** Done
 
-Implements [specs/ci.md](../specs/ci.md): one GitHub Actions workflow running lint, format and type checks on Linux and the fast tier on Linux, macOS and Windows, on every pull request and push to `main`. Leaves out the live tier's jobs, which come with the end-to-end work ([analysis/202611091830_e2e-full-pipeline.md](../analysis/202611091830_e2e-full-pipeline.md), §14).
+Implements [specs/ci.md](../specs/ci.md): one GitHub Actions workflow running lint, format and type checks on Linux and the fast tier on Linux, macOS and Windows, on every pull request and push to `main`. Leaves out the live tier's jobs, which come with the end-to-end work.
 
 ## Scope
 
 - `.github/workflows/ci.yml` — new: the `check` and `fast-tier` jobs.
 - `specs/ci.md` — new: the CI design; `specs/_index.md` gains its row.
 - `specs/testing.md` — the "CI wiring" open question is answered by the new spec; the "today all testing is local" line goes.
-- `specs/project.md` — the repository shape names `.github/workflows/` and `analysis/`.
+- `specs/project.md` — the repository shape names `.github/workflows/`.
 - `specs/reachy-embodiment.md`, `tests/reachy/test_config.py` — the template test loads the one committed Reachy template. It named a French template that was never committed, so the committed tree failed its own fast tier.
-- `AGENTS.md` — the top-level layout names `.github/` and `analysis/`.
-- `analysis/202611091830_e2e-full-pipeline.md` — new: the end-to-end analysis this CI design comes from.
+- `AGENTS.md` — the top-level layout names `.github/`.
 - `plans/_index.md` — this plan's row.
 
 ## Steps

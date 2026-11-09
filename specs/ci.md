@@ -12,7 +12,7 @@ tests:
 
 The verification gate of [AGENTS.md](../AGENTS.md) — lint, format, type check, tests — runs on GitHub's hosted runners for every pull request and every push to `main`, so it is a machine's verdict on each change and not only a local command. Like [testing.md](testing.md) this is a cross-cutting practice, not a runtime concept: nothing here ships in the package, and the one file that implements it is the workflow.
 
-This spec covers the **static gate and the fast tier**. The live tier's jobs — the full end-to-end tier on Linux and its nightly run with the production providers — are designed in [analysis/202611091830_e2e-full-pipeline.md](../analysis/202611091830_e2e-full-pipeline.md) (§14) and join this spec with the e2e work.
+This spec covers the **static gate and the fast tier**. The live tier's jobs — the full end-to-end tier on Linux and its nightly run with the production providers — join this spec with the e2e work.
 
 The model is the sibling bridge's CI (`reachy-mini-bridge/specs/testing/ci.md`): the same runners, the same system packages for the robot SDK, the same shape of jobs.
 
@@ -71,5 +71,5 @@ One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` t
 
 ## Open questions
 
-1. **The live tier's jobs.** The full end-to-end tier on Linux, on every pull request and push to `main`, plus a nightly run with the production providers. Designed in the e2e analysis (§14), specified here with the e2e work.
+1. **The live tier's jobs.** The full end-to-end tier on Linux, on every pull request and push to `main`, plus a nightly run with the production providers, specified here with the e2e work.
 2. **Linux arm64.** Waits on MediaPipe, or on a dev group that installs without hand signs.
