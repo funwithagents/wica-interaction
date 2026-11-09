@@ -138,7 +138,7 @@ Computer only, optional: absent means device `0`. What the hand-sign input reads
   "tts": { "module": { "type": "pocket", "voice": "george", "device": "auto" } },
   "audio": { "xvf3800": null },
   "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "target_fps": null },
-  "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": true }
+  "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": { "enabled": true } }
 }
 ```
 
@@ -152,7 +152,7 @@ Robot only. The section is a reachy-mini-bridge config, handed whole to `ReachyM
 | `tts` | **the robot's voice**: a tts-engine engine block, the same shape as the computer's `tts.engine`, built by the bridge; its `tts-<type>` extra must be installed. Absent, the robot comes up without a voice |
 | `audio` | the XVF3800 profile; `null` keeps the firmware defaults. Echo cancellation is the robot's, in hardware |
 | `face_detection` | the bridge's face detector (`yunet`, shipped; weights downloaded on first use), whether it runs, and its cost knobs `width` and `target_fps` |
-| `motion` | the robot's aliveness between actions: `presence`, the `idle` move, `wobbling` with the voice, and `tracking` the person's face (needs a detector). None of it is agent-facing |
+| `motion` | the robot's aliveness between actions: `presence`, the `idle` move, `wobbling` with the voice, and `tracking` the person's face: an object whose `enabled` turns it on (needs a detector), the rest being the bridge's posture settings. None of it is agent-facing |
 
 Absent, the section means the `real` backend with the bridge's defaults and no voice. The ASR section's `audio.device` is ignored on the robot: the app listens through the robot's echo-cancelled microphone, and the ASR module must deliver 16 kHz mono linear16 to match it.
 
@@ -176,7 +176,7 @@ Everything a loader can raise for a bad file is one `ValueError`, so the app ope
 - a file that is missing, unreadable, not JSON, or not a JSON object;
 - a missing `wica` or `asr` section, or an `asr` section without an `engine` block;
 - a top-level key the command does not accept: `reachy` in a computer file; `tts`, `audio_processing` or `camera` in a reachy file; anything misspelt;
-- an engine section its owner rejects, with the owner's own message: an unknown `agent` key, both `system_prompt` and `system_prompt_file`, a `daemon.spawn` on the `fake` backend, `motion.tracking` on with no `face_detection.detector`;
+- an engine section its owner rejects, with the owner's own message: an unknown `agent` key, both `system_prompt` and `system_prompt_file`, a `daemon.spawn` on the `fake` backend, `motion.tracking.enabled` with no `face_detection.detector`, a `motion.tracking` written as a boolean;
 - in the app-owned sections, an unknown key, a wrong type, or an out-of-range value, naming the file and the field: `vision.threshold` outside `[0, 1]`, `max_hands` below 1 or not an integer, a negative `hold_s`, a `camera.device` that is neither an int nor a string, a `noise_suppression.level` outside `0` to `3`.
 
 A key that is unset, or a provider extra that is not installed, is **not** a load error: the file loads, and the failure lands on that engine's banner line at build time.

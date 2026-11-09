@@ -178,13 +178,13 @@ def test_a_face_detection_block_reaches_the_bridge_config(tmp_path: Path) -> Non
         "width": 640,
         "target_fps": 5,
     }
-    config["reachy"]["motion"] = {"tracking": True}
+    config["reachy"]["motion"] = {"tracking": {"enabled": True}}
     cfg = load_config(_write(tmp_path, config))
     assert cfg.reachy.face_detection.detector == "yunet"
     assert cfg.reachy.face_detection.enabled is True
     assert cfg.reachy.face_detection.width == 640
     assert cfg.reachy.face_detection.target_fps == 5
-    assert cfg.reachy.motion.tracking is True
+    assert cfg.reachy.motion.tracking.enabled is True
 
 
 def test_tracking_without_a_detector_is_the_bridges_config_error(
@@ -193,8 +193,18 @@ def test_tracking_without_a_detector_is_the_bridges_config_error(
     """The bridge's head tracker needs a detector (detection is opt-in since 2026-09-29): tracking
     on with no `face_detection.detector` is rejected at load, naming both fields, as a ValueError."""
     config = _composed()
-    config["reachy"]["motion"] = {"tracking": True}
+    config["reachy"]["motion"] = {"tracking": {"enabled": True}}
     with pytest.raises(ValueError, match="motion.tracking.*face_detection.detector"):
+        load_config(_write(tmp_path, config))
+
+
+def test_a_boolean_tracking_is_the_bridges_config_error(tmp_path: Path) -> None:
+    """`motion.tracking` is an object since the bridge's tracking posture: a config still written
+    with the old boolean is rejected at load, the message saying what to write instead."""
+    config = _composed()
+    config["reachy"]["face_detection"] = {"detector": "yunet"}
+    config["reachy"]["motion"] = {"tracking": True}
+    with pytest.raises(ValueError, match=r'motion.tracking.*\{"enabled": true\}'):
         load_config(_write(tmp_path, config))
 
 
@@ -204,4 +214,4 @@ def test_the_committed_template_loads() -> None:
         str(Path(__file__).resolve().parents[2] / "config.reachy.example.json")
     )
     assert cfg.reachy.face_detection.detector == "yunet"
-    assert cfg.reachy.motion.tracking is True
+    assert cfg.reachy.motion.tracking.enabled is True

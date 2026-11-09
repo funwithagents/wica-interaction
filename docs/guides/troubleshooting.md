@@ -51,6 +51,7 @@ The banner reads `Reachy Mini: …`. The message is the bridge's or upstream's, 
 - **The robot is not found on USB.** The hardware daemon needs the serial port, which the bridge auto-detects; check the cable and that no other daemon or application holds the robot. One media daemon per machine: stop a simulator before plugging the robot.
 - **`daemon.spawn` on the `fake` backend.** The loader rejects it: delete the `daemon` block with the fake ([../reference/configuration.md](../reference/configuration.md#reachy-the-robot)).
 - **`motion.tracking` with no detector.** A bridge `ConfigError` at load: name `face_detection.detector` (`"yunet"`), or turn tracking off.
+- **`motion.tracking` is an object, not a boolean.** A config written before the bridge's tracking posture says `"tracking": true`; write `"tracking": { "enabled": true }`.
 - **The viewer opens but the page says the body is absent.** The daemon answered too late: raise `startup_timeout`, or start the app again while the daemon the bridge spawned is still up (`spawn: "auto"` reuses a daemon already serving at the address).
 
 ## No voice, or a quiet one
