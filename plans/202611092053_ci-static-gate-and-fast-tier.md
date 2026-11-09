@@ -1,6 +1,6 @@
 # CI: the static gate and the fast tier
 
-**Status:** In progress
+**Status:** Done
 
 Implements [specs/ci.md](../specs/ci.md): one GitHub Actions workflow running lint, format and type checks on Linux and the fast tier on Linux, macOS and Windows, on every pull request and push to `main`. Leaves out the live tier's jobs, which come with the end-to-end work ([analysis/202611091830_e2e-full-pipeline.md](../analysis/202611091830_e2e-full-pipeline.md), §14).
 
@@ -23,6 +23,13 @@ Implements [specs/ci.md](../specs/ci.md): one GitHub Actions workflow running li
 4. Update `specs/testing.md`, `specs/project.md` and `AGENTS.md` as listed in Scope.
 5. Run the local gate, push the branch, open the pull request and read every job's log. Fix what a platform reveals: a missing system package, a wheel that does not exist, a test that assumes a POSIX path or a fast clock.
 6. Once every job is green, mark this plan `Done` and the spec `Implemented`, here and in both indexes.
+
+## What the platforms revealed
+
+The first runs on the pull request failed on two platforms; both were test bugs, not product bugs:
+
+- **Windows.** `tests/test_project_map.py` built module paths with `str()`, so on Windows every subpackage module carried a backslash and read as unmapped. It now uses `as_posix()`.
+- **macOS.** Three gesture-input tests asserted "not yet" inside a 0.1 or 0.2 s window: the stall line, the sign hold and a flickering sign. The hosted Mac's sleeps run several times long and crossed those windows. The windows are now 0.5 s. `specs/ci.md` records both rules.
 
 ## Verification
 

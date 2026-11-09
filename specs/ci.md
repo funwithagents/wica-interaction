@@ -6,7 +6,7 @@ tests:
 
 # Continuous integration
 
-**Status:** Stable
+**Status:** Implemented
 
 ## Purpose
 
@@ -54,6 +54,8 @@ One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` t
 - **The sync installs the `dev` group**, the default: the same environment as a contributor's `uv sync`, so pyright and the tests see every module.
 - **The format check is the local one**: `ruff format --check .` over the same scope as the `ruff format .` of [AGENTS.md](../AGENTS.md) ("Commands").
 - **The fast tier runs as locally**: `uv run pytest`, collecting `tests/` only (`testpaths`).
+- **Real-clock margins are sized for the hosted Mac.** The `macos-15` runner is a virtual machine whose short sleeps run several times long (the bridge measured a 10 ms sleep taking 34). A fast-tier test that asserts something has *not yet* happened inside a window — a hold, a stall — keeps that window at 0.5 s or more, so the check lands inside it there too.
+- **Paths are compared as POSIX.** A test that compares file paths with Markdown or frontmatter text builds them with `as_posix()`, so the Windows entry sees the same strings.
 - **Caches.** The uv setup action caches uv's downloads, keyed on `uv.lock`.
 - **Timeouts.** Each job carries a `timeout-minutes` well under GitHub's default, so a hung job fails in minutes.
 
