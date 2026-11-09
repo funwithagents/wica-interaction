@@ -47,8 +47,8 @@ git clone https://github.com/funwithagents/wica-interaction.git && cd wica-inter
 # the computer, as the template configures it
 uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --extra tts-elevenlabs --extra audio-processing --extra vision
 
-# the Reachy Mini, as the template configures it (the simulator needs the dev environment below)
-uv sync --no-dev --extra reachy --extra wica-huggingface-hub --extra asr-deepgram --extra tts-pocket --extra vision
+# the Reachy Mini, as the template configures it: in the simulator (drop reachy-sim for a real robot)
+uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-deepgram --extra tts-pocket --extra vision
 
 # the development environment: both bodies, every agent provider, the simulator, the tooling
 uv sync --dev
@@ -69,7 +69,7 @@ uv run wica-interaction-computer --config config.computer.example.json
 
 Open the address Gradio prints and talk. Each thing you say shows as 🗣️ on the left; the agent's reply is a **🗣️ say** item that stays running while you hear it. Without a key the page still opens, says what to set, and the text box drives the agent wherever its own key is set.
 
-The robot, in the simulator the bridge spawns for you (the MuJoCo viewer opens; needs `uv sync --dev`, and on macOS an unlocked GUI session):
+The robot, in the simulator the bridge spawns for you (the MuJoCo viewer opens; needs the `reachy-sim` extra, and on macOS an unlocked GUI session):
 
 ```
 export WICA_HF_TOKEN=hf_...            # the agent (the template uses the Hugging Face Hub)

@@ -56,7 +56,7 @@ macOS asks for microphone and camera permission for the terminal that runs the c
 
 ## The robot in the simulator
 
-The reachy template targets the **MuJoCo simulator**, which the bridge spawns for you with its viewer window, and uses your **webcam** as the robot's camera, so the simulated robot turns to follow you and reads your hand signs. It needs the simulator, part of `uv sync --dev`, and an unlocked GUI session; on macOS `mjpython`, which the MuJoCo wheel installs.
+The reachy template targets the **MuJoCo simulator**, which the bridge spawns for you with its viewer window, and uses your **webcam** as the robot's camera, so the simulated robot turns to follow you and reads your hand signs. It needs the simulator, the `reachy-sim` extra, part of `uv sync --dev`, and an unlocked GUI session; on macOS `mjpython`, which the MuJoCo wheel installs.
 
 ```
 cp config.reachy.example.json config.reachy.local.json
