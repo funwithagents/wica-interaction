@@ -20,7 +20,7 @@ def _mapped_modules() -> set[str]:
 
 def _actual_modules() -> set[str]:
     """Package-relative paths of every module: "config.py", "reachy/embodiment.py", ..."""
-    return {str(path.relative_to(_PKG)) for path in _PKG.rglob("*.py")}
+    return {path.relative_to(_PKG).as_posix() for path in _PKG.rglob("*.py")}
 
 
 def _concept_modules() -> set[str]:
