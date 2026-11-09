@@ -10,7 +10,7 @@ The whole robot side of the config file is the `reachy` section, a bridge config
 
 ## The simulator
 
-The committed template, [config.reachy.example.json](../../config.reachy.example.json), targets the MuJoCo simulator: `backend` is `sim` and the `daemon` block has `spawn: "auto"` and `headless: false`, so the bridge starts a simulator daemon itself and opens the MuJoCo viewer window. The viewer needs an unlocked GUI session and, on macOS, `mjpython` on the `PATH`, which the MuJoCo wheel installs. The simulator's package comes with the `dev` group (`uv sync --dev`); an install of your own adds `reachy-mini-bridge[sim]` ([install.md](../reference/install.md#recipes)).
+The committed template, [config.reachy.example.json](../../config.reachy.example.json), targets the MuJoCo simulator: `backend` is `sim` and the `daemon` block has `spawn: "auto"` and `headless: false`, so the bridge starts a simulator daemon itself and opens the MuJoCo viewer window. The viewer needs an unlocked GUI session and, on macOS, `mjpython` on the `PATH`, which the MuJoCo wheel installs. The simulator is the `reachy-sim` extra, next to `reachy`: part of `uv sync --dev`, added by name to an install of your own ([install.md](../reference/install.md#recipes)).
 
 The template makes your **webcam** the simulated robot's camera (`daemon.camera.source: "webcam"`), shown in the corner of the viewer window with the `sim_displays` overlays on: the face detector then sees you and the simulated head turns to follow you, and your hand signs reach the agent through the same picture. Set `camera.source` to `"sim"` for the rendered scene instead; nothing is in it to detect unless the bridge's test scene puts a portrait there.
 

@@ -28,6 +28,9 @@ computer = ["tts-engine"]
 audio-processing = ["aec-audio-processing>=1.0.1", "samplerate>=0.2.4"]
 # The Reachy Mini embodiment (pulls the upstream reachy-mini SDK through the bridge).
 reachy = ["reachy-mini-bridge"]
+# The MuJoCo simulator the `sim` robot backend runs on, the bridge's own `sim` extra: its own extra,
+# not part of `reachy`, because a deployment on a real robot needs none of it.
+reachy-sim = ["reachy-mini-bridge[sim]"]
 # The hand-sign input, either embodiment: MediaPipe + the torch/transformers HaGRID classifier, and
 # the library's `opencv` extra for its webcam source (the computer's camera) and its snapshot
 # writer (the Vision snapshot buttons) — both imported lazily, only when that feature runs.
@@ -62,7 +65,7 @@ tts-qwen3 = ["tts-engine[qwen3]"]
 tts-kokoro = ["tts-engine[kokoro]"]
 tts-piper = ["tts-engine[piper]"]
 all = [
-    "wica-interaction[computer,audio-processing,reachy,vision]",
+    "wica-interaction[computer,audio-processing,reachy,reachy-sim,vision]",
     "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,wica-mistralai]",
     "wica-interaction[asr-deepgram]",
     "wica-interaction[tts-elevenlabs,tts-gradium,tts-mistral,tts-deepgram,tts-gemini,tts-cartesia,tts-openai,tts-openai-compatible]",
@@ -88,9 +91,9 @@ dev = [
     "wica-interaction[computer,audio-processing,reachy,vision]",
     "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,wica-mistralai]",
     "wica-interaction[asr-deepgram,tts-elevenlabs,tts-gradium,tts-pocket]",
-    # The sim robot backend (the upstream MuJoCo mockup) for manual/e2e testing against a simulated
-    # robot; kept dev-only — a real-robot deployment needs none of it.
-    "reachy-mini-bridge[sim]",
+    # The simulator, what the reachy template targets, for manual/e2e testing against a simulated
+    # robot.
+    "wica-interaction[reachy-sim]",
 ]
 
 [tool.uv.sources]

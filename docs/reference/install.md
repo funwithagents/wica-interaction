@@ -18,7 +18,10 @@ uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --
 # the computer, minimal: one provider each, no echo cancellation, no camera
 uv sync --no-dev --extra computer --extra wica-openai --extra asr-deepgram --extra tts-elevenlabs
 
-# the Reachy Mini: the Hub, Deepgram, the local pocket voice, hand signs (the reachy template)
+# the Reachy Mini in the simulator: the Hub, Deepgram, the local pocket voice, hand signs (the reachy template)
+uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-deepgram --extra tts-pocket --extra vision
+
+# the same on a real Reachy Mini: no simulator
 uv sync --no-dev --extra reachy --extra wica-huggingface-hub --extra asr-deepgram --extra tts-pocket --extra vision
 
 # everything, one command
@@ -28,7 +31,7 @@ uv sync --no-dev --extra all
 uv sync --dev
 ```
 
-`--no-dev` keeps an install to what you selected: a bare `uv sync` includes the `dev` group, which pulls both bodies and the tooling. The **simulator** (`reachy-mini-bridge[sim]`, MuJoCo) is part of that `dev` group and of no extra, since a deployment on a real robot needs none of it: to run the robot embodiment against the simulator, install with `uv sync --dev`. Selecting a provider whose extra is not installed does not fail the install or the config load: it lands on that engine's banner line when the app starts, naming the extra to add ([../guides/troubleshooting.md](../guides/troubleshooting.md#the-banner)).
+`--no-dev` keeps an install to what you selected: a bare `uv sync` includes the `dev` group, which pulls both bodies, the simulator and the tooling. The **simulator** (MuJoCo) is its own extra, `reachy-sim`, next to `reachy` rather than part of it, since a deployment on a real robot needs none of it: the reachy template targets the simulator, so an install that runs it as committed adds `reachy-sim`. Selecting a provider whose extra is not installed does not fail the install or the config load: it lands on that engine's banner line when the app starts, naming the extra to add ([../guides/troubleshooting.md](../guides/troubleshooting.md#the-banner)).
 
 ## Extras
 
@@ -39,7 +42,8 @@ One extra per body, per optional feature, per provider, named after the sibling'
 | *(base)* | `wica[gradio]`, `asr-engine`, `vision-modules` (its numpy-only core), `gradio`, `numpy` | the lifecycle, the page, speech in, the vision plumbing |
 | `computer` | `tts-engine` | the computer embodiment's voice |
 | `audio-processing` | `aec-audio-processing`, `samplerate` | the computer's echo cancellation and noise suppression |
-| `reachy` | `reachy-mini-bridge` | the Reachy Mini embodiment (pulls the upstream `reachy-mini` SDK); add `reachy-mini-bridge[sim]` for the simulator |
+| `reachy` | `reachy-mini-bridge` | the Reachy Mini embodiment (pulls the upstream `reachy-mini` SDK), the robot itself |
+| `reachy-sim` | `reachy-mini-bridge[sim]` | the MuJoCo simulator the `sim` backend runs on, what the reachy template targets; a real robot needs none of it |
 | `vision` | `vision-modules[hand,opencv]` | the hand-sign input, either body: MediaPipe, the torch classifier, OpenCV for the webcam and the snapshots |
 | `wica-anthropic` | `wica[anthropic]` | the Anthropic agent provider |
 | `wica-openai` | `wica[openai]` | the OpenAI agent provider |

@@ -4781,7 +4781,7 @@ dependencies = [
 all = [
     { name = "aec-audio-processing" },
     { name = "asr-engine", extra = ["deepgram"] },
-    { name = "reachy-mini-bridge" },
+    { name = "reachy-mini-bridge", extra = ["sim"] },
     { name = "samplerate" },
     { name = "tts-engine", extra = ["cartesia", "deepgram", "elevenlabs", "gemini", "gradium", "kokoro", "mistral", "openai", "openai-compatible", "phonon", "piper", "pocket", "qwen3"] },
     { name = "vision-modules", extra = ["hand", "opencv"] },
@@ -4799,6 +4799,9 @@ computer = [
 ]
 reachy = [
     { name = "reachy-mini-bridge" },
+]
+reachy-sim = [
+    { name = "reachy-mini-bridge", extra = ["sim"] },
 ]
 tts-cartesia = [
     { name = "tts-engine", extra = ["cartesia"] },
@@ -4862,9 +4865,8 @@ wica-openai = [
 dev = [
     { name = "pyright" },
     { name = "pytest" },
-    { name = "reachy-mini-bridge", extra = ["sim"] },
     { name = "ruff" },
-    { name = "wica-interaction", extra = ["asr-deepgram", "audio-processing", "computer", "reachy", "tts-elevenlabs", "tts-gradium", "tts-pocket", "vision", "wica-anthropic", "wica-google-genai", "wica-huggingface-hub", "wica-mistralai", "wica-openai"] },
+    { name = "wica-interaction", extra = ["asr-deepgram", "audio-processing", "computer", "reachy", "reachy-sim", "tts-elevenlabs", "tts-gradium", "tts-pocket", "vision", "wica-anthropic", "wica-google-genai", "wica-huggingface-hub", "wica-mistralai", "wica-openai"] },
 ]
 
 [package.metadata]
@@ -4875,6 +4877,7 @@ requires-dist = [
     { name = "gradio", specifier = ">=6" },
     { name = "numpy" },
     { name = "reachy-mini-bridge", marker = "extra == 'reachy'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main" },
+    { name = "reachy-mini-bridge", extras = ["sim"], marker = "extra == 'reachy-sim'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main" },
     { name = "samplerate", marker = "extra == 'audio-processing'", specifier = ">=0.2.4" },
     { name = "tts-engine", marker = "extra == 'computer'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
     { name = "tts-engine", extras = ["cartesia"], marker = "extra == 'tts-cartesia'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
@@ -4899,21 +4902,21 @@ requires-dist = [
     { name = "wica", extras = ["mistralai"], marker = "extra == 'wica-mistralai'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
     { name = "wica", extras = ["openai"], marker = "extra == 'wica-openai'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
     { name = "wica-interaction", extras = ["asr-deepgram"], marker = "extra == 'all'", editable = "." },
-    { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision"], marker = "extra == 'all'", editable = "." },
+    { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "reachy-sim", "vision"], marker = "extra == 'all'", editable = "." },
     { name = "wica-interaction", extras = ["tts-elevenlabs", "tts-gradium", "tts-mistral", "tts-deepgram", "tts-gemini", "tts-cartesia", "tts-openai", "tts-openai-compatible"], marker = "extra == 'all'", editable = "." },
     { name = "wica-interaction", extras = ["tts-pocket", "tts-phonon", "tts-qwen3", "tts-kokoro", "tts-piper"], marker = "extra == 'all'", editable = "." },
     { name = "wica-interaction", extras = ["wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "wica-mistralai"], marker = "extra == 'all'", editable = "." },
 ]
-provides-extras = ["computer", "audio-processing", "reachy", "vision", "wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "wica-mistralai", "asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-mistral", "tts-deepgram", "tts-gemini", "tts-cartesia", "tts-openai", "tts-openai-compatible", "tts-pocket", "tts-phonon", "tts-qwen3", "tts-kokoro", "tts-piper", "all"]
+provides-extras = ["computer", "audio-processing", "reachy", "reachy-sim", "vision", "wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "wica-mistralai", "asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-mistral", "tts-deepgram", "tts-gemini", "tts-cartesia", "tts-openai", "tts-openai-compatible", "tts-pocket", "tts-phonon", "tts-qwen3", "tts-kokoro", "tts-piper", "all"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pyright", specifier = ">=1.1.411" },
     { name = "pytest", specifier = ">=9.1.1" },
-    { name = "reachy-mini-bridge", extras = ["sim"], git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main" },
     { name = "ruff", specifier = ">=0.16.6" },
     { name = "wica-interaction", extras = ["asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-pocket"], editable = "." },
     { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision"], editable = "." },
+    { name = "wica-interaction", extras = ["reachy-sim"], editable = "." },
     { name = "wica-interaction", extras = ["wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "wica-mistralai"], editable = "." },
 ]
 
