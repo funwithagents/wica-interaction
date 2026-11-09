@@ -50,8 +50,11 @@ class WebcamSource:
     webcam delivering 30 fps into a 5 fps hand stage would be wasted captures); a device that cannot
     be opened — or a read that fails — is recorded in ``capture_error`` and retried at the poll rate,
     so an unplugged webcam shows on the Vision line and heals when plugged back in; and only
-    ``close()`` makes ``read()`` return ``None``. No mirroring: the classifier sees the frame as
-    captured.
+    ``close()`` makes ``read()`` return ``None``. A device that delivered frames and then yields
+    none has ended (a video file played through, an image file read once, a webcam unplugged
+    mid-stream: OpenCV returns no frame rather than raising), so it is reopened in the same poll;
+    one that has delivered nothing yet is still warming up and is polled again as is. No
+    mirroring: the classifier sees the frame as captured.
     """
 
     def __init__(
@@ -66,6 +69,9 @@ class WebcamSource:
         self._interval = 1.0 / fps
         self._inner = opener(device)  # constructed, not opened: open() does that
         self._opened = False
+        # Whether the device delivered a frame since it was last opened: a missing frame after one
+        # is the end of the stream, before one it is a webcam still warming up.
+        self._delivered = False
         self._error: str | None = None
         self._lock = threading.Lock()
         self._closed = threading.Event()
@@ -97,6 +103,7 @@ class WebcamSource:
         with self._lock:
             closed_meanwhile = self._closed.is_set()
             self._opened = not closed_meanwhile
+            self._delivered = False
         if closed_meanwhile:
             self._inner.close()
             return
@@ -118,13 +125,40 @@ class WebcamSource:
 
     def _read_frame(self) -> np.ndarray | None:
         try:
-            return self._inner.read()
+            frame = self._inner.read()
         except Exception as exc:  # noqa: BLE001 - a device that went away is visible, not fatal
             self._record(f"camera read failed: {exc}")
             # The device is gone: drop it so the next poll re-opens rather than re-reading a dead one.
-            with self._lock:
-                self._opened = False
+            self._drop_device()
             return None
+        if frame is not None:
+            self._delivered = True
+            return frame
+        if not self._delivered:
+            return None  # still warming up: poll again
+        # The stream ended: reopen now, so a file loops with no gap and a webcam that went away
+        # shows its open failure.
+        self._drop_device()
+        self._open_device()
+        if not self._opened:
+            return None
+        try:
+            frame = self._inner.read()
+        except Exception as exc:  # noqa: BLE001 - as above
+            self._record(f"camera read failed: {exc}")
+            self._drop_device()
+            return None
+        if frame is not None:
+            self._delivered = True
+        return frame
+
+    def _drop_device(self) -> None:
+        """Release the device so the next open is a real one (``OpenCVSource.open()`` is a no-op
+        while its capture is held)."""
+        with self._lock:
+            opened, self._opened = self._opened, False
+        if opened:
+            self._inner.close()
 
     def _record(self, message: str) -> None:
         with self._lock:

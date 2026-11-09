@@ -7,8 +7,8 @@ code:
   - tests-e2e/configs/reachy.json
   - tests-e2e/fixtures/README.md
 tests:
-  - tests-e2e/computer/test_e2e.py
-  - tests-e2e/reachy/test_e2e.py
+  - tests-e2e/test_computer.py
+  - tests-e2e/test_reachy.py
 ---
 
 # End-to-end tier
@@ -42,7 +42,7 @@ One fixed set, chosen so that only the LLM and the ASR cost anything per run:
 
 - **The LLM: Claude Haiku 5.5** — `provider: "anthropic"`, `model: "claude-haiku-5-5"`, the key in `WICA_ANTHROPIC_API_KEY`. It is fast and cheap, and its provider extra is already in the dev group.
 - **The ASR: Deepgram Flux** — `deepgram_v2`, `flux-general-en`, the key in `DEEPGRAM_API_KEY`. This is the production ASR. asr-engine's local `kyutai` module is ruled out: its backends pin `numpy<2.3` against vision-modules' `numpy>=2.5.3`, so declaring it makes the lock unsolvable ([project.md](project.md)).
-- **The voices: phonon**, for both the app and the person. It is tts-engine's lightest local model: no PyTorch, no key, and a public English checkpoint of about 160 MB that runs many times faster than real time on a CPU. The dev group gains the `tts-phonon` extra. The app and the person use two different voices, so a transcript always tells them apart.
+- **The voices: phonon**, for both the app and the person. It is tts-engine's lightest local model: no PyTorch, no key, and a public English checkpoint of about 160 MB that runs many times faster than real time on a CPU. The dev group gains the `tts-phonon` extra. The app speaks as `Micah` and the person as `Harper`, so a transcript always tells them apart.
 - **Everything is in English.** phonon's public checkpoint is English-only. Other languages are left to manual runs.
 
 The production providers (the example configs' providers) are not this tier's concern. Running the same scenarios with them is a separate scheduled job, in [ci.md](ci.md).
@@ -79,7 +79,7 @@ On Linux the mic is a remapped source, not the monitor itself, because upstream 
 | Speakers | `WICA_E2E_SPEAKER_DEVICE` | `tts.engine.player.device` |
 | Webcam | one image file, rewritten to change what the camera sees | `camera.device` = the file's path |
 
-**A file as the webcam needs no code change.** OpenCV opens a file path as a camera: it yields the image once, and the next read fails. `WebcamSource` records the failed read as a capture error and reopens the device, so the file is read again at the source's reopen rate. To change what the camera sees, the person replaces the file's contents atomically (writes a temporary file, then renames it over the path). "Nothing shown" is the `no_hand` photo.
+**A file as the webcam.** OpenCV opens a file path as a camera: it yields the image once, and the next read returns no frame without raising. `WebcamSource` treats a device that delivered frames and then yields none as a stream that ended, and reopens it in the same poll ([computer-embodiment.md](computer-embodiment.md), "`WebcamSource`"), so the file is read again at every poll, with no gap and no capture error. Building this tier found that rule missing: the webcam source used to go silent after the file's one frame, with a clean status, as a real webcam unplugged mid-stream would have. To change what the camera sees, the person replaces the file's contents atomically (writes a temporary file, then renames it over the path). "Nothing shown" is the `no_hand` photo.
 
 #### The Reachy Mini embodiment
 
@@ -125,7 +125,7 @@ Each scenario builds and starts the real system, lets the person act, and assert
 |---|---|---|---|---|
 | 1 | Startup | both | nothing | the system builds with nothing in `missing`; the agent, the ASR bridge and the gesture input run; on the robot, the bridge is connected |
 | 2 | Spoken turn | both | "Hello, what is your name?" | a final `speech_input` containing "name", then a `say` issued and completed |
-| 3 | Hand sign | both | nothing at first; then each photo in turn, hiding it between | no `hand_gesture_1` while nothing is shown; then `hand_gesture_1` equals each photo's sign; the agent reacts to each one |
+| 3 | Hand sign | both | nothing at first; then each photo in turn, hiding it between | no `hand_gesture_1` while nothing is shown; then `hand_gesture_1` equals each photo's sign, and a reaction of the agent has it among its triggers |
 | 4 | Emotion | robot | "Can you look happy?" | `play_emotion` issued with `happy` and completed, plus a `say` that does not overlap it |
 | 5 | Interrupt | both | asks for a long story; then, while the app is speaking, says "stop" or shows `stop` | the running `say` is cancelled |
 | 6 | Dictation | both | the dictation trigger, a passage, the end phrase | dictation starts, the passage arrives as one input, and dictation stops |
@@ -135,25 +135,27 @@ Each scenario builds and starts the real system, lets the person act, and assert
 - **The vision check comes before the agent check.** Scenario 3 asserts the World's `hand_gesture_1` first and the agent's reaction second, as two separate expectations. A vision failure then shows up as one, and an LLM failure cannot hide it. This keeps the verdict the old live gesture test gave without any LLM.
 - **The echo scenario wires the cable on purpose.** The app's speaker is `WICA_E2E_PERSON_VOICE_DEVICE`, the same cable it listens on, so echo cancellation is the only thing that keeps the app from hearing itself. The far-end reference is then exact.
 - **Time limits are generous and asserted as timeouts**, through the `within=` windows of the `expect_*` calls. Latencies are recorded in the report but not asserted; `expect_latency` is not used.
-- **The framework's checks run after every scenario.** `wica.testing.checks` holds rules that apply to any finished timeline: every input is answered, no input is met with a no-op, no reaction fails, no cancel collides with a running action. They run over each scenario's timeline through `apply_checks`, adding broad assertions at no extra cost.
+- **What the inputs delivered is read from the World.** The harness's timeline records a trigger for each write but not its value, and `expect_world` only sees an entry's current value, which a TTL clears a moment later. An `InputLog` (a World listener on `speech_input` and the `hand_gesture_<n>` entries) records each value written, so a scenario asserts what the ASR heard and which sign the hand models delivered.
+- **The agent may ignore a sign.** The persona lets it decide whether a sign was meant for it, so a count can be met with `noop`. Scenario 3 asserts that the agent reacted (a reaction triggered by the sign), not what it did. `stop` is the exception the persona fixes: it is answered out loud.
+- **The framework's checks run after every scenario**, over the whole timeline, through `wica.testing.run_check`: no reaction fails (`no_failed_reactions`), no cancel collides with a running action (`no_colliding_cancel`), and no spoken input is met with a no-op alone (`no_noop_on_input`, over `speech_input` only, since a sign may be ignored). `answers_each_input` is left out: it counts a turn from an `input_written` event, which the harness records only for the tester's own writes, and here the app's inputs write the World, so it would pass over zero turns.
 - **The scenarios are plain pytest code, not WICA scenario files.** A scenario file's tester can only act through the fixed tester Commands, and its `set_<key>` Commands write the inputs straight into the World. That would bypass the ASR and the hand models, which are what this tier exists to test.
 
 ### Layout and fixtures
 
 ```
 tests-e2e/
-  conftest.py          # loads the bridge's pytest plugin; the env, device and prop setup; shared fixtures
-  support.py           # require_env, and WICA_E2E_FAIL_ON_MISSING
-  person.py            # Person
-  configs/             # computer.json, reachy.json
-  fixtures/            # the hand photos, no_hand, README
-  computer/test_e2e.py # scenarios 1, 2, 3, 5, 6, 7
-  reachy/test_e2e.py   # scenarios 1–6
+  conftest.py       # the devices, the keys, each embodiment's system fixture; the bridge's plugin
+  support.py        # require_env, require_device, WICA_E2E_FAIL_ON_MISSING, InputLog, the checks
+  person.py         # Person, FileCamera, the photos and their signs
+  configs/          # computer.json, reachy.json
+  fixtures/         # the hand photos, no_hand, README
+  test_computer.py  # scenarios 1, 2, 3, 5, 6, 7
+  test_reachy.py    # scenarios 1–6
 ```
 
-- **One directory, one run.** `tests-e2e/conftest.py` loads the bridge's plugin (`reachy_mini_bridge.testing.fixtures`) for the whole tier. The computer's tests request none of its fixtures, so they never start a sim. `uv run pytest tests-e2e` runs both embodiments, and either subfolder can be run on its own.
-- **`app_system(embodiment)`** builds the real system with `build_system` (no seams: the real ASR and the real hand models), wires a transcript collector, and starts it. It yields the system together with its `TestRun`, then shuts it down with `_shutdown` in a `finally`, as [testing.md](testing.md) requires of every `build_system`.
-- **`person`** yields a `Person` bound to the embodiment's camera (file or scene).
+- **One directory, one run.** `tests-e2e/conftest.py` loads the bridge's plugin (`reachy_mini_bridge.testing.fixtures`) for the whole tier. The computer's tests request none of its fixtures, so they never start a sim. `uv run pytest tests-e2e` runs both embodiments, and either file can be run on its own. The files sit flat in `tests-e2e/`, which is not a package, so they import `support` and `person` as the type checker resolves them: from their own directory.
+- **One fixture per embodiment** (`computer`, later `reachy`) builds the real system with `build_system` (no seams: the real ASR and the real hand models) from its committed config with the run's values filled in, asserts nothing is in `missing`, wires a transcript collector, and starts it. It yields an `E2E`: the system, its `TestRun`, its `InputLog` and the `Person` in front of it. It writes the evidence, then shuts the system down with `_shutdown` in a `finally`, as [testing.md](testing.md) requires of every `build_system`.
+- **`devices`** and **`keys`** (session) resolve the devices and the keys, skipping, or failing under `WICA_E2E_FAIL_ON_MISSING`, when one is missing.
 - **The robot's session fixtures**: the audio-device check, and the PNG conversion of the photos for the props hook.
 
 ### Skips and failures
@@ -167,9 +169,9 @@ tests-e2e/
 
 A failure in this tier is otherwise hard to diagnose, so each scenario writes its evidence to pytest's `tmp_path`:
 
-- the transcript;
-- the `TestRun` report (its timeline);
-- the camera frames the gesture input acted on, through the app's existing snapshot writer.
+- the `TestRun` report (its timeline), as `report.json` and `report.md`;
+- what the inputs delivered (`inputs.json`);
+- the config the run was built from, with its values filled in, and, on the computer, the camera file as it last stood.
 
 Recording the cable is an open question (below).
 
@@ -216,8 +218,6 @@ Windows on Arm (for example in Parallels on an Apple silicon Mac) is a different
 
 ## Open questions
 
-1. **The file as the webcam.** It needs no code change, but the capture error at each reopen has not been watched through `GestureInput`. The sign must survive the 0.5 s hold, and the stall line must not fire. If it does not behave, the alternative is an injectable frame source in `ComputerEmbodiment`, which would replace real code in the test.
-2. **The echo scenario on BlackHole.** It assumes one cable can carry both voices, and that the echo-cancellation coordinator, given its exact far-end reference, removes the app's voice. Confirm this on the Mac before the scenario is written.
-3. **The phonon voices** for the app and the person: two of the public checkpoint's voices, chosen when the configs are written.
-4. **Recording the cable.** A recording of what the mic heard would be the best evidence for a failed spoken scenario. The cost is one more input stream on the cable during the run.
-5. **The harness's startup timeout.** It is fixed at 45 s, which a first macOS launch exceeds. This is raised with the bridge. Until it is fixed, the workaround is a daemon started by hand.
+1. **The echo scenario on BlackHole.** It assumes one cable can carry both voices, and that the echo-cancellation coordinator, given its exact far-end reference, removes the app's voice. Confirm this on the Mac before the scenario is written.
+2. **Recording the cable.** A recording of what the mic heard would be the best evidence for a failed spoken scenario. The cost is one more input stream on the cable during the run.
+3. **The harness's startup timeout.** It is fixed at 45 s, which a first macOS launch exceeds. This is raised with the bridge. Until it is fixed, the workaround is a daemon started by hand.

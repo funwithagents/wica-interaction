@@ -47,7 +47,9 @@ class FakeOpenCVSource:
     """The slice of `vision-modules`' `OpenCVSource` that `WebcamSource` drives.
 
     `frame` is what `read()` returns (settable mid-run); `raise_on_open` / `raise_on_read` make the
-    corresponding call raise, the way a missing or unplugged device does. Counts opens and closes.
+    corresponding call raise, the way a missing or unplugged device does. `frames_per_open` ends
+    the stream after that many frames, until the next open — what OpenCV does with a file (an image
+    is one frame), returning nothing rather than raising. Counts opens and closes.
     """
 
     def __init__(self, frame: np.ndarray | None = None) -> None:
@@ -56,19 +58,26 @@ class FakeOpenCVSource:
         )
         self.raise_on_open: str | None = None
         self.raise_on_read: str | None = None
+        self.frames_per_open: int | None = None
         self.opens = 0
         self.closes = 0
         self.reads = 0
+        self._since_open = 0
 
     def open(self) -> None:
         self.opens += 1
         if self.raise_on_open is not None:
             raise RuntimeError(self.raise_on_open)
+        self._since_open = 0
 
     def read(self) -> np.ndarray | None:
         self.reads += 1
         if self.raise_on_read is not None:
             raise RuntimeError(self.raise_on_read)
+        if self.frames_per_open is not None:
+            if self._since_open >= self.frames_per_open:
+                return None
+            self._since_open += 1
         return self.frame
 
     def close(self) -> None:
