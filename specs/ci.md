@@ -34,7 +34,7 @@ Installed before the sync on the Linux runner only; the workflow is the one plac
 
 - **The robot SDK.** Upstream `reachy-mini`, pulled by the bridge, depends on PyGObject on Linux, which is sdist-only in the locked range and builds against the girepository and cairo headers with `pkg-config`; and on the system GStreamer: its introspection data and the base, good and bad plugin sets. The same set as the bridge's CI.
 - **Audio.** `libportaudio2`, which `sounddevice` loads when asr-engine and tts-engine import it.
-- **Echo cancellation.** A C++ toolchain, `build-essential` and `cmake`, since `aec-audio-processing` builds from source on Linux.
+- **Echo cancellation.** A C++ toolchain, `build-essential` and `cmake`, since `aec-audio-processing` builds from source on Linux (on macOS too, with the toolchain the runner image ships: its 1.0.1 wheels are Windows-only).
 - **Hand signs.** `libgles2` and `libegl1`, which MediaPipe loads.
 
 macOS and Windows need none: GStreamer comes with the `reachy-mini` wheels, and the audio and echo-cancellation packages ship wheels.
@@ -56,7 +56,7 @@ One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` t
 - **The fast tier runs as locally**: `uv run pytest`, collecting `tests/` only (`testpaths`).
 - **Real-clock margins are sized for the hosted Mac.** The `macos-15` runner is a virtual machine whose short sleeps run several times long (the bridge measured a 10 ms sleep taking 34). A fast-tier test that asserts something has *not yet* happened inside a window — a hold, a stall — keeps that window at 0.5 s or more, so the check lands inside it there too.
 - **Paths are compared as POSIX.** A test that compares file paths with Markdown or frontmatter text builds them with `as_posix()`, so the Windows entry sees the same strings.
-- **Caches.** The uv setup action caches uv's downloads, keyed on `uv.lock`.
+- **Caches.** The uv setup action caches uv's cache, which its CI prune reduces to the wheels uv built itself. The ones that cost minutes are the sdist-only packages — `aec-audio-processing` on Linux and macOS (about two minutes), PyGObject and pycairo on Linux — so the cache is **keyed on their locked entries**, not on the whole `uv.lock`: a sibling bump, which changes the lock and nothing they build from, keeps the cache, and pull requests reuse `main`'s. The workflow names the packages in one pattern; a new sdist-only dependency joins it, or it rebuilds on every run.
 - **Timeouts.** Each job carries a `timeout-minutes` well under GitHub's default, so a hung job fails in minutes.
 
 ### Secrets and protection

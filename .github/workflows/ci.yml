@@ -34,6 +34,12 @@ env:
     libportaudio2
     build-essential cmake
     libgles2 libegl1
+  # The cache key. The uv cache keeps, after its CI prune, only the wheels uv built itself, and
+  # the ones that cost minutes are these sdist-only packages: aec-audio-processing (Linux and
+  # macOS, ~2 min — its wheels are Windows-only), PyGObject and pycairo (Linux). Keying on their
+  # locked entries instead of the whole uv.lock keeps the cache across sibling bumps; a new
+  # sdist-only dependency joins this pattern, or it rebuilds on every run.
+  SOURCE_BUILDS: '^name = "(aec-audio-processing|pygobject|pycairo)"'
 
 jobs:
   check:
@@ -46,10 +52,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=30 -o Acquire::Retries=3 $APT_PACKAGES
+      - name: Cache key (the packages built from source)
+        shell: bash
+        run: grep -A3 -E "$SOURCE_BUILDS" uv.lock > .ci-source-builds
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: .ci-source-builds
       - name: Sync (the dev group, against the lock)
         run: uv sync --locked
       - name: Lint
@@ -76,10 +85,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=30 -o Acquire::Retries=3 $APT_PACKAGES
+      - name: Cache key (the packages built from source)
+        shell: bash
+        run: grep -A3 -E "$SOURCE_BUILDS" uv.lock > .ci-source-builds
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: .ci-source-builds
       - name: Sync (the dev group, against the lock)
         run: uv sync --locked
       - name: Fast tier
