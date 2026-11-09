@@ -368,6 +368,48 @@ def test_a_missing_frame_is_not_the_end_of_the_stream() -> None:
     try:
         assert source.read() is _FRAME
         assert inner.reads >= 2
+        assert inner.opens == 1  # a device warming up is polled, not reopened
+    finally:
+        source.close()
+
+
+def test_a_stream_that_ended_is_reopened_in_the_same_poll() -> None:
+    """OpenCV reads an image file once and then returns no frame without raising: the source
+    reopens it within the poll, so the file loops with no gap and no error."""
+    inner = FakeOpenCVSource(_FRAME)
+    inner.frames_per_open = 1
+    source = _webcam(inner)
+    source.open()
+    try:
+        for _ in range(4):
+            assert source.read() is _FRAME
+        assert source.capture_error is None
+        assert inner.opens == 4  # one per frame
+        assert inner.closes == 3  # each ended stream released before its reopen
+    finally:
+        source.close()
+
+
+def test_a_stream_that_ended_and_cannot_be_reopened_is_visible() -> None:
+    """A webcam unplugged mid-stream: OpenCV stops returning frames and the reopen fails, so the
+    Vision line says so instead of going silent with a clean status."""
+    inner = FakeOpenCVSource(_FRAME)
+    inner.frames_per_open = 1
+    source = _webcam(inner)
+    source.open()
+    try:
+        assert source.read() is _FRAME
+        inner.raise_on_open = "device 0 not found"
+        frames: list[np.ndarray | None] = []
+        reader = threading.Thread(target=lambda: frames.append(source.read()))
+        reader.start()  # the stream has ended: the reopen fails, and the poll keeps retrying
+        time.sleep(0.05)
+        error = source.capture_error
+        assert error is not None and "camera open failed" in error
+        inner.raise_on_open = None
+        reader.join(2.0)
+        assert len(frames) == 1 and frames[0] is _FRAME
+        assert source.capture_error is None  # healed once the device came back
     finally:
         source.close()
 

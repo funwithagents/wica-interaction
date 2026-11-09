@@ -20,7 +20,7 @@ Where things live. This is a coarse, module-level map — for the full file inve
 | `plans/` | Implementation plans turning settled specs into buildable steps — indexed by [plans/_index.md](plans/_index.md) |
 | `tests/` | Fast, deterministic, no-network tests; mirrors the `src/wica_interaction/` module structure, embodiment subpackages included (`tests/computer/`, `tests/reachy/`); `test_project_map.py` keeps this map and the spec frontmatter honest, `test_docs.py` the documentation (links and anchors, the tables that mirror code — [specs/project.md](specs/project.md) "Documentation checks") |
 | `.github/workflows/` | The CI workflow: the static gate and the fast tier on every pull request and push to `main` ([specs/ci.md](specs/ci.md)) |
-| `tests-e2e/` | Opt-in live tests that call real external services or load real models (not collected by default `pytest`); today the hand-sign pipeline over the real vision models |
+| `tests-e2e/` | Opt-in live tests that call real external services or load real models (not collected by default `pytest`): the end-to-end tier, every module real and only the devices replaced ([specs/e2e.md](specs/e2e.md)) |
 
 ### `src/wica_interaction/` modules
 
@@ -84,7 +84,7 @@ The mapping is **many-to-many**: a file can be governed by several specs, so the
 
 ### Live/e2e tests
 
-Some tests call real external services over the network, or load real models. They live in `tests-e2e/`, a directory separate from `tests/`, so the default `uv run pytest` never runs them — no network access or credentials are needed for the normal dev loop. Run them explicitly (`uv run pytest tests-e2e -rs`, the `-rs` printing why each skipped test skipped), and only when you actually want to verify against a live service. Tests that lack their required credentials should **skip**, not fail, so the tier is safe to run with only the keys you happen to have: `tests-e2e/support.require_env(NAME)` skips when the variable is unset. Today the tier holds the hand-sign pipeline over the real vision models (`test_gesture_input_live.py`), which skips when the models or `vision-modules`' bundled photos are unavailable (the first run downloads the models — a few hundred megabytes).
+Some tests call real external services over the network, or load real models. They live in `tests-e2e/`, a directory separate from `tests/`, so the default `uv run pytest` never runs them — no network access or credentials are needed for the normal dev loop. Run them explicitly (`uv run pytest tests-e2e -rs`, the `-rs` printing why each skipped test skipped), and only when you actually want to verify against a live service. Tests that lack their required credentials should **skip**, not fail, so the tier is safe to run with only the keys you happen to have: `tests-e2e/support.require_env(NAME)` skips when the variable is unset. Today the tier holds the end-to-end scenarios of the computer embodiment (`test_computer.py`, [specs/e2e.md](specs/e2e.md)): the real app with a virtual audio cable as its mic (`WICA_E2E_MIC_DEVICE`, BlackHole on macOS) and an image file as its webcam, needing `WICA_ANTHROPIC_API_KEY` and `DEEPGRAM_API_KEY`. A missing key or device skips, and `WICA_E2E_FAIL_ON_MISSING=1` makes it fail instead. The first run downloads the hand models and the phonon voice, a few hundred megabytes.
 
 ## Developing against a sibling checkout
 

@@ -5,7 +5,7 @@ code:
 tests:
   - tests/test_gesture_input.py
   - tests/test_system.py
-  - tests-e2e/test_gesture_input_live.py
+  - tests-e2e/test_computer.py
 ---
 
 # Gesture input
@@ -273,7 +273,7 @@ Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with 
 - The embodiments' feeds are tested with them: `RobotCameraFeed` in [reachy-embodiment.md](reachy-embodiment.md), `WebcamSource` in [computer-embodiment.md](computer-embodiment.md).
 - `stop()` joins the threads and the callback is not called afterwards.
 - In `tests/test_system.py`, with a `FakeEmbodiment` whose camera is a scripted feed of synthetic frames + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered, `hold_s` reaches the gesture input, and the hand-signs section is in the first prompt; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line and no line for the sign-less hand 1; `HAND_GESTURE_TTL` later the World has cleared the sign with no step and renders no hand entry; `two → None` does not trigger; the serializer renders `None` as an empty `Content`; a vision config with no embodiment builds no `GestureInput`; `enabled: false` builds none either (registers no entry, seeds no section); teardown stops vision before the embodiment exits.
-- `tests-e2e/test_gesture_input_live.py` runs the **real** models, at the default hold (so it also proves the hold clears on a steady photo): a scripted source serving each of `vision-modules`' bundled photos must deliver its sign for hand 1 — `hand_fist.jpg` and `hand_stop.jpg` → `"stop"`, `hand_palm.jpg` → `"five"`, `hand_one.jpg` → `"one"`, `hand_three2.jpg` → `"three"` — and `no_hand.jpg` must deliver nothing — skipped when the fixtures or the models are unavailable (see [testing.md](testing.md)).
+- The **real** models are exercised by the end-to-end tier's hand scenario ([e2e.md](e2e.md), scenario 3), through the real camera path, at the default hold: with `no_hand.jpg` in view nothing is delivered; then `hand_fist.jpg` and `hand_stop.jpg` deliver `"stop"` on hand 1, `hand_palm.jpg` `"five"`, `hand_one.jpg` `"one"`, `hand_three2.jpg` `"three"`. Until 2026-11-10 a live test (`tests-e2e/test_gesture_input_live.py`) fed the same photos to `GestureInput` through a scripted source.
 
 ## Open questions
 
