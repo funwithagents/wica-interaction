@@ -57,14 +57,15 @@ The production providers (the example configs' providers) are not this tier's co
 
 #### The virtual audio cable
 
-The tier names its devices through four environment variables:
+The tier names its devices through three environment variables:
 
 | Variable | What | macOS | Linux |
 |---|---|---|---|
-| `WICA_E2E_MIC` | the input device the app listens on: the cable's input side | `BlackHole 2ch` | a remapped source over the cable sink's monitor |
-| `WICA_E2E_PERSON` | the output device the person speaks into: the cable's output side | `BlackHole 2ch` | the cable's null sink |
-| `WICA_E2E_SPEAKER` | the output device the app speaks to. When unset, the default output, so the robot can be heard while iterating | unset, or a second virtual device | a second null sink |
-| `WICA_E2E_REQUIRED` | `1` turns every skip below into a failure | unset locally | `1` in CI |
+| `WICA_E2E_MIC_DEVICE` | the input device the app listens on: the cable's recording end | `BlackHole 2ch` | a remapped source over the cable sink's monitor |
+| `WICA_E2E_PERSON_VOICE_DEVICE` | the output device the test plays the person's voice into: the cable's playback end. When unset, `WICA_E2E_MIC_DEVICE` | unset | the cable's null sink |
+| `WICA_E2E_SPEAKER_DEVICE` | the output device the app speaks to. When unset, the default output, so the robot can be heard while iterating | unset, or a second virtual device | a second null sink |
+
+**A cable has two ends, and on Linux they have two names.** A virtual cable is one output device that something plays into and one input device that records what was played. BlackHole shows both ends under one name, so on macOS `WICA_E2E_MIC_DEVICE` is enough. On Linux the playback end is a PulseAudio null sink and the recording end is a separate source, each with its own name, so the person's voice needs its own variable there.
 
 On Linux the mic is a remapped source, not the monitor itself, because upstream `reachy-mini`'s device matcher skips monitor sources.
 
@@ -74,8 +75,8 @@ On Linux the mic is a remapped source, not the monitor itself, because upstream 
 
 | Device | Replacement | Set through |
 |---|---|---|
-| Mic | the cable | `asr.engine.audio.device` = `WICA_E2E_MIC` |
-| Speakers | `WICA_E2E_SPEAKER` | `tts.engine.player.device` |
+| Mic | the cable | `asr.engine.audio.device` = `WICA_E2E_MIC_DEVICE` |
+| Speakers | `WICA_E2E_SPEAKER_DEVICE` | `tts.engine.player.device` |
 | Webcam | one image file, rewritten to change what the camera sees | `camera.device` = the file's path |
 
 **A file as the webcam needs no code change.** OpenCV opens a file path as a camera: it yields the image once, and the next read fails. `WebcamSource` records the failed read as a capture error and reopens the device, so the file is read again at the source's reopen rate. To change what the camera sees, the person replaces the file's contents atomically (writes a temporary file, then renames it over the path). "Nothing shown" is the `no_hand` photo.
@@ -85,12 +86,12 @@ On Linux the mic is a remapped source, not the monitor itself, because upstream 
 | Device | Replacement | Set through |
 |---|---|---|
 | Robot | the MuJoCo sim the bridge's harness runs | the harness's `live_daemon`; our embodiment builds its own bridge over it with `robot_options` |
-| Robot's mic | the cable | `REACHY_MINI_E2E_AUDIO_INPUT` = `WICA_E2E_MIC` |
-| Robot's speaker | `WICA_E2E_SPEAKER` | `REACHY_MINI_E2E_AUDIO_OUTPUT` |
+| Robot's mic | the cable | `REACHY_MINI_E2E_AUDIO_INPUT` = `WICA_E2E_MIC_DEVICE` |
+| Robot's speaker | `WICA_E2E_SPEAKER_DEVICE` | `REACHY_MINI_E2E_AUDIO_OUTPUT` |
 | A hand in front of the robot | a hand photo as a prop, 0.36 m wide, at (0.45, 0, 0.20) m | `pytest_reachy_mini_scene_props` and `sim_scene.spawn(name=…)` |
 
-- **The conftest copies our variables into the bridge's.** It sets `REACHY_MINI_E2E_AUDIO_INPUT` and `_OUTPUT` from `WICA_E2E_MIC` and `WICA_E2E_SPEAKER` before the harness spawns its daemon, so one set of names drives both embodiments.
-- **The sim's audio devices are checked when the session starts.** The daemon reports the devices it opened on `GET /api/bridge/daemon`. A session fixture reads that report and fails the run when the input is not `WICA_E2E_MIC`. Without this check, a daemon borrowed from an earlier run, started without the cable, would leave the robot listening to the real mic, and every spoken scenario would time out with no clear cause.
+- **The conftest copies our variables into the bridge's.** It sets `REACHY_MINI_E2E_AUDIO_INPUT` and `_OUTPUT` from `WICA_E2E_MIC_DEVICE` and `WICA_E2E_SPEAKER_DEVICE` before the harness spawns its daemon, so one set of names drives both embodiments.
+- **The sim's audio devices are checked when the session starts.** The daemon reports the devices it opened on `GET /api/bridge/daemon`. A session fixture reads that report and fails the run when the input is not `WICA_E2E_MIC_DEVICE`. Without this check, a daemon borrowed from an earlier run, started without the cable, would leave the robot listening to the real mic, and every spoken scenario would time out with no clear cause.
 - **The hand props.** The conftest's `pytest_reachy_mini_scene_props` declares one pool, `image_pool("hand", …, width=0.36)`: one prop per photo, `hand_1` … `hand_5`, hidden when the daemon boots. The photos are converted to PNG at session start with OpenCV, since props must be PNG. `Person.show` spawns a photo's prop by name at the position above. The tests are gated with `@pytest.mark.requires("camera", "props:hand")`.
 - **The hand position is measured.** In a spike on 2026-11-09, the real gesture pipeline read the sim's render of all five photos correctly, with scores of 0.71–0.83, at every distance from 0.30 m to 0.60 m. Beyond that the detector loses the hand: the failure is "no hand", never a wrong sign. 0.45 m, the bridge's default prop position, is the middle of the reliable band. The props' material is emissive, so lighting is not a variable.
 
@@ -110,7 +111,7 @@ The five hand photos and the `no_hand` photo are copied from vision-modules' liv
 
 A `Person` helper (`tests-e2e/person.py`) acts for the human in front of the app:
 
-- **`say(text)`** speaks `text` into `WICA_E2E_PERSON` with its own phonon engine and returns when playback ends.
+- **`say(text)`** speaks `text` into `WICA_E2E_PERSON_VOICE_DEVICE` with its own phonon engine and returns when playback ends.
 - **`show(photo)`** puts a hand photo in front of the camera: it rewrites the camera file on the computer, or spawns the matching prop on the robot.
 - **`hide()`** takes the hand away: it writes the `no_hand` photo on the computer, or clears the scene on the robot.
 
@@ -132,7 +133,7 @@ Each scenario builds and starts the real system, lets the person act, and assert
 
 - **Scenario 1 is the cheapest**, and it catches most wiring breakage. Scenarios 2 and 3 are the core of the tier.
 - **The vision check comes before the agent check.** Scenario 3 asserts the World's `hand_gesture_1` first and the agent's reaction second, as two separate expectations. A vision failure then shows up as one, and an LLM failure cannot hide it. This keeps the verdict the old live gesture test gave without any LLM.
-- **The echo scenario wires the cable on purpose.** The app's speaker is `WICA_E2E_PERSON`, the same cable it listens on, so echo cancellation is the only thing that keeps the app from hearing itself. The far-end reference is then exact.
+- **The echo scenario wires the cable on purpose.** The app's speaker is `WICA_E2E_PERSON_VOICE_DEVICE`, the same cable it listens on, so echo cancellation is the only thing that keeps the app from hearing itself. The far-end reference is then exact.
 - **Time limits are generous and asserted as timeouts**, through the `within=` windows of the `expect_*` calls. Latencies are recorded in the report but not asserted; `expect_latency` is not used.
 - **The framework's checks run after every scenario.** `wica.testing.checks` holds rules that apply to any finished timeline: every input is answered, no input is met with a no-op, no reaction fails, no cancel collides with a running action. They run over each scenario's timeline through `apply_checks`, adding broad assertions at no extra cost.
 - **The scenarios are plain pytest code, not WICA scenario files.** A scenario file's tester can only act through the fixed tester Commands, and its `set_<key>` Commands write the inputs straight into the World. That would bypass the ASR and the hand models, which are what this tier exists to test.
@@ -142,7 +143,7 @@ Each scenario builds and starts the real system, lets the person act, and assert
 ```
 tests-e2e/
   conftest.py          # loads the bridge's pytest plugin; the env, device and prop setup; shared fixtures
-  support.py           # require_env, and the rule that turns a skip into a failure
+  support.py           # require_env, and WICA_E2E_FAIL_ON_MISSING
   person.py            # Person
   configs/             # computer.json, reachy.json
   fixtures/            # the hand photos, no_hand, README
@@ -157,8 +158,8 @@ tests-e2e/
 
 ### Skips and failures
 
-- **A missing key, cable device or sim capability skips**, as in the rest of the live tier: a missing key through `require_env`, a missing device when the first open fails, a missing capability through the bridge's `requires` gate.
-- **With `WICA_E2E_REQUIRED=1`, each of those fails instead.** The conftest also sets the bridge's `REACHY_MINI_E2E_REQUIRED_CAPS` to the capabilities this tier needs (`camera`, `props:hand`), so a sim that comes up incomplete fails. CI sets the variable; a local run usually does not.
+- **By default, a missing prerequisite skips**, as in the rest of the live tier: a missing key through `require_env`, a missing cable device when its first open fails, a missing sim capability through the bridge's `requires` gate. A local run with only part of the setup then passes on what it can run.
+- **`WICA_E2E_FAIL_ON_MISSING=1` turns each of those skips into a failure.** In CI a skip would turn the job green with nothing tested: a secret not passed, a null sink not created, a sim that came up without its camera. With the variable set, the run fails and names what is missing. The conftest also sets the bridge's `REACHY_MINI_E2E_REQUIRED_CAPS` to the capabilities this tier needs (`camera`, `props:hand`), the bridge's own switch for the same rule. CI sets the variable; a local run usually does not.
 - **A failed run is re-run before it is believed.** Retries are not built in, so the report shows every failure, flaky ones included.
 
 ### Evidence on failure
