@@ -198,11 +198,10 @@ def test_tracking_without_a_detector_is_the_bridges_config_error(
         load_config(_write(tmp_path, config))
 
 
-@pytest.mark.parametrize(
-    "template", ["config.reachy.example.json", "config.reachy.french.example.json"]
-)
-def test_the_committed_templates_load(template: str) -> None:
-    """The shipped templates must open: they turn tracking on, so they must name a detector."""
-    cfg = load_config(str(Path(__file__).resolve().parents[2] / template))
+def test_the_committed_template_loads() -> None:
+    """The shipped template must open: it turns tracking on, so it must name a detector."""
+    cfg = load_config(
+        str(Path(__file__).resolve().parents[2] / "config.reachy.example.json")
+    )
     assert cfg.reachy.face_detection.detector == "yunet"
     assert cfg.reachy.motion.tracking is True

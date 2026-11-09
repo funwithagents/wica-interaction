@@ -1,0 +1,86 @@
+# Continuous integration — specs/ci.md.
+#
+# The static gate and the fast tier on GitHub's hosted runners, on every pull request and
+# push to main: `check` (lint, format, types) on Linux, and `fast-tier` once per platform the
+# dev environment installs on — Linux x86_64, macOS on Apple silicon, Windows x86_64 — since
+# the fast tier needs no device, no network and no key, and is where each platform's install
+# and code paths meet a real machine. Linux arm64 is left out: MediaPipe ships no wheel there,
+# so the dev group does not install. No secret is needed. The live tier's jobs join with the
+# end-to-end work (analysis/202611091830_e2e-full-pipeline.md, §14).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Linux only (docs/reference/install.md, "System packages"). Upstream reachy-mini, pulled by
+  # the bridge: PyGObject is sdist-only in the locked range and builds against the
+  # girepository and cairo headers; GStreamer comes from the system (introspection data, the
+  # base/good/bad plugin sets) — the bridge's own CI list. Then sounddevice's PortAudio, the
+  # C++ toolchain aec-audio-processing builds with, and the GLES/EGL libraries MediaPipe loads.
+  APT_PACKAGES: >-
+    libgirepository1.0-dev libcairo2-dev pkg-config
+    gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
+    gstreamer1.0-tools
+    libportaudio2
+    build-essential cmake
+    libgles2 libegl1
+
+jobs:
+  check:
+    name: lint, format, types
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=30 -o Acquire::Retries=3 $APT_PACKAGES
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync (the dev group, against the lock)
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Type check
+        run: uv run pyright
+
+  fast-tier:
+    name: fast tier (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      # One platform's failure leaves the others running. macOS and Windows take GStreamer
+      # from reachy-mini's wheels and ship the audio wheels, so they skip the apt step.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v7
+      - name: System packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=30 -o Acquire::Retries=3 $APT_PACKAGES
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync (the dev group, against the lock)
+        run: uv sync --locked
+      - name: Fast tier
+        run: uv run pytest
