@@ -15,7 +15,7 @@ tests:
 
 # End-to-end tier
 
-**Status:** Updated
+**Status:** Implemented
 
 ## Purpose
 

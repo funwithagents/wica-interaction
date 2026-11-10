@@ -1,12 +1,12 @@
 # The room holds its echo's delay
 
-**Status:** In progress
+**Status:** Done
 
 Implements the settled behavior in `specs/e2e.md` ("The room", "The echo's delay holds"): the end-to-end room keeps the app's echo at its 50 ms delay for the whole run, against the drift between its recording and playback streams and a late recording block. It leaves out drift on purpose (a room variant for two devices), which the spec defers.
 
 ## Scope
 
-- `tests-e2e/room.py` — the `Mixer` holds its echo backlog at the delay: a running average of the backlog, a one-sample resampled correction per block while it is more than 0.5 ms off, a cut or pad when it is more than 20 ms off; the old cut-back past 150 ms (`ECHO_SLACK_S`) goes; the room's log counts the hard corrections.
+- `tests-e2e/room.py` — the `Mixer` holds the echo's delay, measured from recording to playback (PortAudio's ADC and DAC times): a one-sample resampled correction per block while its average is more than 0.5 ms off, the whole excess cut when it is more than 20 ms over; the old cut-back past 150 ms (`ECHO_SLACK_S`) goes; the room's log counts the hard corrections.
 - `specs/e2e.md` — back to `Implemented` once done.
 
 ## Steps
