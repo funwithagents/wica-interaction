@@ -160,12 +160,16 @@ jobs:
       - name: End-to-end, computer
         run: uv run pytest tests-e2e/test_computer.py -v -rs --basetemp=${{ runner.temp }}/e2e
       - name: Evidence
-        if: failure()
+        # Always, not only on a failure: the echo canceller's recordings (audio.npz) are the data
+        # a better canceller is measured on, and the echo check no longer fails (specs/e2e.md,
+        # open question 4).
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: e2e-computer-evidence
           path: ${{ runner.temp }}/e2e
           if-no-files-found: ignore
+          retention-days: 30
 
   e2e-reachy:
     name: e2e (reachy)
