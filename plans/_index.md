@@ -48,6 +48,7 @@ Implementation plans for WICA Interaction (formerly Reachy Mini Interaction WICA
 | [202611100142_ci-e2e-reachy.md](202611100142_ci-e2e-reachy.md) | CI's end-to-end robot job ([specs/ci.md](../specs/ci.md)): the Reachy Mini scenarios on Linux against the headless sim, over the PulseAudio cable | Done |
 | [202611100216_e2e-interrupt-and-dictation.md](202611100216_e2e-interrupt-and-dictation.md) | The end-to-end tier, part 3 ([specs/e2e.md](../specs/e2e.md)): scenarios 5 (a spoken and a shown stop) and 6 (dictation) on both embodiments | Done |
 | [202611101102_e2e-conversation-and-room.md](202611101102_e2e-conversation-and-room.md) | The end-to-end tier, part 4 ([specs/e2e.md](../specs/e2e.md)): the room (the person's voice and the app's echo), echo cancellation following it, and one conversation per embodiment | In progress |
+| [202611101225_input-wordings.md](202611101225_input-wordings.md) | The input wordings ([specs/app.md](../specs/app.md), [specs/asr-bridge.md](../specs/asr-bridge.md), [specs/gesture-input.md](../specs/gesture-input.md)): speech heard, gestures detected, a dictated passage marked complete | Done |
 | _(add plans here — see [_plan-template.md](_plan-template.md))_ | | |
 
 ## Status legend

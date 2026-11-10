@@ -40,6 +40,7 @@ from tests.fakes import (
 )
 from wica_interaction import system as system_module
 from wica_interaction.app_ui import display_entry
+from wica_interaction.asr_bridge import DictatedPassage
 from wica_interaction.config import AppConfig, VisionConfig
 from wica_interaction.embodiment import Embodiment
 from wica_interaction.gesture_input import GestureModels
@@ -354,6 +355,36 @@ def test_closed_segment_reaches_agent_like_typed_text() -> None:
         _shutdown(system)
 
 
+def test_a_dictated_passage_reaches_the_prompt_as_complete() -> None:
+    """A segment that closed a dictation (here on a trigger word) flows engine → bridge → World and
+    reaches the model's prompt marked as the complete passage."""
+    embodiment = FakeEmbodiment()
+    fake_asr = FakeASREngine()
+    system = _build(embodiment, script=_say_once("noted"), asr=fake_asr)
+    try:
+        _, reactions = _wire(system)
+        _start(system)
+        _emit_segment(
+            system,
+            fake_asr,
+            SpeechSegment(
+                transcript="buy milk",
+                is_final=True,
+                end_reason="trigger_word",
+                utterances=[],
+            ),
+        )
+        assert _wait_until(lambda: embodiment.said == ["noted"])
+        prompt = reactions.prompt_text(0)
+        assert prompt is not None
+        assert (
+            'Dictation is over. You heard this complete dictated passage: "buy milk"'
+            in prompt
+        )
+    finally:
+        _shutdown(system)
+
+
 def test_empty_final_segment_wakes_agent() -> None:
     """A final that closed on silence (empty transcript) still reaches the agent, so it can react to
     the user saying nothing — unlike an empty typed line, which is ignored."""
@@ -373,21 +404,35 @@ def test_empty_final_segment_wakes_agent() -> None:
 
 
 def test_speech_serializer_renders_an_utterance_and_omits_none() -> None:
-    """An utterance (an empty one included — a passage that closed on silence) is a line; `None` —
-    nothing said yet, or the last utterance expired — is an empty `Content`, which WICA turns into
-    no entry at all."""
-    assert _flat(_speech_input("hello", None)) == 'The person said to you: "hello"'
-    assert _flat(_speech_input("", "hello")) == 'The person said to you: ""'
+    """An utterance (an empty one included — a passage that closed on silence) is a line saying what
+    was heard, not who said it; `None` — nothing said yet, or the last utterance expired — is an
+    empty `Content`, which WICA turns into no entry at all."""
+    assert _flat(_speech_input("hello", None)) == 'You hear someone say: "hello"'
+    assert _flat(_speech_input("", "hello")) == 'You hear someone say: ""'
     assert _speech_input(None, None) == []
     assert (
         _speech_input(None, "hello") == []
     )  # expired: still nothing, not "nothing yet"
 
 
+def test_speech_serializer_says_a_dictated_passage_is_complete() -> None:
+    """A passage that closed a dictation says the dictation is over, so the model reads it as the
+    whole note, not one more sentence of it — empty included."""
+    assert (
+        _flat(_speech_input(DictatedPassage("buy milk"), None))
+        == 'Dictation is over. You heard this complete dictated passage: "buy milk"'
+    )
+    assert (
+        _flat(_speech_input(DictatedPassage(""), None))
+        == 'Dictation is over. You heard this complete dictated passage: ""'
+    )
+
+
 def test_hand_serializer_renders_a_sign_and_omits_none() -> None:
+    """A sign is a gesture detected on a hand, not something the person is said to be doing."""
     assert (
         _flat(_hand_gesture(2)("three", None))
-        == 'The person\'s hand 2 is showing the "three" sign.'
+        == 'Hand gesture detected on hand 2: "three".'
     )
     assert _hand_gesture(1)(None, None) == []
     assert (
@@ -413,7 +458,7 @@ def test_an_utterance_is_gone_from_the_world_and_the_prompt_after_its_ttl() -> N
         assert _wait_until(lambda: embodiment.said == ["hello there"])
         prompt = reactions.prompt_text(0)
         assert prompt is not None
-        assert 'The person said to you: "hi"' in prompt
+        assert 'You hear someone say: "hi"' in prompt
         # The say finishing re-triggers one step (the scripted noop); then nothing else may.
         assert _wait_until(lambda: reactions.snapshot().count == 2)
 
@@ -828,7 +873,7 @@ def test_a_sign_wakes_the_agent_and_is_gone_from_the_prompt_after_its_ttl() -> N
         assert _wait_until(lambda: embodiment.said == ["okay, stopping"])
         prompt = reactions.prompt_text(0)
         assert prompt is not None
-        assert 'hand 1 is showing the "stop" sign' in prompt
+        assert 'detected on hand 1: "stop"' in prompt
         assert "hand 2" not in prompt  # a sign-less hand is omitted, not described
 
         # Still shown, many frames later: no second step for it (the `say` finishing re-triggers one
@@ -880,7 +925,7 @@ def test_another_sign_wakes_the_agent_again() -> None:
         assert _sign_steps(reactions, 1) == 2
         prompt = reactions.prompt_text(reactions.snapshot().count - 1)
         assert prompt is not None
-        assert 'hand 1 is showing the "five" sign' in prompt
+        assert 'detected on hand 1: "five"' in prompt
     finally:
         _shutdown(system)
 

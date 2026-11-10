@@ -21,6 +21,8 @@ What closes a dictated passage is the speech recognizer's `dictation_default_seg
 
 The reply `start_dictation` returns says which it is, `Dictation started (timeout mode): …` or `(trigger_word mode): …`, naming the configured words. That reply is for the model, not for you: neither it nor the persona asks the agent to announce how the passage ends, since you chose the mode and an extra spoken turn before every dictation would break the flow. It is there so the model's picture matches the config, for what it answers if asked and what it makes of the passage it then receives.
 
+When the passage closes, it reaches the agent marked as a finished dictation, `Dictation is over. You heard this complete dictated passage: "…"`, rather than as one more thing said ([agent.md](../reference/agent.md)), so the model reads it as the whole note it asked for.
+
 The persona files say nothing about how a passage ends, for the same reason: the mode is a config field, and a prompt that said "when you pause" against a `trigger_word` config would describe a passage that never closes that way ([personas.md](personas.md)).
 
 ## The stop button
