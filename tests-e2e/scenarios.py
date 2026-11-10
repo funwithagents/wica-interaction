@@ -15,6 +15,7 @@ from person import HAND_PHOTOS
 from support import (
     E2E,
     READY_TIMEOUT_S,
+    SCENARIO_CHECKS,
     command_spans,
     failed_checks,
     reactions_to,
@@ -54,8 +55,8 @@ def wait_ready(e2e: E2E) -> None:
     )
 
 
-def assert_checks(e2e: E2E) -> None:
-    failed = failed_checks(e2e.run)
+def assert_checks(e2e: E2E, checks: tuple[str, ...] = SCENARIO_CHECKS) -> None:
+    failed = failed_checks(e2e.run, checks)
     assert not failed, [f"{f.expectation}: {f.detail}" for f in failed]
 
 
@@ -276,7 +277,9 @@ def dictation(e2e: E2E, *, end_word: str | None) -> None:
     assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
         "the agent never settled"
     )
-    assert_checks(e2e)
+    # Nothing asks the agent to answer a note: the persona lets it stay silent, and Claude Haiku
+    # does, every time. So the note may be met with `noop` (specs/e2e.md, open question 3).
+    assert_checks(e2e, tuple(c for c in SCENARIO_CHECKS if c != "no_noop_on_input"))
 
 
 def _voice_running(e2e: E2E) -> bool:

@@ -34,6 +34,8 @@ Decided with the maintainer (open question 5): the computer template, and the co
 
 On the Mac, with the ASR's finals logged: with a 1 s pause before "Send." the second sentence was lost every time (the final holding the trigger word is dropped with it, so a sentence Flux joins to it goes too); with 3 s the passage arrived whole in 4 runs of 5, Flux once hearing only "Morning." of the second sentence. Haiku then met the note with `noop` in every run, as on the robot, so the computer's dictation test is an expected failure on open question 3, like the robot's.
 
+Then decided with the maintainer: nothing asks the agent to answer a note and the persona lets it stay silent, so the dictation scenario leaves `no_noop_on_input` out and neither dictation test is an expected failure. On the Mac the computer's then passed in 5 runs of 6; in the sixth, as once before, the second sentence never reached the passage (Flux's recognition of the synthetic voice; with 3 s before "Send." the second sentence was lost in 2 runs of 10 overall).
+
 ## Runs
 
 On the Mac (2026-11-10):

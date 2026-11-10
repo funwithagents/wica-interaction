@@ -129,8 +129,10 @@ class InputLog:
 SCENARIO_CHECKS = ("no_noop_on_input", "no_failed_reactions", "no_colliding_cancel")
 
 
-def failed_checks(run: TestRun) -> list[Finding]:
-    """The framework's checks over *run*'s timeline so far; the ones that failed."""
+def failed_checks(
+    run: TestRun, checks: tuple[str, ...] = SCENARIO_CHECKS
+) -> list[Finding]:
+    """The framework's *checks* over *run*'s timeline so far; the ones that failed."""
     timeline = run.timeline()
     context = CheckContext(
         output_command_name=run.probe.output_command_name,
@@ -138,8 +140,7 @@ def failed_checks(run: TestRun) -> list[Finding]:
         origin=timeline[0].t if timeline else 0.0,
     )
     findings = [
-        run_check(CHECKS[name], CheckSpec(name), timeline, context)
-        for name in SCENARIO_CHECKS
+        run_check(CHECKS[name], CheckSpec(name), timeline, context) for name in checks
     ]
     return [f for f in findings if not f.ok]
 
