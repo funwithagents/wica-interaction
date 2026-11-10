@@ -66,9 +66,11 @@ jobs:
         run: uv sync --locked
 
       - name: The virtual devices (VB-Cable, Scream)
-        # The runner has no sound card and its audio service is off. Both drivers are signed
-        # by their makers, not by Microsoft: each signer goes to TrustedPublisher first, so
-        # `devcon` installs without the dialog that would hang the job (as LABSN/sound-ci-helpers).
+        # The runner has no sound card and its audio service is off. VB-Cable's driver is signed
+        # by Microsoft; Scream's by its author's own certificate, which goes to Root and
+        # TrustedPublisher first, or `devcon` waits forever on the "unverified publisher" dialog
+        # (as LABSN/sound-ci-helpers does). A hang fails the step in minutes.
+        timeout-minutes: 5
         run: |
           Set-Service AudioEndpointBuilder -StartupType Automatic; Start-Service AudioEndpointBuilder
           Set-Service Audiosrv -StartupType Automatic; Start-Service Audiosrv
@@ -81,12 +83,12 @@ jobs:
             Expand-Archive -LiteralPath $zip -DestinationPath "$d\$($p[0])"
           }
           $devcon = "$d\scream\Install\helpers\devcon-x64.exe"
-          foreach ($cat in @("$d\vbcable\vbaudio_cable64_win10.cat", "$d\scream\Install\driver\x64\scream.cat")) {
-            $cert = (Get-AuthenticodeSignature $cat).SignerCertificate
-            "$cat signed by: $($cert.Subject)"
-            Export-Certificate -Cert $cert -FilePath "$cat.cer" | Out-Null
-            certutil -addstore TrustedPublisher "$cat.cer" | Out-Null
-          }
+          $cat = "$d\scream\Install\driver\x64\scream.cat"
+          $cert = (Get-AuthenticodeSignature $cat).SignerCertificate
+          "Scream signed by: $($cert.Subject)"
+          Export-Certificate -Cert $cert -FilePath "$cat.cer" | Out-Null
+          certutil -addstore Root "$cat.cer" | Out-Null
+          certutil -addstore TrustedPublisher "$cat.cer" | Out-Null
           & $devcon install "$d\vbcable\vbMmeCable64_win10.inf" VBAudioVACWDM
           if ($LASTEXITCODE -ne 0) { throw "VB-Cable: devcon exited $LASTEXITCODE" }
           & $devcon install "$d\scream\Install\driver\x64\Scream.inf" *Scream
