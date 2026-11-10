@@ -4738,7 +4738,7 @@ wheels = [
 [[package]]
 name = "wica"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/wica-framework?rev=main#9ab51cc91de3f2c8e0cff3ae4826385ffbaaf6bd" }
+source = { git = "https://github.com/funwithagents/wica-framework?rev=main#38e3bede3bd637447938865da135c61f75e0ea97" }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
@@ -4866,7 +4866,7 @@ dev = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "wica-interaction", extra = ["asr-deepgram", "audio-processing", "computer", "reachy", "reachy-sim", "tts-elevenlabs", "tts-gradium", "tts-pocket", "vision", "wica-anthropic", "wica-google-genai", "wica-huggingface-hub", "wica-mistralai", "wica-openai"] },
+    { name = "wica-interaction", extra = ["asr-deepgram", "audio-processing", "computer", "reachy", "reachy-sim", "tts-elevenlabs", "tts-gradium", "tts-phonon", "tts-pocket", "vision", "wica-anthropic", "wica-google-genai", "wica-huggingface-hub", "wica-mistralai", "wica-openai"] },
 ]
 
 [package.metadata]
@@ -4914,7 +4914,7 @@ dev = [
     { name = "pyright", specifier = ">=1.1.411" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.16.6" },
-    { name = "wica-interaction", extras = ["asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-pocket"], editable = "." },
+    { name = "wica-interaction", extras = ["asr-deepgram", "tts-elevenlabs", "tts-gradium", "tts-pocket", "tts-phonon"], editable = "." },
     { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision"], editable = "." },
     { name = "wica-interaction", extras = ["reachy-sim"], editable = "." },
     { name = "wica-interaction", extras = ["wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-google-genai", "wica-mistralai"], editable = "." },

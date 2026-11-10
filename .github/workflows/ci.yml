@@ -5,8 +5,10 @@
 # dev environment installs on — Linux x86_64, macOS on Apple silicon, Windows x86_64 — since
 # the fast tier needs no device, no network and no key, and is where each platform's install
 # and code paths meet a real machine. Linux arm64 is left out: MediaPipe ships no wheel there,
-# so the dev group does not install. No secret is needed. The live tier's jobs join with the
-# end-to-end work.
+# so the dev group does not install. `e2e-computer` and `e2e-reachy` run the end-to-end tier's
+# scenarios on Linux, one job per embodiment, with the two provider keys as secrets: on pushes to
+# main and on a manual run (any branch), not on pull requests, since each run pays the LLM and the
+# ASR.
 
 name: CI
 
@@ -96,3 +98,147 @@ jobs:
         run: uv sync --locked
       - name: Fast tier
         run: uv run pytest
+
+  e2e-computer:
+    name: e2e (computer)
+    # The end-to-end tier on the computer embodiment (specs/e2e.md): the real app — Claude Haiku,
+    # Deepgram Flux, phonon, the hand models — with a PulseAudio null sink as the virtual cable.
+    # Not a required check until its history shows it stable (specs/ci.md). On main and by hand
+    # only: each run pays the LLM and the ASR.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      WICA_ANTHROPIC_API_KEY: ${{ secrets.WICA_ANTHROPIC_API_KEY }}
+      DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+      # The cable's two ends, the app's speaker and its recording end (the room's echo), as ALSA
+      # names over PulseAudio (below).
+      WICA_E2E_MIC_DEVICE: wica_mic
+      WICA_E2E_PERSON_VOICE_DEVICE: wica_cable
+      WICA_E2E_SPEAKER_DEVICE: wica_speaker
+      WICA_E2E_ECHO_DEVICE: wica_echo
+      # A missing key or device fails the job instead of turning it green with nothing tested.
+      WICA_E2E_FAIL_ON_MISSING: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - name: System packages (the app's, plus PulseAudio and its ALSA plugin)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=30 -o Acquire::Retries=3 $APT_PACKAGES pulseaudio pulseaudio-utils libasound2-plugins
+      - name: Cache key (the packages built from source)
+        shell: bash
+        run: grep -A3 -E "$SOURCE_BUILDS" uv.lock > .ci-source-builds
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: .ci-source-builds
+      - name: Model cache (the hand models, the phonon voice)
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface
+          key: hf-e2e-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: hf-e2e-${{ runner.os }}-
+      - name: Sync (the dev group, against the lock)
+        run: uv sync --locked
+      - name: The virtual cable
+        # A null sink is the cable: the person plays into it, and a source remapped over its
+        # monitor is the app's mic. A second null sink is the app's speaker, its monitor the echo
+        # device the room records the app's voice from (specs/e2e.md, "The room"). PortAudio, under
+        # sounddevice, sees ALSA devices only, so each gets an ALSA name through the pulse plugin.
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=wica_cable
+          pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic
+          pactl load-module module-null-sink sink_name=wica_speaker
+          cat > ~/.asoundrc <<'ASOUND'
+          pcm.wica_cable { type pulse; device "wica_cable" }
+          pcm.wica_mic { type pulse; device "wica_mic" }
+          pcm.wica_speaker { type pulse; device "wica_speaker" }
+          pcm.wica_echo { type pulse; device "wica_speaker.monitor" }
+          ASOUND
+          uv run python -c "import sounddevice as sd; print(sd.query_devices())"
+      - name: End-to-end, computer
+        run: uv run pytest tests-e2e/test_computer.py -v -rs --basetemp=${{ runner.temp }}/e2e
+      - name: Evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-computer-evidence
+          path: ${{ runner.temp }}/e2e
+          if-no-files-found: ignore
+
+  e2e-reachy:
+    name: e2e (reachy)
+    # The end-to-end tier on the Reachy Mini embodiment (specs/e2e.md): the real app in the
+    # headless MuJoCo sim the bridge's harness spawns, its camera rendered through EGL, hand
+    # photos as props, the cable as the robot's mic. The bridge's own live job is the model
+    # (reachy-mini-bridge/.github/workflows/ci.yml, `e2e-sim`). Not a required check yet; on main
+    # and by hand only, as the computer's.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      WICA_ANTHROPIC_API_KEY: ${{ secrets.WICA_ANTHROPIC_API_KEY }}
+      DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+      WICA_E2E_MIC_DEVICE: wica_mic
+      WICA_E2E_PERSON_VOICE_DEVICE: wica_cable
+      WICA_E2E_SPEAKER_DEVICE: wica_speaker
+      WICA_E2E_ECHO_DEVICE: wica_echo
+      WICA_E2E_FAIL_ON_MISSING: '1'
+      # A sim that comes up without its camera, its audio or the hand props fails the job
+      # instead of skipping the scenarios.
+      REACHY_MINI_E2E_REQUIRED_CAPS: audio,camera,props:hand
+    steps:
+      - uses: actions/checkout@v7
+      - name: System packages (the app's; PulseAudio and its ALSA and GStreamer plugins; the daemon's ICE library; Mesa's EGL for the offscreen camera)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=30 -o Acquire::Retries=3 $APT_PACKAGES pulseaudio pulseaudio-utils libasound2-plugins gstreamer1.0-pulseaudio gstreamer1.0-nice libnice10 libgl1-mesa-dri libosmesa6
+      - name: Cache key (the packages built from source)
+        shell: bash
+        run: grep -A3 -E "$SOURCE_BUILDS" uv.lock > .ci-source-builds
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: .ci-source-builds
+      - name: Model cache (the hand models, the phonon voice, the emotions library)
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface
+          key: hf-e2e-reachy-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: hf-e2e-reachy-${{ runner.os }}-
+      - name: Sync (the dev group, against the lock)
+        run: uv sync --locked
+      - name: The virtual cable
+        # As the computer's job, plus what the bridge and the sim's daemon need to find a device:
+        # upstream's matcher reads GStreamer's listing, matches PulseAudio's description, skips
+        # monitor sources (hence the remapped source as the mic), and on a PulseAudio host without
+        # PipeWire takes a virtual device only through its `device.string` — set to the name,
+        # which is both the PulseAudio device and the ALSA one below.
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=wica_cable sink_properties=device.description=wica_cable
+          pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic 'source_properties="device.description=wica_mic device.string=wica_mic"'
+          pactl load-module module-null-sink sink_name=wica_speaker 'sink_properties="device.description=wica_speaker device.string=wica_speaker"'
+          pactl set-default-sink wica_speaker
+          pactl set-default-source wica_mic
+          cat > ~/.asoundrc <<'ASOUND'
+          pcm.wica_cable { type pulse; device "wica_cable" }
+          pcm.wica_mic { type pulse; device "wica_mic" }
+          pcm.wica_speaker { type pulse; device "wica_speaker" }
+          pcm.wica_echo { type pulse; device "wica_speaker.monitor" }
+          ASOUND
+          uv run python -c "import sounddevice as sd; print(sd.query_devices())"
+      # The daemon's media server needs the gst-plugins-rs webrtcsink element, which no Ubuntu
+      # archive ships; upstream's action installs a prebuilt, pinned one (as the bridge's CI).
+      - name: Rust webrtc plugin (upstream's action, pinned)
+        uses: pollen-robotics/reachy_mini/.github/actions/webrtc-plugin@c14dc5fd43100582d349466aec4bdc4960490522
+      - name: End-to-end, reachy
+        run: uv run pytest tests-e2e/test_reachy.py -v -rs -o log_cli=true --log-cli-level=WARNING --basetemp=${{ runner.temp }}/e2e
+      - name: Evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-reachy-evidence
+          path: ${{ runner.temp }}/e2e
+          if-no-files-found: ignore

@@ -90,7 +90,7 @@ dev = [
     # The other speech providers are resolved by `uv lock` all the same, just not installed.
     "wica-interaction[computer,audio-processing,reachy,vision]",
     "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,wica-mistralai]",
-    "wica-interaction[asr-deepgram,tts-elevenlabs,tts-gradium,tts-pocket]",
+    "wica-interaction[asr-deepgram,tts-elevenlabs,tts-gradium,tts-pocket,tts-phonon]",
     # The simulator, what the reachy template targets, for manual/e2e testing against a simulated
     # robot.
     "wica-interaction[reachy-sim]",

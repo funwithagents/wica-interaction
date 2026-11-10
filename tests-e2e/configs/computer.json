@@ -1,0 +1,40 @@
+{
+  "wica": {
+    "agent": {
+      "provider": "anthropic",
+      "model": "claude-haiku-5-5",
+      "api_key_env": "WICA_ANTHROPIC_API_KEY",
+      "system_prompt_file": "../../prompts/computer.md"
+    }
+  },
+  "tts": {
+    "engine": {
+      "module": { "type": "phonon", "voice": "Micah" },
+      "player": { "device": null }
+    }
+  },
+  "asr": {
+    "engine": {
+      "module": {
+        "type": "deepgram_v2",
+        "api_key_env": "DEEPGRAM_API_KEY",
+        "model": "flux-general-en"
+      },
+      "audio": { "device": null },
+      "dictation_default_segmentation_mode": "trigger_word"
+    }
+  },
+  "audio_processing": {
+    "echo_cancellation": { "enabled": false, "stream_delay_ms": 50 },
+    "noise_suppression": { "enabled": false, "level": 2 }
+  },
+  "vision": {
+    "enabled": true,
+    "threshold": 0.55,
+    "fps": 5,
+    "max_hands": 2,
+    "hold_s": 0.5,
+    "device": null
+  },
+  "camera": { "device": null }
+}
