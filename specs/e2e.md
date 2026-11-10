@@ -131,8 +131,8 @@ Each scenario builds and starts the real system, lets the person act, and assert
 | 2 | Spoken turn | both | "Hello, what is your name?" | a final `speech_input` containing "name", then a `say` issued and completed |
 | 3 | Hand sign | both | nothing at first; then each photo in turn, hiding it between | no `hand_gesture_1` while nothing is shown; then `hand_gesture_1` equals each photo's sign, and a reaction of the agent has it among its triggers |
 | 4 | Emotion | robot | "Can you show me that you are happy?" | `play_emotion` issued and completed, and a `say`; a `say` running at the same time as the emotion is recorded in the report, not failed on |
-| 5 | Interrupt | both | asks for a long story; then, while the app is speaking, says "stop" or shows `stop` | the running `say` is cancelled |
-| 6 | Dictation | both | the dictation trigger, a passage, the end phrase | dictation starts, the passage arrives as one input, and dictation stops |
+| 5 | Interrupt | both | asks for a long story; then, while the app is speaking, says "Stop, please. That's enough." (one test) or shows `stop` (another) | the running `say` is cancelled |
+| 6 | Dictation | both | asks to dictate a note; then two sentences with a pause between them, then, where the config ends a passage on a trigger word (the robot's), "Send." | `start_dictation` completes and dictation is on; the passage arrives as one `speech_input` holding both sentences; dictation is then off |
 | 7 | Echo | computer | speaks while the app is speaking, with both voices on the cable | the app's own words never appear as a `speech_input` |
 
 - **Scenario 1 is the cheapest**, and it catches most wiring breakage. Scenarios 2 and 3 are the core of the tier.
@@ -157,8 +157,8 @@ tests-e2e/
   scenarios.py      # the scenarios, written once, run by each embodiment's file
   configs/          # computer.json, reachy.json
   fixtures/         # the hand photos, no_hand, README
-  test_computer.py  # scenarios 1, 2, 3, 5, 6, 7 (1–3 so far)
-  test_reachy.py    # scenarios 1–6 (1–4 so far)
+  test_computer.py  # scenarios 1, 2, 3, 5, 6, 7 (1–3, 5, 6 so far)
+  test_reachy.py    # scenarios 1–6
 ```
 
 - **One directory, one run.** `tests-e2e/conftest.py` loads the bridge's plugin (`reachy_mini_bridge.testing.fixtures`) for the whole tier. The computer's tests request none of its fixtures, so they never start a sim. `uv run pytest tests-e2e` runs both embodiments, and either file can be run on its own. The files sit flat in `tests-e2e/`, which is not a package, so they import `support` and `person` as the type checker resolves them: from their own directory.
@@ -232,5 +232,6 @@ Windows on Arm (for example in Parallels on an Apple silicon Mac) is a different
 
 1. **The echo scenario on BlackHole.** It needs the app to speak into the cable it listens on, which is what stalls a process's capture of the cable on macOS ("The person's voice plays from a process of its own"): the app cannot be moved out of its own process. Possible ways: two cables (BlackHole 16ch's channels, or a second BlackHole) with the app's voice routed to the mic's cable by an aggregate device; or Linux only, where PulseAudio shows no such stall. To decide before the scenario is written.
 2. **Recording the cable.** A recording of what the mic heard would be the best evidence for a failed spoken scenario. The cost is one more input stream on the cable during the run.
-3. **The model and the persona's rules.** The full tier fixes one model (Claude Haiku 5.5) to test the assembled product. Rules the persona asks of the model — never `say` and `play_emotion` at once — are the model's behaviour: Haiku broke that one in 2 runs of 3. The emotion scenario records it rather than failing on it; the later agent tier, on the production model, is where such rules are asserted. To confirm.
-4. **The harness's startup timeout.** It is fixed at 45 s, which a first macOS launch exceeds. This is raised with the bridge. Until it is fixed, the workaround is a daemon started by hand.
+3. **The model and the persona's rules.** The full tier fixes one model (Claude Haiku 5.5) to test the assembled product, and some of what it asserts is that model's behaviour, not the product's wiring. Two cases so far: asked for an emotion, Haiku issued `say` and `play_emotion` at once in 2 runs of 3, against the persona's one-body rule (the emotion scenario records it rather than failing); and in one run it met a dictated note with `noop`, which the framework's `no_noop_on_input` check fails, as it does any such answer, in every scenario. Whether such rules fail this tier, are recorded in its report, or are left to the later agent tier on the production model is to decide.
+4. **Speaking over the computer, with echo cancellation on.** While the app speaks, the person's voice is suppressed: a spoken "stop" never reaches the agent (the robot, whose named devices run without software echo cancellation, hears it; with the computer's echo cancellation off it is heard too). On the cable there is no echo at all — the reference is the app's voice, the mic carries only the person — yet the canceller still swallows the person's speech during the app's. Whether that holds in a room (barge-in would then not work on the computer) or comes from the setup (the reference's delay, a canceller that has not converged two seconds into the story) is to find out; until then the computer's spoken-stop test is an expected failure.
+5. **The harness's startup timeout.** It is fixed at 45 s, which a first macOS launch exceeds. This is raised with the bridge. Until it is fixed, the workaround is a daemon started by hand.

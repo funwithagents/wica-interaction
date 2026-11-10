@@ -173,3 +173,101 @@ def emotion(e2e: E2E) -> None:
             repr(overlaps),
         )
     assert_checks(e2e)
+
+
+# A reply long enough to be interrupted: a story told at speaking pace.
+LONG_REQUEST = (
+    "Please tell me a long story about a dragon who learns to bake bread, "
+    "at least ten sentences long."
+)
+
+
+def _speaking_started(e2e: E2E) -> None:
+    """Ask for a long story and wait until the voice is running with it."""
+    voice = e2e.run.probe.output_command_name
+    assert voice is not None
+    e2e.person.say(LONG_REQUEST)
+    running = e2e.run.expect_action(voice, state="running", within=REPLY_WITHIN_S)
+    assert running.ok, running.detail
+    time.sleep(2.0)  # well into the story
+
+
+def interrupt_spoken(e2e: E2E) -> None:
+    """Scenario 5 (spoken): the person says "stop" while the app tells a long story; the running
+    `say` is cancelled."""
+    wait_ready(e2e)
+    voice = e2e.run.probe.output_command_name
+    _speaking_started(e2e)
+    # A bare "Stop." gave the ASR too little to close a turn on: nothing was delivered.
+    e2e.person.say("Stop, please. That's enough.")
+    cancelled = e2e.run.expect_action(
+        voice or "say", state="cancelled", within=REPLY_WITHIN_S
+    )
+    assert cancelled.ok, cancelled.detail
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+    assert_checks(e2e)
+
+
+def interrupt_sign(e2e: E2E) -> None:
+    """Scenario 5 (shown): the person shows `stop` while the app tells a long story; the running
+    `say` is cancelled — the one sign the persona fixes."""
+    wait_ready(e2e)
+    voice = e2e.run.probe.output_command_name
+    _speaking_started(e2e)
+    e2e.person.show("hand_stop")
+    cancelled = e2e.run.expect_action(
+        voice or "say", state="cancelled", within=REPLY_WITHIN_S
+    )
+    e2e.person.hide()
+    assert cancelled.ok, cancelled.detail
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+    assert_checks(e2e)
+
+
+def dictation(e2e: E2E, *, end_word: str | None) -> None:
+    """Scenario 6: asked to take a note, the agent starts dictation; the passage, two sentences
+    with a pause between them, arrives as one input; and dictation is over after it. It ends on a
+    pause, or on *end_word* when the embodiment's config ends passages on a trigger word."""
+    wait_ready(e2e)
+    bridge = e2e.system.bridge
+    assert bridge is not None
+
+    e2e.person.say("I would like to dictate a note, please.")
+    started = e2e.run.expect_action(
+        "start_dictation", state="complete", within=REPLY_WITHIN_S
+    )
+    assert started.ok, started.detail
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+    assert bridge.status()["dictating"], bridge.status()
+
+    t = time.monotonic()
+    e2e.person.say("Buy milk and eggs.")
+    time.sleep(1.5)  # a pause that would close a conversational turn
+    e2e.person.say("Call the plumber tomorrow morning.")
+    if end_word is not None:
+        time.sleep(1.0)
+        e2e.person.say(end_word)
+    passage = e2e.inputs.wait_for(
+        "speech_input",
+        lambda value: isinstance(value, str) and value.strip() != "",
+        within=HEARD_WITHIN_S,
+        after=t,
+    )
+    assert passage is not None, e2e.inputs.delivered("speech_input")
+    text = str(passage.value).lower()
+    assert "milk" in text and "plumber" in text, (
+        f"the passage did not arrive as one input: {e2e.inputs.delivered('speech_input')}"
+    )
+    assert wait_until(lambda: not bridge.status()["dictating"], HEARD_WITHIN_S), (
+        bridge.status()
+    )
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+    assert_checks(e2e)

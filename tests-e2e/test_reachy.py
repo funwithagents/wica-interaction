@@ -28,3 +28,16 @@ def test_each_hand_sign_reaches_the_agent(reachy: E2E) -> None:
 
 def test_an_emotion_asked_for_is_played(reachy: E2E) -> None:
     scenarios.emotion(reachy)
+
+
+def test_speaking_is_interrupted_by_a_spoken_stop(reachy: E2E) -> None:
+    scenarios.interrupt_spoken(reachy)
+
+
+def test_speaking_is_interrupted_by_a_stop_sign(reachy: E2E) -> None:
+    scenarios.interrupt_sign(reachy)
+
+
+def test_a_dictated_passage_arrives_as_one_input(reachy: E2E) -> None:
+    # The robot's config ends a passage on a trigger word ("trigger_word"); "send" is one.
+    scenarios.dictation(reachy, end_word="Send.")
