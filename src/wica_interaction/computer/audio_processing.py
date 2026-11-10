@@ -246,16 +246,20 @@ class AudioProcessingCoordinator:
                 "audio-processing sink fed before bind_far_rate(); dropping chunk"
             )
             return
+        # The reference first, then the playback: `AudioPlayer.feed` blocks until the whole chunk is in
+        # the output buffer, so a chunk of a second or more is mostly played by the time it returns.
+        # Queued after it, the reference reached the canceller after its echo (1.1 s late, measured
+        # in the e2e tier), and a canceller cannot remove an echo that precedes its reference; queued
+        # before, it leads the echo by the output latency, which the delay estimator absorbs.
+        if chunk and self._resampler is not None:
+            reference = self._resampler.process(chunk)  # → int16 @16 kHz
+            with self._far_lock:
+                self._far = np.concatenate([self._far, reference])
+                if (
+                    len(self._far) > _MAX_FAR_SAMPLES
+                ):  # pathological backlog: keep the most recent
+                    self._far = self._far[-_MAX_FAR_SAMPLES:]
         player.feed(chunk)  # user hears full-quality playback
-        if not chunk or self._resampler is None:
-            return
-        reference = self._resampler.process(chunk)  # → int16 @16 kHz
-        with self._far_lock:
-            self._far = np.concatenate([self._far, reference])
-            if (
-                len(self._far) > _MAX_FAR_SAMPLES
-            ):  # pathological backlog: keep the most recent
-                self._far = self._far[-_MAX_FAR_SAMPLES:]
 
     def _drain(self) -> None:
         if self._player is not None:

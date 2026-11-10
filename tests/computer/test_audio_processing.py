@@ -125,6 +125,19 @@ def test_sink_forwards_to_player_and_drain() -> None:
     assert player.drained == 1
 
 
+def test_the_reference_is_queued_before_the_chunk_is_played() -> None:
+    """The real player's `feed` blocks until the chunk is in the output buffer — most of a long chunk
+    already played. A reference queued only then reaches the canceller after its echo, which no
+    canceller can remove; so the chunk's reference is in the far buffer before the player gets it."""
+    coordinator, _processor, player, _capture = _make_coordinator()
+    queued_when_played: list[int] = []
+    player.feed = lambda chunk: queued_when_played.append(len(coordinator._far))  # type: ignore[method-assign]
+
+    coordinator.sink.feed(np.arange(1600, dtype=np.int16).tobytes())
+
+    assert queued_when_played == [1600]
+
+
 def test_feed_before_bind_is_dropped_not_raised() -> None:
     # No bind_far_rate() → no player yet; feeding must not crash the TTS worker.
     coordinator = AudioProcessingCoordinator(

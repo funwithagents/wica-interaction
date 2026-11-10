@@ -117,10 +117,6 @@ jobs:
       WICA_E2E_PERSON_VOICE_DEVICE: wica_cable
       WICA_E2E_SPEAKER_DEVICE: wica_speaker
       WICA_E2E_ECHO_DEVICE: wica_echo
-      # Small PulseAudio buffers for every client: with the defaults, the mic's path through the
-      # ALSA plugin and the remapped source delivered 1.1 s later than the speaker's played, so the
-      # echo reached the canceller before its reference (specs/e2e.md, open question 4).
-      PULSE_LATENCY_MSEC: "30"
       # A missing key or device fails the job instead of turning it green with nothing tested.
       WICA_E2E_FAIL_ON_MISSING: '1'
     steps:
