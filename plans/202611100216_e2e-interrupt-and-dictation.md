@@ -28,6 +28,12 @@ Implements [specs/e2e.md](../specs/e2e.md) scenarios 5 (interrupt: a spoken stop
 - The person now dictates once the app's "go ahead" has been said (on the Mac, speech over the app's is swallowed, open question 4), not after the agent has settled (on CI that ran past the 10 s initial-silence timeout).
 - The passage still closed after its first sentence, about a second after the person started, in 2 runs of 3, and landed while the agent reacted to the completion of its own reply, so WICA dropped it. Open question 5 of the spec; the computer's dictation test is an expected failure until it is answered.
 
+## Dictation ends on a trigger word on the computer too
+
+Decided with the maintainer (open question 5): the computer template, and the computer's e2e config, end a dictated passage on a trigger word, as the robot's do; a pause inside a note cannot cut it short any more. The computer's dictation test says "Send." after the passage and is no longer an expected failure. `timeout` mode stays offered, not exercised by the tier; its early close is asr-engine's to look into.
+
+On the Mac, with the ASR's finals logged: with a 1 s pause before "Send." the second sentence was lost every time (the final holding the trigger word is dropped with it, so a sentence Flux joins to it goes too); with 3 s the passage arrived whole in 4 runs of 5, Flux once hearing only "Morning." of the second sentence. Haiku then met the note with `noop` in every run, as on the robot, so the computer's dictation test is an expected failure on open question 3, like the robot's.
+
 ## Runs
 
 On the Mac (2026-11-10):

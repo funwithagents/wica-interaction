@@ -255,7 +255,9 @@ def dictation(e2e: E2E, *, end_word: str | None) -> None:
     time.sleep(1.5)  # a pause that would close a conversational turn
     e2e.person.say("Call the doctor tomorrow morning.")
     if end_word is not None:
-        time.sleep(1.0)
+        # A clear pause first: asr-engine closes the passage on the final that holds the trigger
+        # word and drops that final's text, so a sentence Flux joins to "Send." is lost with it.
+        time.sleep(3.0)
         e2e.person.say(end_word)
     passage = e2e.inputs.wait_for(
         "speech_input",

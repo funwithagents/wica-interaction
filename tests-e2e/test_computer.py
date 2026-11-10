@@ -34,10 +34,9 @@ def test_speaking_is_interrupted_by_a_stop_sign(computer: E2E) -> None:
 
 
 @pytest.mark.xfail(
-    reason="the passage can close after its first sentence, not after the pause timeout mode "
-    "waits for, and then lands while the agent reacts to its own reply, where WICA drops it "
-    "(specs/e2e.md, open question 5)",
+    reason="Claude Haiku meets the dictated note with noop, which the framework's "
+    "no_noop_on_input check fails (specs/e2e.md, open question 3)",
 )
 def test_a_dictated_passage_arrives_as_one_input(computer: E2E) -> None:
-    # The computer's config ends a passage on a pause ("timeout").
-    scenarios.dictation(computer, end_word=None)
+    # The computer's config ends a passage on a trigger word ("trigger_word"); "send" is one.
+    scenarios.dictation(computer, end_word="Send.")
