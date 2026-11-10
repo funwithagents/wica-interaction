@@ -286,7 +286,20 @@ class EchoRecorder:
     """What the computer's echo canceller saw and made, saved as evidence when the room's echo is on
     (specs/e2e.md, "Evidence on failure"): the mic as captured (`near`), the voice's reference
     (`far`) and the cleaned mic the ASR heard (`out`), each int16 at 16 kHz, frame-aligned. From
-    them the echo's delay and how much of it the canceller removed can be read back offline."""
+    them the echo's delay and how much of it the canceller removed can be read back offline.
+
+    It also logs every callback of the app's audio streams — the voice's output and the mic's
+    input, opened through `sounddevice` while it is entered — as `playback` and `capture` rows:
+    PortAudio's time, the stream's latency (to the DAC, from the ADC) in seconds, the block's
+    frames, and the status flags (bit 0 input underflow, 1 input overflow, 2 output underflow,
+    3 output overflow). A change in the echo's delay on the app's side shows there."""
+
+    _FLAGS = (
+        "input_underflow",
+        "input_overflow",
+        "output_underflow",
+        "output_overflow",
+    )
 
     def __init__(self) -> None:
         from wica_interaction.computer import audio_processing
@@ -297,6 +310,9 @@ class EchoRecorder:
         self.near: list[Any] = []
         self.far: list[Any] = []
         self.out: list[Any] = []
+        self.capture: list[tuple[float, float, int, int]] = []
+        self.playback: list[tuple[float, float, int, int]] = []
+        self._streams: tuple[Any, Any] | None = None
 
     def __enter__(self) -> Self:
         import numpy as np
@@ -316,11 +332,47 @@ class EchoRecorder:
 
         self._cls._process_chunk = _process_chunk  # pyright: ignore[reportAttributeAccessIssue]
         self._cls._pop_far = _pop_far  # pyright: ignore[reportAttributeAccessIssue]
+        self._log_streams()
         return self
+
+    def _log_streams(self) -> None:
+        import sounddevice as sd
+
+        self._streams = (sd.InputStream, sd.OutputStream)
+        flags = self._FLAGS
+
+        def logged(cls: Any, rows: list[Any], output: bool) -> Any:
+            def make(*args: Any, callback: Any = None, **kwargs: Any) -> Any:
+                if callback is None:
+                    return cls(*args, **kwargs)
+                inner = callback
+
+                def wrapped(data: Any, frames: int, time: Any, status: Any) -> None:
+                    latency = (
+                        time.outputBufferDacTime - time.currentTime
+                        if output
+                        else time.currentTime - time.inputBufferAdcTime
+                    )
+                    bits = sum(
+                        1 << i for i, f in enumerate(flags) if getattr(status, f)
+                    )
+                    rows.append((time.currentTime, latency, frames, bits))
+                    inner(data, frames, time, status)
+
+                return cls(*args, callback=wrapped, **kwargs)
+
+            return make
+
+        sd.InputStream = logged(sd.InputStream, self.capture, False)  # pyright: ignore[reportAttributeAccessIssue]
+        sd.OutputStream = logged(sd.OutputStream, self.playback, True)  # pyright: ignore[reportAttributeAccessIssue]
 
     def __exit__(self, *_exc: object) -> None:
         self._cls._process_chunk = self._process  # pyright: ignore[reportAttributeAccessIssue]
         self._cls._pop_far = self._pop  # pyright: ignore[reportAttributeAccessIssue]
+        if self._streams is not None:
+            import sounddevice as sd
+
+            sd.InputStream, sd.OutputStream = self._streams  # pyright: ignore[reportAttributeAccessIssue]
 
     def save(self, path: Any) -> None:
         import numpy as np
@@ -329,5 +381,10 @@ class EchoRecorder:
             return np.concatenate(chunks) if chunks else np.zeros(0, np.int16)
 
         np.savez_compressed(
-            path, near=joined(self.near), far=joined(self.far), out=joined(self.out)
+            path,
+            near=joined(self.near),
+            far=joined(self.far),
+            out=joined(self.out),
+            capture=np.array(self.capture, np.float64).reshape(-1, 4),
+            playback=np.array(self.playback, np.float64).reshape(-1, 4),
         )
