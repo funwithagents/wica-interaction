@@ -88,8 +88,8 @@ jobs:
           & $devcon install "$d\vbcable\vbMmeCable64_win10.inf" VBAudioVACWDM
           if ($LASTEXITCODE -ne 0) { throw "VB-Cable: devcon exited $LASTEXITCODE" }
           $hifi = Start-Process -PassThru "$d\hifi\HiFiCableAsioBridgeSetup.exe" -ArgumentList "-i", "-h"
-          if (-not $hifi.WaitForExit(120000)) { $hifi.Kill(); throw "Hi-Fi Cable: setup still running after 2 minutes" }
-          "Hi-Fi Cable setup exited $($hifi.ExitCode)"
+          # Its setup ends on a message box nobody can close: the driver is in by then.
+          if (-not $hifi.WaitForExit(60000)) { $hifi.Kill(); "Hi-Fi Cable setup closed after 60 s" } else { "Hi-Fi Cable setup exited $($hifi.ExitCode)" }
           $global:LASTEXITCODE = 0
           Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName | Out-String -Width 200
 
