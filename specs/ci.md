@@ -6,13 +6,13 @@ tests:
 
 # Continuous integration
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
 The verification gate of [AGENTS.md](../AGENTS.md) — lint, format, type check, tests — runs on GitHub's hosted runners for every pull request and every push to `main`, so it is a machine's verdict on each change and not only a local command. Like [testing.md](testing.md) this is a cross-cutting practice, not a runtime concept: nothing here ships in the package, and the one file that implements it is the workflow.
 
-This spec covers the **static gate and the fast tier**. The live tier's jobs — the full end-to-end tier on Linux and its nightly run with the production providers — join this spec with the e2e work ([e2e.md](e2e.md)).
+This spec covers the **static gate, the fast tier and the end-to-end tier's computer job** ([e2e.md](e2e.md)). The robot's end-to-end job and a nightly run with the production providers join it with the rest of the e2e work.
 
 The model is the sibling bridge's CI (`reachy-mini-bridge/specs/testing/ci.md`): the same runners, the same system packages for the robot SDK, the same shape of jobs.
 
@@ -47,6 +47,7 @@ One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` t
 |---|---|---|
 | `check` | `ubuntu-24.04` | `uv sync --locked`, then `ruff check .`, `ruff format --check .`, `pyright` |
 | `fast-tier` | `ubuntu-24.04`, `macos-15`, `windows-2025` | `uv sync --locked`, then `pytest` |
+| `e2e-computer` | `ubuntu-24.04` | `uv sync --locked`, the virtual cable, then `pytest tests-e2e/test_computer.py` |
 
 - **The jobs run side by side**, each on its own runner, and none waits on another. Gating the fast tier behind the static gate would only save a run on a commit that fails lint, which costs nothing on a public repository.
 - **`fail-fast: false`** on the fast tier's matrix, so one platform's failure leaves the others running and the run shows every platform's verdict.
@@ -57,12 +58,13 @@ One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` t
 - **Real-clock margins are sized for the hosted Mac.** The `macos-15` runner is a virtual machine whose short sleeps run several times long (the bridge measured a 10 ms sleep taking 34). A fast-tier test that asserts something has *not yet* happened inside a window — a hold, a stall — keeps that window at 0.5 s or more, so the check lands inside it there too.
 - **Paths are compared as POSIX.** A test that compares file paths with Markdown or frontmatter text builds them with `as_posix()`, so the Windows entry sees the same strings.
 - **Caches.** The uv setup action caches uv's cache, which its CI prune reduces to the wheels uv built itself. The ones that cost minutes are the sdist-only packages — `aec-audio-processing` on Linux and macOS (about two minutes), PyGObject and pycairo on Linux — so the cache is **keyed on their locked entries**, not on the whole `uv.lock`: a sibling bump, which changes the lock and nothing they build from, keeps the cache, and pull requests reuse `main`'s. The workflow names the packages in one pattern; a new sdist-only dependency joins it, or it rebuilds on every run.
+- **The end-to-end job on Linux only.** The tier's devices are virtual: a PulseAudio null sink is the cable the person plays into, a source remapped over its monitor is the app's mic, and a second null sink is the app's speaker. PortAudio, under `sounddevice`, lists ALSA devices only, so each gets an ALSA name (`wica_cable`, `wica_mic`, `wica_speaker`) through the ALSA pulse plugin (`libasound2-plugins`), written to `~/.asoundrc`; the job sets the tier's `WICA_E2E_*_DEVICE` variables to them. macOS is the development machine, with BlackHole, and Windows would need VB-Audio's cable, so neither runs the job ([e2e.md](e2e.md), "Platforms"). The Hugging Face cache (the hand models, the phonon voice) is kept across runs, keyed on `uv.lock` with a fallback to the last one. On a failure the scenarios' evidence is uploaded as an artifact.
 - **Timeouts.** Each job carries a `timeout-minutes` well under GitHub's default, so a hung job fails in minutes.
 
 ### Secrets and protection
 
-- **No secret.** Neither job calls a provider.
-- **The status checks to require on `main`** are `check` and the three `fast-tier` entries. Requiring them is a repository setting on GitHub, outside the repository.
+- **Two secrets**, `WICA_ANTHROPIC_API_KEY` and `DEEPGRAM_API_KEY`, for the end-to-end job: the tier's LLM and ASR. The other jobs call no provider. GitHub gives no secret to a pull request from a fork, so there the job sets `WICA_E2E_FAIL_ON_MISSING=0` and its scenarios skip; everywhere else it sets `1`, and a missing key or device fails the job rather than turning it green with nothing tested.
+- **The status checks to require on `main`** are `check` and the three `fast-tier` entries. `e2e-computer` is not required until its history shows it stable: it calls live services and is not deterministic. Requiring them is a repository setting on GitHub, outside the repository.
 
 ## Relationship to the other specs
 
@@ -71,5 +73,5 @@ One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` t
 
 ## Open questions
 
-1. **The live tier's jobs.** The full end-to-end tier on Linux, on every pull request and push to `main`, plus a nightly run with the production providers, specified here with the e2e work.
+1. **The rest of the live tier's jobs.** The robot's end-to-end job (the sim headless through EGL, its audio devices on the cable), and a nightly run with the production providers.
 2. **Linux arm64.** Waits on MediaPipe, or on a dev group that installs without hand signs.

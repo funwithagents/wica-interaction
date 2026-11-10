@@ -5,8 +5,8 @@
 # dev environment installs on — Linux x86_64, macOS on Apple silicon, Windows x86_64 — since
 # the fast tier needs no device, no network and no key, and is where each platform's install
 # and code paths meet a real machine. Linux arm64 is left out: MediaPipe ships no wheel there,
-# so the dev group does not install. No secret is needed. The live tier's jobs join with the
-# end-to-end work.
+# so the dev group does not install. `e2e-computer` runs the end-to-end tier's computer
+# scenarios on Linux, with the two provider keys as secrets.
 
 name: CI
 
@@ -96,3 +96,66 @@ jobs:
         run: uv sync --locked
       - name: Fast tier
         run: uv run pytest
+
+  e2e-computer:
+    name: e2e (computer)
+    # The end-to-end tier on the computer embodiment (specs/e2e.md): the real app — Claude Haiku,
+    # Deepgram Flux, phonon, the hand models — with a PulseAudio null sink as the virtual cable.
+    # Not a required check until its history shows it stable (specs/ci.md).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      WICA_ANTHROPIC_API_KEY: ${{ secrets.WICA_ANTHROPIC_API_KEY }}
+      DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+      # The cable's two ends and the app's speaker, as ALSA names over PulseAudio (below).
+      WICA_E2E_MIC_DEVICE: wica_mic
+      WICA_E2E_PERSON_VOICE_DEVICE: wica_cable
+      WICA_E2E_SPEAKER_DEVICE: wica_speaker
+      # A pull request from a fork gets no secrets: it skips the scenarios. Everywhere else a
+      # missing key or device fails the job instead of turning it green with nothing tested.
+      WICA_E2E_FAIL_ON_MISSING: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: System packages (the app's, plus PulseAudio and its ALSA plugin)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=30 -o Acquire::Retries=3 $APT_PACKAGES pulseaudio pulseaudio-utils libasound2-plugins
+      - name: Cache key (the packages built from source)
+        shell: bash
+        run: grep -A3 -E "$SOURCE_BUILDS" uv.lock > .ci-source-builds
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: .ci-source-builds
+      - name: Model cache (the hand models, the phonon voice)
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface
+          key: hf-e2e-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: hf-e2e-${{ runner.os }}-
+      - name: Sync (the dev group, against the lock)
+        run: uv sync --locked
+      - name: The virtual cable
+        # A null sink is the cable: the person plays into it, and a source remapped over its
+        # monitor is the app's mic. A second null sink is the app's speaker. PortAudio, under
+        # sounddevice, sees ALSA devices only, so each gets an ALSA name through the pulse plugin.
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=wica_cable
+          pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic
+          pactl load-module module-null-sink sink_name=wica_speaker
+          cat > ~/.asoundrc <<'ASOUND'
+          pcm.wica_cable { type pulse; device "wica_cable" }
+          pcm.wica_mic { type pulse; device "wica_mic" }
+          pcm.wica_speaker { type pulse; device "wica_speaker" }
+          ASOUND
+          uv run python -c "import sounddevice as sd; print(sd.query_devices())"
+      - name: End-to-end, computer
+        run: uv run pytest tests-e2e/test_computer.py -rs --basetemp=${{ runner.temp }}/e2e
+      - name: Evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-computer-evidence
+          path: ${{ runner.temp }}/e2e
+          if-no-files-found: ignore

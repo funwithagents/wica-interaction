@@ -43,6 +43,7 @@ Implementation plans for WICA Interaction (formerly Reachy Mini Interaction WICA
 | [202611092335_bridge-tracking-object.md](202611092335_bridge-tracking-object.md) | Catch up with reachy-mini-bridge dcb55de: `motion.tracking` is an object (`{"enabled": true}`) in the template, the tests and the docs | Done |
 | [202611100025_e2e-computer.md](202611100025_e2e-computer.md) | The end-to-end tier, part 1 ([specs/e2e.md](../specs/e2e.md)): the shared machinery and the computer scenarios 1–3; replaces the live gesture test; `WebcamSource` reopens a device whose read yields no frame | Done |
 | [202611100046_ci-source-build-cache.md](202611100046_ci-source-build-cache.md) | CI's uv cache keyed on the sdist-only packages' locked entries (`aec-audio-processing`, PyGObject, pycairo), not the whole `uv.lock` ([specs/ci.md](../specs/ci.md)): a sibling bump no longer costs a two-minute rebuild on every job | Done |
+| [202611100109_ci-e2e-computer.md](202611100109_ci-e2e-computer.md) | CI's end-to-end computer job ([specs/ci.md](../specs/ci.md)): the computer scenarios on Linux, over a PulseAudio cable, with the two provider keys as secrets | In progress |
 | _(add plans here — see [_plan-template.md](_plan-template.md))_ | | |
 
 ## Status legend
