@@ -108,7 +108,7 @@ wica-interaction = { workspace = true }
 # override.
 wica = { git = "https://github.com/funwithagents/wica-framework", rev = "main" }
 asr-engine = { git = "https://github.com/funwithagents/asr-engine", rev = "main" }
-tts-engine = { git = "https://github.com/funwithagents/tts-engine", rev = "discard-player" }  # TEMPORARY: tts-engine#33
+tts-engine = { git = "https://github.com/funwithagents/tts-engine", rev = "main" }
 reachy-mini-bridge = { git = "https://github.com/funwithagents/reachy-mini-bridge", rev = "discard-audio-output" }  # TEMPORARY: reachy-mini-bridge#28
 vision-modules = { git = "https://github.com/funwithagents/vision-modules", rev = "main" }
 # PyPI's Linux torch wheel is the CUDA build and drags gigabytes of NVIDIA libraries; on Linux
@@ -124,8 +124,6 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv]
-# TEMPORARY, with tts-engine#33: the branch wins over the bridge's `@main` URL.
-override-dependencies = ["tts-engine"]
 # reachy-mini (a reachy-mini-bridge dependency) gates PyGObject to Linux (macOS/Windows use the
 # self-contained gstreamer-bundle). PyGObject/pycairo are sdist-only in the pinned range, so uv's
 # universal lock would try to *build* them on a non-Linux host just to read their metadata (needs
