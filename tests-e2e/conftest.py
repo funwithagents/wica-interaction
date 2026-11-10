@@ -36,6 +36,7 @@ from wica.testing import TestRun
 from wica_interaction.app_ui import display_entry
 from wica_interaction.computer.config import load_config as load_computer_config
 from wica_interaction.computer.embodiment import ComputerEmbodiment
+from wica_interaction.gesture_input import preload_mediapipe
 from wica_interaction.reachy.config import load_config as load_reachy_config
 from wica_interaction.reachy.embodiment import ReachyEmbodiment
 from wica_interaction.system import AppSystem, _shutdown, _start, build_system, wire
@@ -62,6 +63,11 @@ def pytest_configure(config: pytest.Config) -> None:
     if speaker:
         os.environ.setdefault("REACHY_MINI_E2E_AUDIO_OUTPUT", speaker)
     config.pluginmanager.import_plugin("reachy_mini_bridge.testing.fixtures")
+    # The app imports MediaPipe before entering the robot's body, because once GStreamer media runs
+    # in a process MediaPipe's import aborts it on Linux (`preload_mediapipe`). In this process the
+    # harness's own bridge sessions (its capability probe) run before any app is built, so the
+    # import comes first here too.
+    preload_mediapipe()
 
 
 def pytest_reachy_mini_scene_props() -> tuple[Any, ...]:
