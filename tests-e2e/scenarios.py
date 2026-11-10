@@ -266,7 +266,12 @@ def dictation(e2e: E2E, *, end_word: str | None) -> None:
         within=HEARD_WITHIN_S,
         after=t,
     )
-    assert passage is not None, e2e.inputs.delivered("speech_input")
+    # The passage still open, if it never closed: what the ASR heard, short of the trigger word.
+    assert passage is not None, (
+        e2e.inputs.delivered("speech_input"),
+        f"open: {bridge.display_text!r}",
+        bridge.status(),
+    )
     text = str(passage.value).lower()
     assert "milk" in text and "tomorrow" in text, (
         f"the passage did not arrive as one input: {e2e.inputs.delivered('speech_input')}"
