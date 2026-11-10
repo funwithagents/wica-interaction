@@ -209,11 +209,13 @@ def _computer(devices: Devices, out: Path, scenario: str) -> Iterator[E2E]:
         out / "config.json",
     )
     config = load_computer_config(str(config_path))
-    system = build_system(config.app, ComputerEmbodiment(config))
     if devices.echo is None:
+        system = build_system(config.app, ComputerEmbodiment(config))
         yield from _running(system, devices, camera, out, scenario, echo=False)
         return
+    # Entered before the build, which opens the voice's output stream, so it is logged too.
     with EchoRecorder() as recorder:
+        system = build_system(config.app, ComputerEmbodiment(config))
         try:
             yield from _running(system, devices, camera, out, scenario, echo=True)
         finally:
