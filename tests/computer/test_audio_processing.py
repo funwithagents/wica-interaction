@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ import pytest
 from wica_interaction.computer.audio_processing import (
     FRAME_SAMPLES,
     AudioProcessingCoordinator,
+    ContinuousPlayer,
 )
 from wica_interaction.computer.config import (
     AudioProcessingConfig,
@@ -61,12 +63,22 @@ class RecordingPlayer:
     def __init__(self) -> None:
         self.fed: list[bytes] = []
         self.drained = 0
+        self.closed = 0
+        self.on_played: Any = None
+        # By default a fed chunk is played at once, as far as the coordinator can tell: the
+        # reference it taps then lands in the far buffer straight away.
+        self.plays_on_feed = True
 
     def feed(self, chunk: bytes) -> None:
         self.fed.append(chunk)
+        if self.plays_on_feed:
+            self.on_played(np.frombuffer(chunk, dtype=np.int16))
 
     def drain(self) -> None:
         self.drained += 1
+
+    def close(self) -> None:
+        self.closed += 1
 
 
 class ScriptedCapture:
@@ -102,12 +114,17 @@ def _make_coordinator() -> tuple[
     processor = RecordingProcessor()
     player = RecordingPlayer()
     capture = ScriptedCapture()
+
+    def make_player(_dev: Any, _rate: int, on_played: Any) -> RecordingPlayer:
+        player.on_played = on_played
+        return player
+
     coordinator = AudioProcessingCoordinator(
         processor,
         asr_device=None,
         tts_device=None,
         resampler_factory=lambda _src_rate: _IdentityResampler(),
-        player_factory=lambda _dev, _rate: player,
+        player_factory=make_player,
         capture_factory=lambda _dev, _loop, _fmt: capture,
     )
     coordinator.bind_far_rate(44100)
@@ -123,6 +140,130 @@ def test_sink_forwards_to_player_and_drain() -> None:
 
     coordinator.sink.drain()
     assert player.drained == 1
+
+
+def test_the_reference_is_what_the_player_played() -> None:
+    """The reference is taken as the player sends a block to the device, not when the TTS engine
+    hands it a chunk: a fed chunk not yet played queues no reference; once played, it does. So the
+    reference cannot run late behind its echo, whatever the size of the chunks."""
+    coordinator, _processor, player, _capture = _make_coordinator()
+    player.plays_on_feed = False
+
+    coordinator.sink.feed(np.arange(1600, dtype=np.int16).tobytes())
+    assert len(coordinator._far) == 0
+
+    player.on_played(np.arange(800, dtype=np.int16))
+    assert np.array_equal(coordinator._far, np.arange(800, dtype=np.int16))
+
+
+def test_close_closes_the_player() -> None:
+    coordinator, _processor, player, _capture = _make_coordinator()
+    coordinator.close()
+    assert player.closed == 1
+    coordinator.close()  # once closed, a no-op
+    assert player.closed == 1
+
+
+# --- ContinuousPlayer, over a fake stream ---------------------------------------------------------
+
+
+class FakeStream:
+    """An output stream a test drives by hand: `pull(frames)` runs the callback as the device would
+    and returns what it wrote."""
+
+    def __init__(self, callback: Any) -> None:
+        self.callback = callback
+        self.active = False
+        self.closed = False
+
+    def start(self) -> None:
+        self.active = True
+
+    def stop(self) -> None:
+        self.active = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def pull(self, frames: int) -> np.ndarray:
+        out = np.zeros((frames, 1), dtype=np.int16)
+        self.callback(out, frames, None, None)
+        return out[:, 0].copy()
+
+
+def _player(rate: int = 1000) -> tuple[ContinuousPlayer, FakeStream, list[np.ndarray]]:
+    played: list[np.ndarray] = []
+    streams: list[FakeStream] = []
+
+    def factory(_device: Any, _rate: int, callback: Any) -> FakeStream:
+        streams.append(FakeStream(callback))
+        return streams[-1]
+
+    player = ContinuousPlayer(None, rate, played.append, stream_factory=factory)
+    return player, streams[0], played
+
+
+def test_the_player_plays_what_is_fed_and_silence_between() -> None:
+    """One stream, started at once: a fed chunk goes out block by block, each block handed to
+    `on_played`; with nothing queued it plays silence and reports nothing."""
+    player, stream, played = _player()
+    assert stream.active
+
+    assert not stream.pull(10).any()  # silence before anything is fed
+    assert played == []
+
+    player.feed(
+        np.arange(1, 51, dtype=np.int16).tobytes()
+    )  # 50 ms at 1 kHz: within the ahead
+    first = stream.pull(30)
+    assert np.array_equal(first, np.arange(1, 31))
+    last = stream.pull(30)
+    assert np.array_equal(last[:20], np.arange(31, 51)) and not last[20:].any()
+    assert [len(b) for b in played] == [30, 30]
+    assert not stream.pull(10).any()  # silence again
+    assert len(played) == 2
+
+
+def test_feed_blocks_until_the_queue_is_within_its_lead() -> None:
+    """Feeding more than the lead (100 ms) blocks until the device has played the excess, as a
+    blocking write would — so a cancelled utterance stops within that much audio."""
+    player, stream, _played = _player()
+    done = threading.Event()
+    worker = threading.Thread(
+        target=lambda: (player.feed(np.ones(300, dtype=np.int16).tobytes()), done.set())
+    )
+    worker.start()
+    assert not done.wait(0.2)  # 300 ms queued, 100 ms allowed
+    stream.pull(250)
+    assert done.wait(2.0)
+    worker.join()
+
+
+def test_drain_waits_for_the_queue_and_keeps_the_stream_open() -> None:
+    player, stream, _played = _player()
+    player.feed(np.ones(50, dtype=np.int16).tobytes())
+    done = threading.Event()
+    worker = threading.Thread(target=lambda: (player.drain(), done.set()))
+    worker.start()
+    assert not done.wait(0.2)
+    stream.pull(50)
+    assert done.wait(2.0)
+    worker.join()
+    assert (
+        stream.active and not stream.closed
+    )  # the next utterance plays on the same stream
+
+    player.close()
+    assert not stream.active and stream.closed
+
+
+def test_a_stream_that_stopped_does_not_hang_the_tts_worker() -> None:
+    """A device gone mid-utterance stops the stream on its own: `drain` returns, dropping what was
+    queued, instead of waiting forever."""
+    player, stream, _played = _player()
+    player.feed(np.ones(50, dtype=np.int16).tobytes())
+    stream.active = False
+    player.drain()  # returns
 
 
 def test_feed_before_bind_is_dropped_not_raised() -> None:

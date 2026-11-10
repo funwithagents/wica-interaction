@@ -32,22 +32,28 @@ class FakeTTSEngine:
 
 class FakeCoordinator:
     """The slice of `AudioProcessingCoordinator` the embodiment wires: the two endpoints it hands
-    the engines, and the far-rate binding it records."""
+    the engines, the far-rate binding it records, and how often it was closed."""
 
     def __init__(self) -> None:
         self.sink = object()
         self.source = object()
         self.bound: list[int] = []
+        self.closed = 0
 
     def bind_far_rate(self, rate: int) -> None:
         self.bound.append(rate)
+
+    def close(self) -> None:
+        self.closed += 1
 
 
 class FakeOpenCVSource:
     """The slice of `vision-modules`' `OpenCVSource` that `WebcamSource` drives.
 
     `frame` is what `read()` returns (settable mid-run); `raise_on_open` / `raise_on_read` make the
-    corresponding call raise, the way a missing or unplugged device does. Counts opens and closes.
+    corresponding call raise, the way a missing or unplugged device does. `frames_per_open` ends
+    the stream after that many frames, until the next open — what OpenCV does with a file (an image
+    is one frame), returning nothing rather than raising. Counts opens and closes.
     """
 
     def __init__(self, frame: np.ndarray | None = None) -> None:

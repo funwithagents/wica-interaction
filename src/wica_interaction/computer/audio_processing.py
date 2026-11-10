@@ -4,8 +4,9 @@ A coordinator sits between the two engines and bridges their existing injection 
 running the mic through one WebRTC audio-processing module that can do **echo cancellation** (remove
 the app's own TTS) and **noise suppression** (attenuate ambient noise), independently:
 
-- ``.sink`` wraps the real TTS ``AudioPlayer`` and — **only when echo cancellation is on** — taps
-  every played chunk as a **far-end reference** (resampled 44.1 k→16 k), and
+- ``.sink`` is handed to the TTS engine — **only when echo cancellation is on** — and plays through a
+  ``ContinuousPlayer``: one output stream kept open for the app's lifetime, whose callback taps every
+  block it sends to the device as the **far-end reference** (resampled to 16 k), and
 - ``.source`` wraps the real mic ``AudioCapture`` and runs each frame through the processor before the
   cleaned audio reaches ASR (subtracting the reference when echo cancellation is on; denoising when
   noise suppression is on).
@@ -13,8 +14,12 @@ the app's own TTS) and **noise suppression** (attenuate ambient noise), independ
 Noise suppression works without echo cancellation: the mic is always routed through the processor
 when either feature is on, and the TTS far-end tap is wired only for echo cancellation.
 
-Playback stays at the TTS module's native rate (full quality); only the *reference copy* is
-downsampled — with a stateful ``samplerate`` resampler, so a long utterance resamples without drift or
+The stream stays open between utterances, playing silence, so the echo's delay — output buffering,
+the room, input buffering — stays where the canceller learned it; a stream per utterance moved it by
+tens of milliseconds at each reply, and the canceller let the echo through while it relearned. The
+reference is taken in the stream's callback, from the samples actually going out, so it is on time
+whatever the size of the TTS module's chunks. Playback stays at the TTS module's native rate (full
+quality); only the *reference copy* is downsampled — with a stateful ``samplerate`` resampler, so a long utterance resamples without drift or
 boundary artifacts (drift would de-align the reference from the mic, which AEC punishes). The WebRTC
 backend and the resampler are imported lazily so the whole feature is an optional dependency: absent,
 the embodiment degrades to no-processing (``ComputerEmbodiment.enter`` catches the ``ImportError``).
@@ -29,7 +34,7 @@ import importlib
 import logging
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 from asr_engine.audio import (
@@ -38,7 +43,7 @@ from asr_engine.audio import (
     AudioFormat,
     AudioSource,
 )
-from tts_engine.audio import AudioPlayer, AudioSink
+from tts_engine.audio import AudioSink
 
 if TYPE_CHECKING:
     from wica_interaction.computer.config import ComputerConfig
@@ -133,9 +138,110 @@ class _StreamingResampler:
         return np.clip(np.round(out * 32768.0), -32768, 32767).astype(np.int16)
 
 
+# How far the TTS engine may feed ahead of the device: `feed` blocks beyond it, as a blocking write
+# would, so a cancelled utterance stops within this much audio instead of playing out all it fed.
+_MAX_AHEAD_S = 0.1
+
+
+class Player(Protocol):
+    """The voice's output, owned by the coordinator: ``feed``/``drain`` as an ``AudioSink``, and
+    ``close`` when the app exits."""
+
+    def feed(self, chunk: bytes) -> None: ...
+    def drain(self) -> None: ...
+    def close(self) -> None: ...
+
+
+Played = Callable[[np.ndarray], None]
+StreamFactory = Callable[[str | int | None, int, Callable[..., None]], Any]
+
+
+def _default_stream(
+    device: str | int | None, sample_rate: int, callback: Callable[..., None]
+) -> Any:
+    import sounddevice as sd
+
+    return sd.OutputStream(
+        samplerate=sample_rate,
+        channels=1,
+        dtype="int16",
+        device=device,
+        callback=callback,
+    )
+
+
+class ContinuousPlayer:
+    """One output stream for the app's lifetime: what ``feed`` queues plays, silence otherwise.
+
+    The stream's callback hands every block that carries queued audio to *on_played* — the samples
+    as they go to the device — which is the echo canceller's reference. ``feed`` returns once the
+    queue is within ``_MAX_AHEAD_S`` of the device; ``drain`` once the queue has gone out (the end of
+    an utterance), leaving the stream open; ``close`` stops it. A stream that has stopped on its own
+    (the device gone) unblocks both, dropping what was queued, rather than hanging the TTS worker.
+    """
+
+    def __init__(
+        self,
+        device: str | int | None,
+        sample_rate: int,
+        on_played: Played,
+        *,
+        stream_factory: StreamFactory = _default_stream,
+    ) -> None:
+        self._on_played = on_played
+        self._cond = threading.Condition()
+        self._queue = np.zeros(0, dtype=np.int16)
+        self._ahead = int(_MAX_AHEAD_S * sample_rate)
+        self._closed = False
+        self._stream = stream_factory(device, sample_rate, self._callback)
+        self._stream.start()
+
+    def _callback(
+        self, outdata: np.ndarray, frames: int, _time: object, _status: object
+    ) -> None:
+        block = np.zeros(frames, dtype=np.int16)
+        with self._cond:
+            n = min(frames, len(self._queue))
+            block[:n] = self._queue[:n]
+            self._queue = self._queue[n:]
+            self._cond.notify_all()
+        outdata[:, 0] = block
+        if n:
+            self._on_played(block)
+
+    def _wait(self, done: Callable[[], bool]) -> None:
+        with self._cond:
+            while not done() and not self._closed:
+                if not self._stream.active:
+                    self._queue = np.zeros(0, dtype=np.int16)
+                    return
+                self._cond.wait(0.1)
+
+    def feed(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        with self._cond:
+            self._queue = np.concatenate(
+                [self._queue, np.frombuffer(chunk, dtype=np.int16)]
+            )
+        self._wait(lambda: len(self._queue) <= self._ahead)
+
+    def drain(self) -> None:
+        self._wait(lambda: len(self._queue) == 0)
+
+    def close(self) -> None:
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
+        try:
+            self._stream.stop()
+        finally:
+            self._stream.close()
+
+
 # Injection seams (defaulted to the real implementations; tests pass fakes).
 ResamplerFactory = Callable[[int], Resampler]
-PlayerFactory = Callable[[str | int | None, int], AudioSink]
+PlayerFactory = Callable[[str | int | None, int, Played], Player]
 CaptureFactory = Callable[
     [str | None, asyncio.AbstractEventLoop, AudioFormat], AudioSource
 ]
@@ -145,8 +251,10 @@ def _default_resampler(src_rate: int) -> Resampler:
     return _StreamingResampler(src_rate)
 
 
-def _default_player(device: str | int | None, sample_rate: int) -> AudioSink:
-    return AudioPlayer(device=device, sample_rate=sample_rate)
+def _default_player(
+    device: str | int | None, sample_rate: int, on_played: Played
+) -> Player:
+    return ContinuousPlayer(device, sample_rate, on_played)
 
 
 def _default_capture(
@@ -156,7 +264,8 @@ def _default_capture(
 
 
 class _ProcessingSink:
-    """The ``AudioSink`` handed to ``TTSEngine`` — plays each chunk and taps it as the reference."""
+    """The ``AudioSink`` handed to ``TTSEngine`` — plays each chunk; the player taps it as the
+    reference when it goes out."""
 
     def __init__(self, coordinator: AudioProcessingCoordinator) -> None:
         self._c = coordinator
@@ -186,7 +295,7 @@ class AudioProcessingCoordinator:
 
     Construct it, wire ``.source`` into ``ASREngine(audio_source=…)`` always, and — when echo
     cancellation is on — ``.sink`` into ``TTSEngine(sink=…)`` and then call
-    ``bind_far_rate(tts_engine.sample_rate)`` (the sink's real ``AudioPlayer`` and the reference
+    ``bind_far_rate(tts_engine.sample_rate)`` (the sink's ``ContinuousPlayer`` and the reference
     resampler are built there, once the TTS module's rate is known — the two-step in
     specs/audio-processing.md). Noise-suppression-only setups skip the sink and ``bind_far_rate``: the
     source still runs, cancelling against silence. ``.source`` requires a 16 kHz mono ``near_format``
@@ -213,7 +322,7 @@ class AudioProcessingCoordinator:
         self._capture_factory = capture_factory
 
         # Far-end (playback reference) path — built at bind_far_rate (echo cancellation only).
-        self._player: AudioSink | None = None
+        self._player: Player | None = None
         self._resampler: Resampler | None = None
         self._far = np.zeros(0, dtype=np.int16)
         self._far_lock = threading.Lock()
@@ -232,11 +341,30 @@ class AudioProcessingCoordinator:
 
         Called only when echo cancellation is on (the sink is wired to TTS). Noise-suppression-only
         setups never call it — the far buffer stays empty and the processor sees silence references.
+        The player's stream opens here and stays open until ``close``.
         """
         self._resampler = self._resampler_factory(far_rate)
-        self._player = self._player_factory(self._tts_device, far_rate)
+        self._player = self._player_factory(self._tts_device, far_rate, self._played)
 
-    # --- Far-end reference (runs on the TTS worker thread; calls never overlap) ------------------
+    def close(self) -> None:
+        """Close the player's stream (the app is exiting); a no-op when none was built."""
+        if self._player is not None:
+            self._player.close()
+            self._player = None
+
+    # --- Far-end reference ------------------------------------------------------------------------
+
+    def _played(self, block: np.ndarray) -> None:
+        """A block the player just sent to the device (its stream callback): the reference."""
+        if self._resampler is None:
+            return
+        reference = self._resampler.process(block.tobytes())  # → int16 @16 kHz
+        with self._far_lock:
+            self._far = np.concatenate([self._far, reference])
+            if (
+                len(self._far) > _MAX_FAR_SAMPLES
+            ):  # pathological backlog: keep the most recent
+                self._far = self._far[-_MAX_FAR_SAMPLES:]
 
     def _feed(self, chunk: bytes) -> None:
         player = self._player
@@ -246,16 +374,7 @@ class AudioProcessingCoordinator:
                 "audio-processing sink fed before bind_far_rate(); dropping chunk"
             )
             return
-        player.feed(chunk)  # user hears full-quality playback
-        if not chunk or self._resampler is None:
-            return
-        reference = self._resampler.process(chunk)  # → int16 @16 kHz
-        with self._far_lock:
-            self._far = np.concatenate([self._far, reference])
-            if (
-                len(self._far) > _MAX_FAR_SAMPLES
-            ):  # pathological backlog: keep the most recent
-                self._far = self._far[-_MAX_FAR_SAMPLES:]
+        player.feed(chunk)  # the reference is taken as it plays (`_played`)
 
     def _drain(self) -> None:
         if self._player is not None:

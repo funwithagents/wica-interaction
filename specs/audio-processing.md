@@ -38,7 +38,7 @@ With every feature **disabled** (the default), the embodiment's `mic` is `None` 
 
 1. **Resample the reference, not the playback.** Playback stays at the module's rate (full fidelity); only the *reference copy* is downsampled to 16 kHz with a **stateful** `samplerate` resampler (one `Resampler` carrying filter state across chunks), so a long utterance resamples without drift or boundary artifacts — drift would de-align the reference from the mic, which AEC punishes. (`samplerate` is MIT + BSD-2 libsamplerate; `soxr` was rejected as LGPL, `scipy` as ~90 MB for one function.)
 2. **Re-chunk to 10 ms frames.** A 100 ms mic chunk is ten 160-sample frames; the coordinator buffers near-end samples and processes complete frames only.
-3. **Rough alignment + delay hint (AEC).** The reference is enqueued as TTS *feeds* it (ahead of playback by output-buffer + acoustic latency); WebRTC AEC3's delay estimator, seeded by `stream_delay_ms`, absorbs the residual — the reason for a WebRTC-class processor over a bare adaptive filter.
+3. **Alignment from what plays + delay hint (AEC).** The reference is taken as the voice's stream sends each block to the device — ahead of what the mic hears by the output buffering and the acoustic path, and by a constant amount, since the stream stays open; WebRTC's delay estimator, seeded by `stream_delay_ms`, absorbs that — the reason for a WebRTC-class processor over a bare adaptive filter.
 
 ## The module: `computer/audio_processing.py`
 
@@ -60,7 +60,7 @@ Wraps [`aec-audio-processing`](https://pypi.org/project/aec-audio-processing/) (
 
 ### `AudioProcessingCoordinator` — bridges TTS sink → ASR source
 
-Holds the processor, a `Resampler` for the reference, a thread-safe **far-end ring buffer** (int16 samples @16 kHz under a lock), and builds the real audio endpoints (`tts_engine.audio.AudioPlayer`, `asr_engine.audio.AudioCapture`). Exposes `.sink` and `.source`.
+Holds the processor, a `Resampler` for the reference, a thread-safe **far-end ring buffer** (int16 samples @16 kHz under a lock), and builds the real audio endpoints (its `ContinuousPlayer`, `asr_engine.audio.AudioCapture`). Exposes `.sink` and `.source`, and `close()` for the player's stream.
 
 ```python
 class AudioProcessingCoordinator:
@@ -70,14 +70,20 @@ class AudioProcessingCoordinator:
     def sink(self) -> AudioSink: ...     # → TTSEngine(sink=…), echo cancellation only
     @property
     def source(self) -> AudioSource: ... # → the embodiment's mic, any feature
-    def bind_far_rate(self, far_rate: int) -> None: ...  # echo cancellation only
+    def bind_far_rate(self, far_rate: int) -> None: ...  # echo cancellation only; opens the player's stream
+    def close(self) -> None: ...  # closes it (the embodiment's exit)
 ```
 
-**Far-end path (`sink`)** — on the TTS worker thread, calls never overlap: `feed(chunk)` forwards to the real `AudioPlayer` (full-quality playback), resamples a copy to 16 kHz and appends it to the far buffer under the lock (capping a pathological backlog by dropping the oldest); `drain()` drains the player and leaves the buffer to empty naturally (clearing it would drop the reference for echo the mic has not finished hearing).
+**Far-end path (`sink`)** — the voice plays through the coordinator's own **`ContinuousPlayer`**, and the reference is taken from it as it plays:
+
+- **One output stream for the app's lifetime.** The player opens its stream at `bind_far_rate` and keeps it running until `close()` (at the embodiment's `exit()`), playing what `feed` queued and silence between utterances. The echo's delay — output buffering, the room, input buffering — then stays where the canceller learned it. A stream per utterance (tts-engine's `AudioPlayer` opens one at the first `feed` and closes it at `drain`) moved that delay by tens of milliseconds at each reply, measured in the end-to-end tier; the canceller treated it as a new echo path and let the echo through for about two seconds while it relearned, and the app heard its own first words. That is what voice frameworks with echo cancellation do: the layer that owns the device keeps one stream (Pipecat's local transport, WebRTC's audio device module), while a TTS library's player opens one per call.
+- **The reference is what went out.** The stream's callback hands each block that carries queued audio to the coordinator, which resamples it to 16 kHz and appends it to the far buffer under the lock (capping a pathological backlog by dropping the oldest). So the reference is on time by construction, whatever the size of the TTS module's chunks. (Taken when a chunk was fed, it ran up to a chunk late: `AudioPlayer.feed` blocks until the whole chunk is in the output buffer, and with phonon's second-long chunks the reference reached the canceller 1.1 s after its echo, which no canceller can remove.)
+- **Pacing.** `feed(chunk)` queues the samples and returns once the queue is within 100 ms of the device, as a blocking write would, so a cancelled utterance stops within that much audio rather than playing all it was fed. `drain()` returns once the queue has gone out, leaving the stream open. A stream that stopped on its own (the device gone) unblocks both, dropping the queue, rather than hanging the TTS worker.
+- The far buffer is left to empty as the pump consumes it: at drain time it still holds the reference for audio the mic has not finished hearing, so clearing it would leak the echo tail.
 
 **Near-end path (`source`)** — the `AudioSource` handed to ASR, pumped on the app loop: `start()` starts the real `AudioCapture`, spawns a pump task and returns the owned output queue; the pump buffers raw mic samples and, per complete 160-sample frame, pops 160 far samples (silence when the buffer is empty — no playback), runs `processor.process(near, far)`, and re-batches to the input chunk size (preserving ASR's cadence); `stop()` stops the capture and cancels the pump. NS-only setups always see silence references, so `process` denoises the mic alone.
 
-**The construction two-step** (AEC only): `TTSEngine(sink=…)` needs the sink before the engine exists, but the sink's `AudioPlayer`/resampler need the module's `sample_rate`, known only after. So the embodiment builds the coordinator, injects `coordinator.sink`, then calls `coordinator.bind_far_rate(engine.sample_rate)`. `feed` only runs during `say`, well after binding. NS-only setups never wire the sink and never bind.
+**The construction two-step** (AEC only): `TTSEngine(sink=…)` needs the sink before the engine exists, but the sink's player/resampler need the module's `sample_rate`, known only after. So the embodiment builds the coordinator, injects `coordinator.sink`, then calls `coordinator.bind_far_rate(engine.sample_rate)`. `feed` only runs during `say`, well after binding. NS-only setups never wire the sink and never bind.
 
 ### Building the coordinator: `build_coordinator(config)`
 
@@ -120,9 +126,7 @@ Absent ⇒ all defaults ⇒ disabled. **Strict, like every other app-owned secti
 
 ## Teardown
 
-Nothing to call directly: `ASREngine.stop()` stops the injected source (capture + pump), and the sink's player drains at the end of each `say` — so stopping the ASR bridge at app teardown ([app.md](app.md), "Wiring and lifecycle") is what releases the audio devices. `ComputerEmbodiment.exit()` is a no-op.
-
-## Dependencies
+`ASREngine.stop()` stops the injected source (capture + pump), and `ComputerEmbodiment.exit()` calls `coordinator.close()`, which stops and closes the player's stream — so stopping the ASR bridge and exiting the body at app teardown ([app.md](app.md), "Wiring and lifecycle") is what releases the audio devices. ## Dependencies
 
 `aec-audio-processing` (WebRTC APM, BSD; builds from sdist — needs a C++ toolchain, hence optional + lazy) and `samplerate` (MIT, prebuilt wheels, numpy-only) form the **`audio-processing` extra** ([project.md](project.md)), pulled into the `dev` group so the default `uv sync` / `uv run pytest` loop exercises them. `pyaec` is the documented fallback backend; the `FrameProcessor` interface makes that swap local.
 
@@ -132,11 +136,13 @@ Nothing to call directly: `ASREngine.stop()` stops the injected source (capture 
 
 - **Config:** an `audio_processing` block parses into `AudioProcessingConfig` (both features, partial sections, ns-level range, type errors); absent ⇒ disabled default; a misspelt feature, an unknown key inside a feature, and a non-object feature each raise, while a `null` feature keeps its defaults.
 - **Processor (skips if the dependency is absent):** with echo cancellation, a delayed/attenuated copy of the far-end is cancelled from the near-end (steady-state ERLE materially positive) and near-end speech with a silent reference passes through; with noise suppression only, stationary noise is attenuated.
-- **Coordinator (fakes, no devices):** `sink.feed` forwards to the player **and** enqueues a resampled reference; the source re-chunks a 1600-sample mic chunk into ten 160-sample `process` calls paired with the buffered far frames (silence when empty); output preserves the input chunk length.
+- **Coordinator (fakes, no devices):** `sink.feed` forwards to the player, and the reference is what the player reports played, not what was fed; `close()` closes the player; the source re-chunks a 1600-sample mic chunk into ten 160-sample `process` calls paired with the buffered far frames (silence when empty); output preserves the input chunk length.
+- **`ContinuousPlayer` (a fake stream):** it plays what was fed and silence between, reporting only blocks that carry audio; `feed` blocks beyond its 100 ms lead; `drain` waits for the queue and keeps the stream open; `close` stops it; a stream that stopped on its own does not hang `drain`.
 - **Wiring** — in `tests/computer/test_embodiment.py` ([computer-embodiment.md](computer-embodiment.md)): echo cancellation on wires sink + source and binds the far rate; NS-only wires the source but not the sink and never binds; a forced `ImportError` degrades to direct wiring with a `missing` line.
 
 ## Open questions
 
 1. **Adaptive `stream_delay_ms`.** Per-device auto-calibration (measuring the round-trip at startup) is a deferral.
 2. **Processing status in the UI.** "AEC / NS: on / degraded" on the ASR line — nice-to-have ([computer-embodiment.md](computer-embodiment.md), open question 2).
-3. **Half-duplex fallback.** For hosts without the dependency, muting capture during `say` would still break the self-hearing loop; a lightweight second backend, deferred.
+3. **A better canceller.** With the reference on time and one voice stream, `aec-audio-processing` 1.0.1 still lets short bursts of the app's voice through, during and after the person talking over it, measured in the end-to-end tier (its spec's open question 4). WebRTC's current canceller (AEC3), as LiveKit's Python SDK ships it, is the candidate, compared offline on the tier's recorded audio first; the `FrameProcessor` interface keeps the swap local.
+4. **Half-duplex fallback.** For hosts without the dependency, muting capture during `say` would still break the self-hearing loop; a lightweight second backend, deferred.
