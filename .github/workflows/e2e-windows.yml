@@ -41,9 +41,9 @@ jobs:
       DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
       # A missing key or device fails the job instead of turning it green with nothing tested.
       WICA_E2E_FAIL_ON_MISSING: '1'
-      # The downloads, each pinned with its SHA-256 and bumped on purpose. VB-Audio's cable (one
-      # cable, the free one); Scream, an output-only virtual sound card, whose zip also brings the
-      # `devcon` both drivers are installed with; Mesa for Windows, as naoqi-sim's Windows tier.
+      # The downloads, each pinned with its SHA-256 and bumped on purpose. VB-Audio's cable, the
+      # free one; Scream's release, for the `devcon` it ships (its own driver, not signed by
+      # Microsoft, does not install on Windows Server 2025); Mesa for Windows, as naoqi-sim's.
       VBCABLE_URL: https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip
       VBCABLE_SHA256: b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb
       SCREAM_URL: https://github.com/duncanthrax/scream/releases/download/4.0/Scream4.0.zip
@@ -65,11 +65,11 @@ jobs:
       - name: Sync (the dev group, against the lock)
         run: uv sync --locked
 
-      - name: The virtual devices (VB-Cable, Scream)
-        # The runner has no sound card and its audio service is off. VB-Cable's driver is signed
-        # by Microsoft; Scream's by its author's own certificate, which goes to Root and
-        # TrustedPublisher first, or `devcon` waits forever on the "unverified publisher" dialog
-        # (as LABSN/sound-ci-helpers does). A hang fails the step in minutes.
+      - name: The virtual devices (two VB-Cables)
+        # The runner has no sound card and its audio service is off. VB-Cable's driver, signed by
+        # Microsoft, is installed twice with `devcon`: each install is a device node of its own, so
+        # two independent cables, the second named "2- CABLE …" — the person's cable and the app's
+        # speaker. A hang (a driver waiting on a dialog) fails the step in minutes.
         timeout-minutes: 5
         run: |
           Set-Service AudioEndpointBuilder -StartupType Automatic; Start-Service AudioEndpointBuilder
@@ -83,24 +83,19 @@ jobs:
             Expand-Archive -LiteralPath $zip -DestinationPath "$d\$($p[0])"
           }
           $devcon = "$d\scream\Install\helpers\devcon-x64.exe"
-          $cat = "$d\scream\Install\driver\x64\scream.cat"
-          $cert = (Get-AuthenticodeSignature $cat).SignerCertificate
-          "Scream signed by: $($cert.Subject)"
-          Export-Certificate -Cert $cert -FilePath "$cat.cer" | Out-Null
-          certutil -addstore Root "$cat.cer" | Out-Null
-          certutil -addstore TrustedPublisher "$cat.cer" | Out-Null
-          & $devcon install "$d\vbcable\vbMmeCable64_win10.inf" VBAudioVACWDM
-          if ($LASTEXITCODE -ne 0) { throw "VB-Cable: devcon exited $LASTEXITCODE" }
-          & $devcon install "$d\scream\Install\driver\x64\Scream.inf" *Scream
-          if ($LASTEXITCODE -ne 0) { throw "Scream: devcon exited $LASTEXITCODE" }
+          foreach ($i in 1, 2) {
+            & $devcon install "$d\vbcable\vbMmeCable64_win10.inf" VBAudioVACWDM
+            if ($LASTEXITCODE -ne 0) { throw "VB-Cable ${i}: devcon exited $LASTEXITCODE" }
+          }
           Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName
 
       - name: The tier's devices
         # Windows lists each device once per host API, so a bare name matches several and
         # sounddevice refuses it: each is named with its host API, DirectSound first, which
         # converts the sample rate (the ASR's 16 kHz, the room's 48 kHz) as WASAPI's shared mode
-        # does not. The cable's two ends are the person's voice and the app's mic, Scream the app's
-        # speaker; it records nothing, so the run has no echo (specs/e2e.md, "The room").
+        # does not. The first cable's two ends are the person's voice and the app's mic; the
+        # second's input is the app's speaker, its output the echo device the room records the
+        # app's voice from (specs/e2e.md, "The room"). For now the echo is left out.
         shell: bash
         run: |
           uv run python - <<'PY'
@@ -110,17 +105,23 @@ jobs:
           print(sd.query_devices())
           apis = [a["name"] for a in sd.query_hostapis()]
 
-          def pick(part, kind):
+          def pick(end, kind, second):
               for api in ("Windows DirectSound", "MME", "Windows WASAPI"):
                   for d in sd.query_devices():
-                      if part in d["name"] and apis[d["hostapi"]] == api and d[f"max_{kind}_channels"]:
-                          return f"{d['name']}, {api}"
-              raise SystemExit(f"no {kind} device named like {part!r}")
+                      name = d["name"]
+                      if (
+                          end in name
+                          and name.startswith("2-") == second
+                          and apis[d["hostapi"]] == api
+                          and d[f"max_{kind}_channels"]
+                      ):
+                          return f"{name}, {api}"
+              raise SystemExit(f"no {kind} device {end!r} (second cable: {second})")
 
           named = {
-              "WICA_E2E_MIC_DEVICE": pick("CABLE Output", "input"),
-              "WICA_E2E_PERSON_VOICE_DEVICE": pick("CABLE Input", "output"),
-              "WICA_E2E_SPEAKER_DEVICE": pick("Scream", "output"),
+              "WICA_E2E_MIC_DEVICE": pick("CABLE Output", "input", False),
+              "WICA_E2E_PERSON_VOICE_DEVICE": pick("CABLE Input", "output", False),
+              "WICA_E2E_SPEAKER_DEVICE": pick("CABLE Input", "output", True),
           }
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
               for k, v in named.items():
