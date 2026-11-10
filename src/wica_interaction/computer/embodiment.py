@@ -251,8 +251,11 @@ class ComputerEmbodiment:
             self.missing.append(f"TTS: {exc}")
 
     async def exit(self) -> None:
-        """Nothing to release: stopping the ASR bridge stops the injected source (capture + pump),
-        and the sink's player drains at the end of every `say` (specs/audio-processing.md)."""
+        """Close the coordinator's voice stream, kept open for the app's lifetime so the echo's delay
+        stays put (specs/audio-processing.md); stopping the ASR bridge has already stopped the
+        injected source (capture + pump)."""
+        if self._coordinator is not None:
+            self._coordinator.close()
 
     @property
     def voice(self) -> Voice | None:

@@ -32,15 +32,19 @@ class FakeTTSEngine:
 
 class FakeCoordinator:
     """The slice of `AudioProcessingCoordinator` the embodiment wires: the two endpoints it hands
-    the engines, and the far-rate binding it records."""
+    the engines, the far-rate binding it records, and how often it was closed."""
 
     def __init__(self) -> None:
         self.sink = object()
         self.source = object()
         self.bound: list[int] = []
+        self.closed = 0
 
     def bind_far_rate(self, rate: int) -> None:
         self.bound.append(rate)
+
+    def close(self) -> None:
+        self.closed += 1
 
 
 class FakeOpenCVSource:

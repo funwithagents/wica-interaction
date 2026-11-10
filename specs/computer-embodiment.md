@@ -88,7 +88,7 @@ The members:
 - **`camera(fps=…)`** — a `StreamFeed(WebcamSource(config.camera.device, fps=fps))`: the paced webcam source below, behind the gesture module's own `StreamProvider` adapter ([gesture-input.md](gesture-input.md), "`StreamFeed`"), so the hand stage samples a latest-value slot here as it does on the robot. `open()` starts the provider (which opens the webcam), `close()` stops it; `capture_error` is the source's.
 - **`commands()`** — `()`; the computer has nothing to act with.
 - **`prompt_addendum`** — `""`.
-- **`exit()`** — nothing to release: stopping the ASR bridge stops the injected source (capture + pump), and the sink's player drains at the end of every `say` ([audio-processing.md](audio-processing.md), "Teardown").
+- **`exit()`** — closes the coordinator's voice stream, kept open for the app's lifetime so the echo's delay stays put; stopping the ASR bridge has already stopped the injected source (capture + pump) ([audio-processing.md](audio-processing.md), "Teardown").
 
 ### `say`
 
