@@ -33,8 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # TEMPORARY: a push runs the robot alone until tts-engine#33 (the computer's discard) merges.
-        embodiment: ${{ fromJSON((inputs.embodiments || 'reachy') == 'both' && '["computer", "reachy"]' || format('["{0}"]', inputs.embodiments || 'reachy')) }}
+        embodiment: ${{ fromJSON((inputs.embodiments || 'both') == 'both' && '["computer", "reachy"]' || format('["{0}"]', inputs.embodiments)) }}
     defaults:
       run:
         shell: pwsh

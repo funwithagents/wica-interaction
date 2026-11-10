@@ -4384,7 +4384,7 @@ wheels = [
 [[package]]
 name = "tts-engine"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/tts-engine?rev=main#8db760740f37d82dafd17ecf61c7cfce61f0a89a" }
+source = { git = "https://github.com/funwithagents/tts-engine?rev=main#85f3fc59bfc46d12f814ad763b03c816d2f5683f" }
 dependencies = [
     { name = "numpy" },
     { name = "sounddevice" },
