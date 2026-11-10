@@ -157,6 +157,10 @@ jobs:
           # The robot's mic is opened by the bridge through GStreamer, whose device names carry no
           # host API: the cable named as GStreamer lists it.
           REACHY_MINI_E2E_AUDIO_INPUT: ${{ matrix.embodiment == 'reachy' && 'CABLE Output (VB-Audio Virtual Cable)' || '' }}
+          # Upstream names a sim scene relative to its own directory, so the test scene must be on
+          # the drive reachy_mini is installed on (D:, the workspace's), not in C:'s TEMP.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: uv run pytest tests-e2e/test_${{ matrix.embodiment }}.py -v -rs -o log_cli=true --log-cli-level=WARNING --basetemp=${{ runner.temp }}/e2e
       - name: Evidence
         if: failure()
