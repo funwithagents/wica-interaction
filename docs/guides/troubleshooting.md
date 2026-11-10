@@ -25,13 +25,13 @@ The page opens even when something could not be built, with one line per failure
 - **They appear and clear, but no 🗣️ shows on the left.** The utterance never closed into a final segment, or it did while the agent was busy. A trigger arriving while a reasoning step is in flight is dropped, not queued ([limits.md](limits.md#one-reasoning-step-at-a-time)): wait for the previous reaction to finish and say it again.
 - **A 🗣️ shows, a reaction opens, but there is no 🗣️ say.** Open the reaction: a **🚫 noop** means the model chose not to answer (ask directly); a 💭 item alone means it wrote free text instead of calling `say`, which the persona forbids and which a weaker model does anyway ([personas.md](personas.md)); a ❌ say shows the `TTS error: …` the voice returned.
 - **The say runs but you hear nothing.** The computer: the speaker in `tts.engine.player.device`, the system volume, a voice whose `gain_db` is too low. The robot: the robot's speaker and the media session; on the `fake` backend nothing is heard by design.
-- **Typed text works, speech does not.** Then the agent is fine and the problem is upstream of it: the microphone, the recognizer's key, or echo cancellation cleaning too much (a `stream_delay_ms` far from the real latency can eat speech, [computer.md](computer.md#echo-cancellation)).
+- **Typed text works, speech does not.** Then the agent is fine and the problem is upstream of it: the microphone, the recognizer's key, or echo cancellation cleaning too much (with headphones it mutes you while the agent speaks: turn it off, [computer.md](computer.md#echo-cancellation)).
 
 ## The agent hears itself
 
 The transcript shows the agent's own sentences coming back as 🗣️ input, and it answers them.
 
-- **On the computer**, echo cancellation must be on: `audio_processing.echo_cancellation.enabled`, the `audio-processing` extra installed, and no `Audio processing:` banner line. Tune `stream_delay_ms` to your audio path's latency ([computer.md](computer.md#echo-cancellation)). Headphones remove the loop outright: with them, turn echo cancellation off, since with no echo to learn from it mutes you while the agent speaks.
+- **On the computer**, echo cancellation must be on: `audio_processing.echo_cancellation.enabled`, the `audio-processing` extra installed, and no `Audio processing:` banner line ([computer.md](computer.md#echo-cancellation)). Short bursts can still leak through, mostly right after you talk over the agent: a known limit of the current canceller. Headphones remove the loop outright: with them, turn echo cancellation off, since with no echo to learn from it mutes you while the agent speaks.
 - **On the robot**, the XVF3800 cancels the echo in hardware only when the voice plays through the robot's own media session, which is how the app plays it. A `tts.engine.player.device` has no place in a reachy config (the loader rejects it); the robot's volume still matters at the extremes.
 
 ## No camera frame, or no sign
