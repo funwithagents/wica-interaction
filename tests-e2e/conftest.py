@@ -62,6 +62,8 @@ def pytest_configure(config: pytest.Config) -> None:
     if speaker:
         os.environ.setdefault("REACHY_MINI_E2E_AUDIO_OUTPUT", speaker)
     config.pluginmanager.import_plugin("reachy_mini_bridge.testing.fixtures")
+    # EXPERIMENT (CI segfault): MediaPipe imported on the main thread, before any GStreamer thread.
+    import mediapipe  # noqa: F401
 
 
 def pytest_reachy_mini_scene_props() -> tuple[Any, ...]:
