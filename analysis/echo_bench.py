@@ -352,6 +352,9 @@ class Room:
     gain_db: float | None  # None: no echo (a headset)
     delay_ms: float = 170.0
     jump_ms: float | None = None  # the delay after the midpoint
+    drift_ppm: float = (
+        0.0  # the delay growing with time: two clocks apart, as measured in CI
+    )
     rt60_s: float | None = None
     noise_dbfs: float | None = None
     early: bool = False
@@ -363,6 +366,8 @@ ROOMS = [
     Room("quiet", -20.0),
     Room("reverb", -10.0, rt60_s=0.4),
     Room("jump", -10.0, jump_ms=260.0),
+    Room("drift", -10.0, drift_ppm=250.0),
+    Room("drift1k", -10.0, drift_ppm=1000.0),
     Room("early", -10.0, early=True),
     Room("noise", -10.0, noise_dbfs=-50.0),
     Room("headset", None),
@@ -404,7 +409,14 @@ def synth(out_dir: Path) -> None:
                 path = np.convolve(far, _room_ir(room.rt60_s, rng))[:n]
             g = 10 ** (room.gain_db / 20)
             d = int(room.delay_ms * RATE / 1000)
-            echo[d:] = path[: n - d] * g
+            if room.drift_ppm:
+                t = np.arange(n, dtype=np.float64)
+                src = (
+                    t * (1 - room.drift_ppm * 1e-6) - d
+                )  # read further and further behind
+                echo = np.interp(src, t, path, left=0.0) * g
+            else:
+                echo[d:] = path[: n - d] * g
             if room.jump_ms is not None:
                 mid = n // 2
                 d2 = int(room.jump_ms * RATE / 1000)
@@ -427,6 +439,45 @@ def synth(out_dir: Path) -> None:
         print(f"{room.name}: {n / RATE:.1f} s")
 
 
+def track(path: Path, span_s: float = 2.0, max_ms: float = 600.0) -> None:
+    """The echo's delay through a recording, window by window, and where its leaks sit.
+
+    The delay is the peak of the waveform cross-correlation of ``near`` with ``far`` over
+    0..``max_ms``, in windows of ``span_s`` where the reference plays; a move between windows is the
+    echo path changing (the room's drift correction, a device's buffering)."""
+    d = np.load(path)
+    near, far = d["near"].astype(np.float64), d["far"].astype(np.float64)
+    n, step, max_lag = len(near), int(span_s * RATE), int(max_ms * RATE / 1000)
+    print(f"\n### {path.name}: echo delay per {span_s:.0f} s window\n")
+    for start in range(0, n - step - max_lag, step):
+        f = far[start : start + step]
+        if window_dbfs(f.astype(np.int16)).max() < -40:
+            continue
+        m = near[start : start + step + max_lag]
+        size = 1 << int(np.ceil(np.log2(len(m) + len(f))))
+        xc = np.fft.irfft(np.fft.rfft(m, size) * np.conj(np.fft.rfft(f, size)), size)
+        xc = xc[: max_lag + 1]
+        k = int(np.argmax(np.abs(xc)))
+        sharp = float(np.abs(xc[k]) / (np.median(np.abs(xc)) + 1e-9))
+        print(
+            f"  {start / RATE:7.1f} s  {k / RATE * 1000:6.1f} ms  (peak/median {sharp:5.1f})"
+        )
+    if "out" in d:
+        echo, _, _ = predicted_echo(d["near"], d["far"])
+        near_db, out_db = window_dbfs(d["near"]), window_dbfs(d["out"])
+        m = min(len(near_db), len(out_db))
+        echo_db = window_dbfs(np.clip(echo, -32768, 32767).astype(np.int16))[:m]
+        leaks = (
+            (echo_db > ACTIVE_DBFS)
+            & (near_db[:m] < echo_db + 3)
+            & (out_db[:m] > LEAK_DBFS)
+        )
+        times = np.flatnonzero(leaks) * WINDOW / RATE
+        print(
+            f"\n  recorded leaks ({len(times) * WINDOW / RATE:.1f} s): {np.round(times, 1).tolist()}"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -439,9 +490,16 @@ def main() -> None:
     )
     r.add_argument("files", type=Path, nargs="+")
     r.add_argument("-c", "--candidates", default="none,aec3")
+    t = sub.add_parser(
+        "track", help="the echo's delay through recordings, and their leaks"
+    )
+    t.add_argument("files", type=Path, nargs="+")
     args = parser.parse_args()
     if args.cmd == "synth":
         synth(args.dir)
+    elif args.cmd == "track":
+        for path in args.files:
+            track(path)
     else:
         for path in args.files:
             show(path, bench(path, args.candidates.split(",")))

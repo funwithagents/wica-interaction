@@ -147,7 +147,7 @@ uv run python analysis/echo_bench.py run <dir>/*.npz <audio.npz>... -c none,aec3
 uv run --with livekit python analysis/echo_bench.py run <files> -c aec3,livekit   # candidate B, nothing added to the lock
 ```
 
-A new candidate is one entry in its `CANDIDATES`. It reads both kinds of input: a CI recording (`near`, `far`, `out`, where the echo is predicted from the reference) and a synthetic set (`near`, `far`, `echo`, `person`, where the echo and the person are known). The synthetic sets play one ~30 s conversation (a request, a story stopped 4 s in, or 1 s in for `early`; short replies; the person talking through a whole reply) in eight rooms: `ci` (170 ms, −10 dB), `loud` (−3 dB), `quiet` (−20 dB), `reverb` (a synthetic 0.4 s tail), `jump` (170 → 260 ms at the midpoint), `early`, `noise` (−50 dBFS) and `headset` (no echo).
+A new candidate is one entry in its `CANDIDATES`. It reads both kinds of input: a CI recording (`near`, `far`, `out`, where the echo is predicted from the reference) and a synthetic set (`near`, `far`, `echo`, `person`, where the echo and the person are known). The synthetic sets play one ~30 s conversation (a request, a story stopped 4 s in, or 1 s in for `early`; short replies; the person talking through a whole reply) in ten rooms: `ci` (170 ms, −10 dB), `loud` (−3 dB), `quiet` (−20 dB), `reverb` (a synthetic 0.4 s tail), `jump` (170 → 260 ms at the midpoint), `drift` and `drift1k` (the delay growing at 250 and 1000 ppm), `early`, `noise` (−50 dBFS) and `headset` (no echo).
 
 To measure the echo's lag in a recording (useful to check alignment for a new backend): correlate the log-energy envelopes (10 ms RMS) of `near` and `far` over ±3 s; a stable positive lag of 100–300 ms is healthy, a negative one means the reference is late. The bench prints it for each recording.
 
@@ -174,6 +174,28 @@ What it says:
 - **The leaks are not the only fault: the person is cut.** In double-talk, both cancellers cut the person by more than 6 dB in a quarter to half of the windows, worst with a loud echo or reverberation. That is the barge-in risk, and what a residual echo suppressor (candidate G) or AEC3's near-end tuning (candidate A) would have to improve.
 - **LiveKit's build (B) is not better**: the same echo removal, slightly more cutting of the person in two rooms. It is faster, which does not matter at these numbers. B is ruled out as a fix.
 - **The headset case did not reproduce** the strong muting measured earlier (6–60 dB until ~8 s of the app's voice): here only 9 % of the person's double-talk windows are cut. The person in these sets first talks over the app 4 s into its first reply, inside that window, so the difference is to explain (the synthetic voice, or the earlier measurement's signals) before the "off with headphones" rule is revisited.
+
+### The CI recordings (2026-11-10, three manual runs)
+
+Three runs of the branch `worktree-echo-canceller`, with the computer's evidence uploaded on every run. `echo_bench.py track` follows the echo's delay through each conversation (the waveform cross-correlation's peak, per 2 s window where the app speaks) and lists the leaks:
+
+| Run | Computer job | Echo delay through the conversation | Leaks | The app heard itself |
+|---|---|---|---|---|
+| 1 | failed, step 6: the agent answered a `speech_input` with noop. That input was the app's own story ("I think the Dragon's sword") | 135 ms, then **+87 ms in one step** (222 ms) in the silence after the cancelled story, then creeping to 231 ms | 2.3 s, mostly in the 3 s after the jump | "Okay. I'm stopped.", "Got it.", and the story fragment |
+| 2 | failed, step 7: the dictated note arrived as several inputs (an empty one among them), not an echo | 159 → 179 ms, creeping, one 10 ms step | 2.0 s, spread out | none |
+| 3 | passed | 141 → 177 ms, creeping, steps of 5–15 ms | 1.4 s, spread out | none |
+
+Replaying a recording through AEC3 offline reproduces its leaks (run 1: 2.2 s replayed, 2.3 s recorded), as before.
+
+**The echo path in CI is not fixed: it drifts, at ~250–400 ppm, and sometimes jumps.** Each run starts at a different delay (135–177 ms), and the delay only grows. The synthetic sets show what that costs: the `drift` room (250 ppm) drops AEC3's echo removal from 61 to 50 dB and leaks 0.3 s in 30 s, about 1 s over a CI conversation, where the fixed room leaks nothing; and one 90 ms jump leaks 0.8 s. Drift and jumps account for most of CI's leaks; the rest sit where the person talks over the story.
+
+**The likely source is the test room, not the app.** [tests-e2e/room.py](../tests-e2e/room.py) records the app's speaker on one stream and plays it into the cable on another. Its echo buffer grows by the difference of the two streams' clocks (a delay that only grows) and by any late recording callback (a jump that stays), and is cut back to 50 ms only past 150 ms (a ~100 ms jump the other way). The app's own reference cannot make the delay grow: it is taken in the output callback, and a gap on the mic side would shorten the delay, not lengthen it. Not yet proven: PulseAudio raising a stream's latency after an underrun would look the same. Logging the room's echo backlog during a run settles it.
+
+**What this changes:**
+
+- **The tier measures its room as much as the canceller.** On a laptop, the speakers and the mic share one sound card's clock: the acoustic path does not drift or jump. A fixed-delay room (the backlog held at its target: resampled against the drift, a late block dropped rather than delaying everything after it) would make the tier's echo check a measurement of the canceller. It is a change to `room.py` and [specs/e2e.md](../specs/e2e.md) ("The room").
+- **Drift is still a real case** for a USB speaker with the built-in mic, or Bluetooth (two clocks, 50–500 ppm). It belongs in the bench (the `drift` rooms) and in a later tier variant, not in every run by accident.
+- **The candidates are judged on fixed rooms first**, then on drift and jumps: there AEC3 needs ~3 s to relearn a jump, which a residual echo suppressor (G) would hide better than AEC3's tuning (A).
 
 Suggested acceptance, for the tier's echo check to fail again: zero ASR-transcribed leaks over ten CI conversations; ERLE ≥ 30 dB in echo-only windows; near-end preserved within ~3 dB in double-talk outside the first ~250 ms; the headset set passes at ~0 dB, or the rule "off with headphones" is kept explicitly.
 
