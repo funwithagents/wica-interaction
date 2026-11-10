@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import threading
 import time
-import traceback
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Self
@@ -390,77 +388,3 @@ class EchoRecorder:
             capture=np.array(self.capture, np.float64).reshape(-1, 4),
             playback=np.array(self.playback, np.float64).reshape(-1, 4),
         )
-
-
-class StallWatch:
-    """A temporary diagnostic (the echo canceller analysis, not a spec; removed before merging): a
-    thread that wakes every 20 ms and, when it wakes more than 150 ms late, records the stall — its
-    length, the process's CPU time over it (a thread holding the GIL burns CPU; a process starved
-    of CPU does not), and every thread's top frames just before and stack just after. Written to
-    *path* on exit."""
-
-    def __init__(self, path: Any) -> None:
-        self._path = path
-        self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._watch, name="stall-watch", daemon=True
-        )
-        self.stalls: list[str] = []
-
-    @staticmethod
-    def _frames() -> list[tuple[str, Any]]:
-        names = {t.ident: t.name for t in threading.enumerate()}
-        return [
-            (names.get(ident, str(ident)), frame)
-            for ident, frame in sys._current_frames().items()  # pyright: ignore[reportPrivateUsage]
-        ]
-
-    @staticmethod
-    def _top(frame: Any, depth: int = 4) -> str:
-        parts: list[str] = []
-        while frame is not None and len(parts) < depth:
-            code = frame.f_code
-            parts.append(
-                f"{code.co_filename.rsplit('/', 2)[-1]}:{frame.f_lineno} {code.co_name}"
-            )
-            frame = frame.f_back
-        return " < ".join(parts)
-
-    def _watch(self) -> None:
-        last, cpu = time.perf_counter(), time.process_time()
-        before = [(n, self._top(f)) for n, f in self._frames()]
-        while not self._stop.wait(0.02):
-            now, now_cpu = time.perf_counter(), time.process_time()
-            gap = now - last
-            if gap > 0.15:
-                after = [
-                    (n, "".join(traceback.format_stack(f)[-12:]))
-                    for n, f in self._frames()
-                ]
-                self.stalls.append(
-                    "\n".join(
-                        [
-                            (
-                                f"=== stall of {gap * 1000:.0f} ms at {now - self._t0:.3f} s "
-                                "(since the app was built), "
-                                f"process CPU over it {(now_cpu - cpu) * 1000:.0f} ms"
-                            ),
-                            "--- just before (top frames):",
-                            *(f"  [{n}] {s}" for n, s in before),
-                            "--- just after (stacks):",
-                            *(f"  [{n}]\n{s}" for n, s in after),
-                        ]
-                    )
-                )
-            before = [(n, self._top(f)) for n, f in self._frames()]
-            last, cpu = time.perf_counter(), time.process_time()
-
-    def __enter__(self) -> Self:
-        self._t0 = time.perf_counter()
-        self._thread.start()
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self._stop.set()
-        self._thread.join(1.0)
-        self._path.write_text("\n\n".join(self.stalls) or "no stall\n")
