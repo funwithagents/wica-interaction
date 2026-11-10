@@ -6,7 +6,9 @@
 # the fast tier needs no device, no network and no key, and is where each platform's install
 # and code paths meet a real machine. Linux arm64 is left out: MediaPipe ships no wheel there,
 # so the dev group does not install. `e2e-computer` and `e2e-reachy` run the end-to-end tier's
-# scenarios on Linux, one job per embodiment, with the two provider keys as secrets.
+# scenarios on Linux, one job per embodiment, with the two provider keys as secrets: on pushes to
+# main and on a manual run (any branch), not on pull requests, since each run pays the LLM and the
+# ASR.
 
 name: CI
 
@@ -101,7 +103,9 @@ jobs:
     name: e2e (computer)
     # The end-to-end tier on the computer embodiment (specs/e2e.md): the real app — Claude Haiku,
     # Deepgram Flux, phonon, the hand models — with a PulseAudio null sink as the virtual cable.
-    # Not a required check until its history shows it stable (specs/ci.md).
+    # Not a required check until its history shows it stable (specs/ci.md). On main and by hand
+    # only: each run pays the LLM and the ASR.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -113,9 +117,8 @@ jobs:
       WICA_E2E_PERSON_VOICE_DEVICE: wica_cable
       WICA_E2E_SPEAKER_DEVICE: wica_speaker
       WICA_E2E_ECHO_DEVICE: wica_echo
-      # A pull request from a fork gets no secrets: it skips the scenarios. Everywhere else a
-      # missing key or device fails the job instead of turning it green with nothing tested.
-      WICA_E2E_FAIL_ON_MISSING: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '1' || '0' }}
+      # A missing key or device fails the job instead of turning it green with nothing tested.
+      WICA_E2E_FAIL_ON_MISSING: '1'
     steps:
       - uses: actions/checkout@v7
       - name: System packages (the app's, plus PulseAudio and its ALSA plugin)
@@ -169,7 +172,9 @@ jobs:
     # The end-to-end tier on the Reachy Mini embodiment (specs/e2e.md): the real app in the
     # headless MuJoCo sim the bridge's harness spawns, its camera rendered through EGL, hand
     # photos as props, the cable as the robot's mic. The bridge's own live job is the model
-    # (reachy-mini-bridge/.github/workflows/ci.yml, `e2e-sim`). Not a required check yet.
+    # (reachy-mini-bridge/.github/workflows/ci.yml, `e2e-sim`). Not a required check yet; on main
+    # and by hand only, as the computer's.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -179,10 +184,10 @@ jobs:
       WICA_E2E_PERSON_VOICE_DEVICE: wica_cable
       WICA_E2E_SPEAKER_DEVICE: wica_speaker
       WICA_E2E_ECHO_DEVICE: wica_echo
-      WICA_E2E_FAIL_ON_MISSING: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '1' || '0' }}
+      WICA_E2E_FAIL_ON_MISSING: '1'
       # A sim that comes up without its camera, its audio or the hand props fails the job
       # instead of skipping the scenarios.
-      REACHY_MINI_E2E_REQUIRED_CAPS: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'audio,camera,props:hand' || '' }}
+      REACHY_MINI_E2E_REQUIRED_CAPS: audio,camera,props:hand
     steps:
       - uses: actions/checkout@v7
       - name: System packages (the app's; PulseAudio and its ALSA and GStreamer plugins; the daemon's ICE library; Mesa's EGL for the offscreen camera)

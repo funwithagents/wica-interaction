@@ -246,7 +246,7 @@ The tests are the same on every platform; only the setup differs.
 - **Each run calls two paid services**, the LLM and the ASR. A full run makes a few dozen LLM reactions per embodiment, each over a persona and primer of several thousand tokens. The framework's token counts give the cost per run once the tier exists.
 - **A run is slow**: the model downloads on the first run (about 340 MB of hand models plus the phonon checkpoint), the sim's startup, and speech at real-time speed. Expect 5 to 10 minutes per embodiment once the caches are warm.
 - **A run is non-deterministic**: a misheard phrase, or the model choosing another action, can fail a run without a bug. The assertions stay behavioural and the time limits generous.
-- **Where it runs** is the CI spec's decision ([ci.md](ci.md)): on Linux, on every pull request and push to `main`, but not as a required check until its history shows it stable.
+- **Where it runs** is the CI spec's decision ([ci.md](ci.md)): on Linux, on pushes to `main` and by hand, not on pull requests (each run pays the LLM and the ASR), and not as a required check until its history shows it stable.
 
 ### The manual Windows check
 

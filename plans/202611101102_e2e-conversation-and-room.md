@@ -13,6 +13,7 @@ Implements [specs/e2e.md](../specs/e2e.md) ("The room", "The conversation") and 
 - `tests-e2e/scenarios.py` — the focused scenarios 1–3; the conversation's steps (the question, the sign, the emotion, the spoken and the shown stop, the note with its follow-up question, the echo check), each starting from a settled agent.
 - `tests-e2e/test_computer.py`, `tests-e2e/test_reachy.py` — the focused scenarios and a `TestConversation` class each; the separate interrupt, emotion and dictation tests go.
 - `.github/workflows/ci.yml` — the echo device (`wica_echo`, over `wica_speaker.monitor`) in both e2e jobs; the robot's job stops naming its mic.
+- `.github/workflows/ci.yml` — the two e2e jobs on pushes to `main` and by hand only, no longer on pull requests (each run pays the LLM and the ASR); a missing key, device or sim capability always fails them.
 - `specs/e2e.md`, `specs/ci.md` (`Updated`, back to `Implemented` once CI is green), `specs/_index.md`, `plans/_index.md` — the design and the statuses.
 
 ## Steps

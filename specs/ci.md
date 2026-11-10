@@ -10,7 +10,7 @@ tests:
 
 ## Purpose
 
-The verification gate of [AGENTS.md](../AGENTS.md) — lint, format, type check, tests — runs on GitHub's hosted runners for every pull request and every push to `main`, so it is a machine's verdict on each change and not only a local command. Like [testing.md](testing.md) this is a cross-cutting practice, not a runtime concept: nothing here ships in the package, and the one file that implements it is the workflow.
+The verification gate of [AGENTS.md](../AGENTS.md) — lint, format, type check, tests — runs on GitHub's hosted runners for every pull request and every push to `main`, so it is a machine's verdict on each change and not only a local command. The end-to-end tier, which pays two live services per run, runs on pushes to `main` and by hand only. Like [testing.md](testing.md) this is a cross-cutting practice, not a runtime concept: nothing here ships in the package, and the one file that implements it is the workflow.
 
 This spec covers the **static gate, the fast tier and the end-to-end tier's two jobs**, one per embodiment ([e2e.md](e2e.md)). A nightly run with the production providers joins it later.
 
@@ -41,7 +41,7 @@ macOS and Windows need none: GStreamer comes with the `reachy-mini` wheels, and 
 
 ### The workflow
 
-One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` to `main` and on `workflow_dispatch`. Concurrency is one run per ref: a newer push cancels the older run still in flight.
+One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` to `main` and on `workflow_dispatch`. The two end-to-end jobs skip pull requests (`if: github.event_name != 'pull_request'`): each run calls the LLM and the ASR, so they run on `main` after a merge, and on a branch when started by hand from the Actions tab. Concurrency is one run per ref: a newer push cancels the older run still in flight.
 
 | Job | Runners | What |
 |---|---|---|
@@ -64,7 +64,7 @@ One file, `.github/workflows/ci.yml`. It triggers on `pull_request`, on `push` t
 
 ### Secrets and protection
 
-- **Two secrets**, `WICA_ANTHROPIC_API_KEY` and `DEEPGRAM_API_KEY`, for the end-to-end jobs: the tier's LLM and ASR. The other jobs call no provider. GitHub gives no secret to a pull request from a fork, so there the jobs set `WICA_E2E_FAIL_ON_MISSING=0` (and require no sim capability) and their scenarios skip; everywhere else it sets `1`, and a missing key or device fails the job rather than turning it green with nothing tested.
+- **Two secrets**, `WICA_ANTHROPIC_API_KEY` and `DEEPGRAM_API_KEY`, for the end-to-end jobs: the tier's LLM and ASR. The other jobs call no provider. Since the jobs never run on a pull request, a fork's lack of secrets never reaches them: they set `WICA_E2E_FAIL_ON_MISSING=1` and require the sim's capabilities always, so a missing key, device or capability fails the job rather than turning it green with nothing tested.
 - **The status checks to require on `main`** are `check` and the three `fast-tier` entries. `e2e-computer` and `e2e-reachy` are not required until their history shows them stable: it calls live services and is not deterministic. Requiring them is a repository setting on GitHub, outside the repository.
 
 ## Relationship to the other specs
