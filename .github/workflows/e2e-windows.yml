@@ -94,24 +94,38 @@ jobs:
           import numpy as np
           import sounddevice as sd
 
-          # Each host API on its own: the mic opened mono at 16 kHz as the ASR does, the tone played
-          # at 48 kHz as the room does, through each playback end in turn.
+          # Each host API on its own (MME cuts names to 31 characters, hence the prefixes and the
+          # indices), the mic opened as the ASR does (16 kHz mono) and at the device's own format,
+          # the tone played at 48 kHz as the room does, through each playback end in turn.
+          apis = [a["name"] for a in sd.query_hostapis()]
+
+          def find(prefix, api, kind):
+              for i, d in enumerate(sd.query_devices()):
+                  if d["name"].startswith(prefix) and apis[d["hostapi"]] == api and d[f"max_{kind}_channels"]:
+                      return i
+              return None
+
           tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(48000) / 48000)).astype(np.float32)
-          heard = {}
-          for api in ("Windows DirectSound", "MME", "Windows WASAPI"):
-              mic = f"CABLE Output (VB-Audio Virtual Cable), {api}"
-              for out in ("Speakers (VB-Audio Virtual Cable)", "CABLE In 16 Ch (VB-Audio Virtual Cable)"):
-                  try:
-                      with sd.InputStream(16000, device=mic, channels=1) as stream:
-                          sd.play(tone, 48000, device=f"{out}, {api}")
-                          sd.wait()
-                          block, _ = stream.read(stream.read_available)
-                      rms = float(np.sqrt(np.mean(block[4000:] ** 2)))
-                      heard[(api, out)] = rms
-                      print(f"{api}: {out} -> CABLE Output: rms {rms:.4f}")
-                  except Exception as e:
-                      print(f"{api}: {out}: {type(e).__name__}: {e}")
-          if not heard or any(rms > 0.01 for (_, out), rms in heard.items() if "16 Ch" in out):
+          separate = False
+          for api in ("MME", "Windows DirectSound", "Windows WASAPI"):
+              mic = find("CABLE Output (VB-Audio Virtual", api, "input")
+              for rate, channels in ((16000, 1), (48000, 2)):
+                  for out_name in ("Speakers (VB-Audio Virtual", "CABLE In 16 Ch (VB-Audio"):
+                      out = find(out_name, api, "output")
+                      label = f"{api}, mic {rate} Hz x{channels}, {out_name}"
+                      blocks = []
+                      try:
+                          with sd.InputStream(rate, device=mic, channels=channels, callback=lambda b, *_: blocks.append(b.copy())):
+                              sd.play(tone, 48000, device=out)
+                              sd.wait()
+                          rec = np.concatenate(blocks)[rate // 4 :, 0]
+                          rms = float(np.sqrt(np.mean(rec**2)))
+                          print(f"{label}: rms {rms:.4f}")
+                          if "16 Ch" in out_name and rms < 0.01:
+                              separate = True
+                      except Exception as e:
+                          print(f"{label}: {type(e).__name__}: {e}")
+          if not separate:
               raise SystemExit("no separate speaker on the cable")
           PY
 
