@@ -231,15 +231,15 @@ Recording the cable otherwise is an open question (below).
 
 The tests are the same on every platform; only the setup differs.
 
-| | macOS (iteration) | Linux (CI) |
-|---|---|---|
-| Sim camera | the viewer window: `REACHY_MINI_E2E_SIM_VIEWER=1`, an unlocked GUI session, `mjpython` | headless, rendered through EGL |
-| Cable | BlackHole 2ch | a PulseAudio null sink, plus a remapped source over its monitor |
-| App's speaker | the default output (no echo), or a second virtual device, `BlackHole 16ch` (the computer's echo) | a second null sink, its monitor the echo device (the computer's echo) |
-| Permissions | microphone access for the terminal or editor | none |
+| | macOS (iteration) | Linux (CI) | Windows (CI, by hand) |
+|---|---|---|---|
+| Sim camera | the viewer window: `REACHY_MINI_E2E_SIM_VIEWER=1`, an unlocked GUI session, `mjpython` | headless, rendered through EGL | the viewer window: `REACHY_MINI_E2E_SIM_VIEWER=1`, drawn by Mesa's llvmpipe on the runner's desktop |
+| Cable | BlackHole 2ch | a PulseAudio null sink, plus a remapped source over its monitor | VB-Audio Virtual Cable: "CABLE Input" the person's voice, "CABLE Output" the mic |
+| App's speaker | the default output (no echo), or a second virtual device, `BlackHole 16ch` (the computer's echo) | a second null sink, its monitor the echo device (the computer's echo) | Scream, an output-only virtual sound card (no echo) |
+| Permissions | microphone access for the terminal or editor | none | none |
 
 - **The first viewer launch on macOS takes about 62 s** while GStreamer builds its plugin cache. The harness gives up after a fixed 45 s. The workaround is to start the sim daemon by hand once; the harness then borrows it. Later launches take about 8 s.
-- **Windows is not part of this tier.** It would need VB-Audio Virtual Cable and a GUI session for the sim. A manual check on an x86-64 Windows machine validates the app there instead (below).
+- **Windows runs the tier in a workflow started by hand** ([ci.md](ci.md), "The Windows end-to-end tier, by hand"). Windows lists each device once per host API, so the devices are named with theirs (`"CABLE Output (VB-Audio Virtual Cable), Windows DirectSound"`): a bare name matches several. The run has no echo: the free cable is one cable. What virtual devices cannot show, real hardware, stays a manual check (below).
 
 ### Cost and cadence
 

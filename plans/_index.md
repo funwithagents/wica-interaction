@@ -44,6 +44,7 @@ Implementation plans for WICA Interaction (formerly Reachy Mini Interaction WICA
 | [202611100025_e2e-tier.md](202611100025_e2e-tier.md) | The end-to-end tier ([specs/e2e.md](../specs/e2e.md), [specs/ci.md](../specs/ci.md)): both embodiments with only the devices replaced — the cable and the room, a file as the webcam, hand photos in the sim; three focused scenarios and one conversation per body; its two CI jobs on `main` and by hand | Done |
 | [202611100046_ci-source-build-cache.md](202611100046_ci-source-build-cache.md) | CI's uv cache keyed on the sdist-only packages' locked entries (`aec-audio-processing`, PyGObject, pycairo), not the whole `uv.lock` ([specs/ci.md](../specs/ci.md)): a sibling bump no longer costs a two-minute rebuild on every job | Done |
 | [202611101225_input-wordings.md](202611101225_input-wordings.md) | The input wordings ([specs/app.md](../specs/app.md), [specs/asr-bridge.md](../specs/asr-bridge.md), [specs/gesture-input.md](../specs/gesture-input.md)): speech heard, gestures detected, a dictated passage marked complete | Done |
+| [202611101650_windows-e2e-tier.md](202611101650_windows-e2e-tier.md) | The end-to-end tier on Windows ([specs/ci.md](../specs/ci.md), [specs/e2e.md](../specs/e2e.md)): a workflow started by hand, VB-Cable and Scream as the devices, the robot's sim through its viewer on Mesa | In progress |
 | _(add plans here — see [_plan-template.md](_plan-template.md))_ | | |
 
 ## Status legend

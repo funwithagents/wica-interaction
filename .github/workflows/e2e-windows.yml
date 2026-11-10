@@ -85,9 +85,10 @@ jobs:
           $devcon = "$d\scream\Install\helpers\devcon-x64.exe"
           foreach ($i in 1, 2) {
             & $devcon install "$d\vbcable\vbMmeCable64_win10.inf" VBAudioVACWDM
-            if ($LASTEXITCODE -ne 0) { throw "VB-Cable ${i}: devcon exited $LASTEXITCODE" }
+            # 1 is devcon's "installed, a reboot may be needed": the second node of a driver in use.
+            if ($LASTEXITCODE -gt 1) { throw "VB-Cable ${i}: devcon exited $LASTEXITCODE" }
           }
-          Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName
+          Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName | Out-String -Width 200
 
       - name: The tier's devices
         # Windows lists each device once per host API, so a bare name matches several and
