@@ -267,11 +267,12 @@ class _FpsMeter:
         self._last_count, self._last_t = published_count, now
 
 
-def _import_mediapipe() -> None:
-    """Import MediaPipe on the calling thread. Its first import, on the hand stage's worker thread
-    while the robot's GStreamer threads run, crashed the process on Linux (a segmentation fault in
-    the import, 2026-11-10, specs/gesture-input.md "`GestureInput`"). A missing MediaPipe is left to the
-    stage, which reports it as its error."""
+def preload_mediapipe() -> None:
+    """Import MediaPipe now, before the body is entered. The shipped hand detector would import it
+    on first use, on its stage's thread, once the camera runs; on Linux, after the robot's GStreamer
+    media has loaded the system's native libraries, that import aborted the process inside
+    matplotlib's FreeType extension, which MediaPipe pulls in (2026-11-10, specs/gesture-input.md,
+    "App integration"). A missing MediaPipe is left to the stage, which reports it as its error."""
     try:
         import mediapipe  # noqa: F401  # pyright: ignore[reportUnusedImport]
     except ImportError:
@@ -343,9 +344,6 @@ class GestureInput:
         self._hand_meter = _FpsMeter()
         self._classifier_meter = _FpsMeter()
         self._feed = feed
-        # The shipped detector imports MediaPipe on first use, on the hand stage's thread; `start`
-        # imports it first, on the caller's (see `_import_mediapipe`).
-        self._shipped_detector = models.detector is None
         self._hands = HandStage(
             feed,
             target_fps=fps,
@@ -375,8 +373,6 @@ class GestureInput:
         if self._thread is not None:
             return
         self._stop_event.clear()
-        if self._shipped_detector:
-            _import_mediapipe()
         self._feed.open()
         with self._lock:
             # The stall clock starts now: a feed that never publishes reads stalled after stall_s.
