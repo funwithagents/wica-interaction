@@ -5,7 +5,7 @@ code:
 tests:
   - tests/test_gesture_input.py
   - tests/test_system.py
-  - tests-e2e/test_gesture_input_live.py
+  - tests-e2e/test_computer.py
 ---
 
 # Gesture input
@@ -250,7 +250,7 @@ class GestureInput:
 See [app.md](app.md) for the composition; the rules this module imposes on it:
 
 - Built in `build_system` **only when** the config's `vision` section has `enabled: true` ([configuration.md](configuration.md)) **and** the embodiment is up (no body ⇒ no camera ⇒ no vision, like ASR and the mic) **and** the agent built. Built **after** WICA, over `embodiment.camera(fps=cfg.vision.fps)` with `hold_s=cfg.vision.hold_s`, so `on_gesture` resolves against a live agent; the `hand_gesture_1` … `hand_gesture_<max_hands>` entries are registered — and `hand_signs_prompt_section()` appended to the persona — only in that case, so a vision-less run tells the model nothing about hands. Construction never loads a model or opens the camera (both happen on `start()`); a build failure is still caught into a `Vision: …` banner line rather than crashing.
-- **MediaPipe is imported before the body is entered.** `build_system` calls `preload_mediapipe()` first when vision is on and the hand detector is the shipped one (an injected detector needs none). Left to the hand stage, MediaPipe would be imported on first use, once the camera runs; on Linux, after the robot's GStreamer media has loaded the system's native libraries, that import aborted the process inside matplotlib's FreeType extension, which MediaPipe pulls in (found by the end-to-end tier's robot job, 2026-11-10). Imported before the body, it loads cleanly. A missing MediaPipe is left to the stage, which reports it as its error.
+- **MediaPipe is imported before the body is entered.** `build_system` calls `preload_mediapipe()` first when vision is on and the hand detector is the shipped one (an injected detector needs none). Left to the hand stage, MediaPipe would be imported on first use, once the camera runs; on Linux, after the robot's GStreamer media has loaded the system's native libraries, that import aborted the process inside matplotlib's FreeType extension, which MediaPipe pulls in (found by the end-to-end tier's robot job, 2026-11-10 — [e2e.md](e2e.md)). Imported before the body, it loads cleanly. A missing MediaPipe is left to the stage, which reports it as its error.
 - `on_gesture(hand, value)` writes `world.update(f"hand_gesture_{hand}", value)` guarded on a running agent (as `_deliver_speech` is): a value arriving before start or after teardown is dropped.
 - Started after `wica.start()` (with the ASR bridge), stopped in `_shutdown` right after `wica.close()` and **before** the embodiment's `exit()` — the robot's feed is the session's and resets to `None` at exit, so the stages are joined while it is still live; the webcam's provider is joined before anything else is torn down. Its `stop()` is a synchronous join, isolated like every other teardown step.
 
@@ -274,7 +274,7 @@ Drive `GestureInput` end-to-end through the real `vision-modules` pipeline with 
 - The embodiments' feeds are tested with them: `RobotCameraFeed` in [reachy-embodiment.md](reachy-embodiment.md), `WebcamSource` in [computer-embodiment.md](computer-embodiment.md).
 - `stop()` joins the threads and the callback is not called afterwards.
 - In `tests/test_system.py`, with a `FakeEmbodiment` whose camera is a scripted feed of synthetic frames + `GestureModels`: `max_hands` entries `hand_gesture_1…n` are registered, `hold_s` reaches the gesture input, and the hand-signs section is in the first prompt; a `None → two` update on `hand_gesture_2` triggers a reasoning step whose prompt renders the hand-2 sign line and no line for the sign-less hand 1; `HAND_GESTURE_TTL` later the World has cleared the sign with no step and renders no hand entry; `two → None` does not trigger; the serializer renders `None` as an empty `Content`; a vision config with no embodiment builds no `GestureInput`; `enabled: false` builds none either (registers no entry, seeds no section); teardown stops vision before the embodiment exits.
-- `tests-e2e/test_gesture_input_live.py` runs the **real** models, at the default hold (so it also proves the hold clears on a steady photo): a scripted source serving each of `vision-modules`' bundled photos must deliver its sign for hand 1 — `hand_fist.jpg` and `hand_stop.jpg` → `"stop"`, `hand_palm.jpg` → `"five"`, `hand_one.jpg` → `"one"`, `hand_three2.jpg` → `"three"` — and `no_hand.jpg` must deliver nothing — skipped when the fixtures or the models are unavailable (see [testing.md](testing.md)).
+- The **real** models are exercised by the end-to-end tier's hand scenario ([e2e.md](e2e.md), scenario 3), through the real camera path, at the default hold: with `no_hand.jpg` in view nothing is delivered; then `hand_fist.jpg` and `hand_stop.jpg` deliver `"stop"` on hand 1, `hand_palm.jpg` `"five"`, `hand_one.jpg` `"one"`, `hand_three2.jpg` `"three"`. Until 2026-11-10 a live test (`tests-e2e/test_gesture_input_live.py`) fed the same photos to `GestureInput` through a scripted source.
 
 ## Open questions
 
