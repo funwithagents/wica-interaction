@@ -90,6 +90,12 @@ jobs:
           $hifi = Start-Process -PassThru "$d\hifi\HiFiCableAsioBridgeSetup.exe" -ArgumentList "-i", "-h"
           # Its setup ends on a message box nobody can close: the driver is in by then.
           if (-not $hifi.WaitForExit(60000)) { $hifi.Kill(); "Hi-Fi Cable setup closed after 60 s" } else { "Hi-Fi Cable setup exited $($hifi.ExitCode)" }
+          # Its endpoints come after the device: wait for them, restarting the audio services once.
+          for ($s = 0; $s -lt 90; $s += 5) {
+            if (Get-PnpDevice -Class AudioEndpoint -FriendlyName "*Hi-Fi*" -ErrorAction SilentlyContinue) { break }
+            if ($s -eq 30) { Restart-Service Audiosrv, AudioEndpointBuilder -Force }
+            Start-Sleep 5
+          }
           $global:LASTEXITCODE = 0
           Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName | Out-String -Width 200
 
