@@ -1,0 +1,154 @@
+# The end-to-end tier on Windows, started by hand — specs/ci.md, "The Windows end-to-end tier, by hand".
+#
+# The tier's scenarios (specs/e2e.md) on `windows-2025`, one runner per embodiment: the real app
+# with VB-Audio's virtual cable as the person's voice and the app's mic, Scream as the app's
+# speaker, and for the robot the MuJoCo sim with its viewer drawn by Mesa's software OpenGL. Not
+# part of ci.yml: each run pays the LLM and the ASR, and it installs audio drivers on the runner.
+# Start it before a release, or after a change to Windows-sensitive code.
+
+name: Windows end-to-end tier
+
+on:
+  workflow_dispatch:
+    inputs:
+      embodiments:
+        description: Embodiments to run
+        type: choice
+        options: [both, computer, reachy]
+        default: both
+  # TEMPORARY, while the workflow is brought up: removed before merging.
+  push:
+    branches: [windows-e2e]
+
+concurrency:
+  group: e2e-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-windows:
+    name: e2e (${{ matrix.embodiment }}, windows)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        embodiment: ${{ fromJSON((inputs.embodiments || 'both') == 'both' && '["computer", "reachy"]' || format('["{0}"]', inputs.embodiments)) }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      WICA_ANTHROPIC_API_KEY: ${{ secrets.WICA_ANTHROPIC_API_KEY }}
+      DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+      # A missing key or device fails the job instead of turning it green with nothing tested.
+      WICA_E2E_FAIL_ON_MISSING: '1'
+      # The downloads, each pinned with its SHA-256 and bumped on purpose. VB-Audio's cable (one
+      # cable, the free one); Scream, an output-only virtual sound card, whose zip also brings the
+      # `devcon` both drivers are installed with; Mesa for Windows, as naoqi-sim's Windows tier.
+      VBCABLE_URL: https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip
+      VBCABLE_SHA256: b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb
+      SCREAM_URL: https://github.com/duncanthrax/scream/releases/download/4.0/Scream4.0.zip
+      SCREAM_SHA256: fa33e25f9a46c61e4e0cd83362c51c3d2a45c6fe4091aad7507e240e40f1a520
+      MESA_WIN_URL: https://github.com/pal1000/mesa-dist-win/releases/download/26.2.3/mesa3d-26.2.3-release-msvc.7z
+      MESA_WIN_SHA256: 3f3613adb43cfd0f2e665ce2400b130c275f0b3317cb3a05566320a3a67589ed
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Model cache (the hand models, the phonon voice, the emotions library)
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface
+          key: hf-e2e-${{ matrix.embodiment }}-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: hf-e2e-${{ matrix.embodiment }}-${{ runner.os }}-
+      - name: Sync (the dev group, against the lock)
+        run: uv sync --locked
+
+      - name: The virtual devices (VB-Cable, Scream)
+        # The runner has no sound card and its audio service is off. Both drivers are signed
+        # by their makers, not by Microsoft: each signer goes to TrustedPublisher first, so
+        # `devcon` installs without the dialog that would hang the job (as LABSN/sound-ci-helpers).
+        run: |
+          Set-Service AudioEndpointBuilder -StartupType Automatic; Start-Service AudioEndpointBuilder
+          Set-Service Audiosrv -StartupType Automatic; Start-Service Audiosrv
+          $d = "$env:RUNNER_TEMP\drivers"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          foreach ($p in @(@("vbcable", $env:VBCABLE_URL, $env:VBCABLE_SHA256), @("scream", $env:SCREAM_URL, $env:SCREAM_SHA256))) {
+            $zip = "$d\$($p[0]).zip"
+            Invoke-WebRequest -UseBasicParsing -OutFile $zip $p[1]
+            if ((Get-FileHash -Algorithm SHA256 $zip).Hash -ne $p[2]) { throw "$($p[0]): SHA-256 mismatch" }
+            Expand-Archive -LiteralPath $zip -DestinationPath "$d\$($p[0])"
+          }
+          $devcon = "$d\scream\Install\helpers\devcon-x64.exe"
+          foreach ($cat in @("$d\vbcable\vbaudio_cable64_win10.cat", "$d\scream\Install\driver\x64\scream.cat")) {
+            $cert = (Get-AuthenticodeSignature $cat).SignerCertificate
+            "$cat signed by: $($cert.Subject)"
+            Export-Certificate -Cert $cert -FilePath "$cat.cer" | Out-Null
+            certutil -addstore TrustedPublisher "$cat.cer" | Out-Null
+          }
+          & $devcon install "$d\vbcable\vbMmeCable64_win10.inf" VBAudioVACWDM
+          if ($LASTEXITCODE -ne 0) { throw "VB-Cable: devcon exited $LASTEXITCODE" }
+          & $devcon install "$d\scream\Install\driver\x64\Scream.inf" *Scream
+          if ($LASTEXITCODE -ne 0) { throw "Scream: devcon exited $LASTEXITCODE" }
+          Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName
+
+      - name: The tier's devices
+        # Windows lists each device once per host API, so a bare name matches several and
+        # sounddevice refuses it: each is named with its host API, DirectSound first, which
+        # converts the sample rate (the ASR's 16 kHz, the room's 48 kHz) as WASAPI's shared mode
+        # does not. The cable's two ends are the person's voice and the app's mic, Scream the app's
+        # speaker; it records nothing, so the run has no echo (specs/e2e.md, "The room").
+        shell: bash
+        run: |
+          uv run python - <<'PY'
+          import os
+          import sounddevice as sd
+
+          print(sd.query_devices())
+          apis = [a["name"] for a in sd.query_hostapis()]
+
+          def pick(part, kind):
+              for api in ("Windows DirectSound", "MME", "Windows WASAPI"):
+                  for d in sd.query_devices():
+                      if part in d["name"] and apis[d["hostapi"]] == api and d[f"max_{kind}_channels"]:
+                          return f"{d['name']}, {api}"
+              raise SystemExit(f"no {kind} device named like {part!r}")
+
+          named = {
+              "WICA_E2E_MIC_DEVICE": pick("CABLE Output", "input"),
+              "WICA_E2E_PERSON_VOICE_DEVICE": pick("CABLE Input", "output"),
+              "WICA_E2E_SPEAKER_DEVICE": pick("Scream", "output"),
+          }
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for k, v in named.items():
+                  print(f"{k}={v}")
+                  env.write(f"{k}={v}\n")
+          PY
+
+      - name: Mesa's OpenGL for the sim's viewer
+        if: matrix.embodiment == 'reachy'
+        # The runner has no GPU: Mesa's llvmpipe next to the base python.exe, which the venv's
+        # launcher starts, draws the viewer window the sim's camera renders through.
+        shell: bash
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/mesa.7z" "$MESA_WIN_URL"
+          echo "$MESA_WIN_SHA256  $RUNNER_TEMP/mesa.7z" | sha256sum -c -
+          python_dir=$(uv run python -c "import sys; sys.stdout.write(sys.base_prefix)")
+          7z e -y "$RUNNER_TEMP/mesa.7z" -o"$python_dir" x64/opengl32.dll x64/libgallium_wgl.dll
+          echo "GALLIUM_DRIVER=llvmpipe" >> "$GITHUB_ENV"
+
+      - name: End-to-end, ${{ matrix.embodiment }}
+        env:
+          # The robot: the sim with its viewer, Windows' only way to its camera; a sim without its
+          # camera, its audio or the hand props fails the job.
+          REACHY_MINI_E2E_SIM_VIEWER: ${{ matrix.embodiment == 'reachy' && '1' || '' }}
+          REACHY_MINI_E2E_REQUIRED_CAPS: ${{ matrix.embodiment == 'reachy' && 'audio,camera,props:hand' || '' }}
+        run: uv run pytest tests-e2e/test_${{ matrix.embodiment }}.py -v -rs -o log_cli=true --log-cli-level=WARNING --basetemp=${{ runner.temp }}/e2e
+      - name: Evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-${{ matrix.embodiment }}-windows-evidence
+          path: ${{ runner.temp }}/e2e
+          if-no-files-found: ignore
