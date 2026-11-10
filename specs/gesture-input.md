@@ -10,7 +10,7 @@ tests:
 
 # Gesture input
 
-**Status:** Updated
+**Status:** Implemented
 
 ## Purpose
 

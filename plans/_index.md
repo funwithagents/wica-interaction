@@ -44,8 +44,8 @@ Implementation plans for WICA Interaction (formerly Reachy Mini Interaction WICA
 | [202611100025_e2e-computer.md](202611100025_e2e-computer.md) | The end-to-end tier, part 1 ([specs/e2e.md](../specs/e2e.md)): the shared machinery and the computer scenarios 1–3; replaces the live gesture test; `WebcamSource` reopens a device whose read yields no frame | Done |
 | [202611100046_ci-source-build-cache.md](202611100046_ci-source-build-cache.md) | CI's uv cache keyed on the sdist-only packages' locked entries (`aec-audio-processing`, PyGObject, pycairo), not the whole `uv.lock` ([specs/ci.md](../specs/ci.md)): a sibling bump no longer costs a two-minute rebuild on every job | Done |
 | [202611100109_ci-e2e-computer.md](202611100109_ci-e2e-computer.md) | CI's end-to-end computer job ([specs/ci.md](../specs/ci.md)): the computer scenarios on Linux, over a PulseAudio cable, with the two provider keys as secrets | Done |
-| [202611100120_e2e-reachy.md](202611100120_e2e-reachy.md) | The end-to-end tier, part 2 ([specs/e2e.md](../specs/e2e.md)): the Reachy Mini in the bridge harness's sim, hand photos as scene props, scenarios 1–4; the person's voice in a process of its own | In progress |
-| [202611100142_ci-e2e-reachy.md](202611100142_ci-e2e-reachy.md) | CI's end-to-end robot job ([specs/ci.md](../specs/ci.md)): the Reachy Mini scenarios on Linux against the headless sim, over the PulseAudio cable | In progress |
+| [202611100120_e2e-reachy.md](202611100120_e2e-reachy.md) | The end-to-end tier, part 2 ([specs/e2e.md](../specs/e2e.md)): the Reachy Mini in the bridge harness's sim, hand photos as scene props, scenarios 1–4; the person's voice in a process of its own | Done |
+| [202611100142_ci-e2e-reachy.md](202611100142_ci-e2e-reachy.md) | CI's end-to-end robot job ([specs/ci.md](../specs/ci.md)): the Reachy Mini scenarios on Linux against the headless sim, over the PulseAudio cable | Done |
 | _(add plans here — see [_plan-template.md](_plan-template.md))_ | | |
 
 ## Status legend
