@@ -10,8 +10,6 @@ what you have, and a contributor with none is never broken. A run that must not 
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -58,44 +56,6 @@ def require_device(name: str, kind: Literal["input", "output"]) -> str:
     except ValueError:
         missing(f"no {kind} audio device named {name!r}")
     return name
-
-
-# The rate the app records its mic at: asr-engine's capture format, for every ASR module.
-MIC_RATE = 16000
-
-
-def pin_device_rate(name: str, rate: int) -> None:
-    """Set the audio device *name*'s own sample rate to *rate* (macOS only: Core Audio devices have
-    one, which PortAudio may change). On a virtual cable, recording at a rate other than the
-    device's while something plays into it kills the capture (PortAudio error -10863 or -50): the
-    stream then delivers nothing and reports no error. Pinning the cable to the app's recording
-    rate removes the conversion that breaks.
-
-    Done in a child process: reading the new rate back needs PortAudio restarted, and restarting it
-    in the test process leaves the streams it opens afterwards just as silent."""
-    if sys.platform != "darwin":
-        return
-    import sounddevice as sd
-
-    if sd.query_devices(name)["default_samplerate"] == rate:
-        return
-    script = (
-        "import sys, sounddevice as sd\n"
-        "name, rate = sys.argv[1], int(sys.argv[2])\n"
-        "sd.InputStream(device=name, samplerate=rate, channels=1,"
-        " extra_settings=sd.CoreAudioSettings(change_device_parameters=True)).close()\n"
-        "sd._terminate(); sd._initialize()\n"
-        "print(sd.query_devices(name)['default_samplerate'])\n"
-    )
-    done = subprocess.run(
-        [sys.executable, "-c", script, name, str(rate)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    actual = done.stdout.strip().splitlines()[-1] if done.stdout.strip() else "?"
-    if done.returncode != 0 or float(actual) != rate:
-        missing(f"could not set {name!r} to {rate} Hz: {actual} {done.stderr[-200:]}")
 
 
 def wait_until(predicate: Callable[[], bool], timeout: float) -> bool:
@@ -233,3 +193,25 @@ def settled(run: TestRun) -> bool:
         return False
     time.sleep(SETTLE_S)
     return _idle(run)
+
+
+def command_spans(run: TestRun) -> list[tuple[str, float, float]]:
+    """Each Command call of *run* so far as `(name, issued, ended)`, in timeline seconds; a call
+    still running ends at infinity."""
+    started: dict[str, tuple[str, float]] = {}
+    ended: dict[str, float] = {}
+    for e in run.timeline():
+        if e.call_id is None or e.name in (None, "noop"):
+            continue
+        if e.kind == "command_issued":
+            started[e.call_id] = (e.name, e.t)
+        elif e.kind == "command_state" and e.state in (
+            "complete",
+            "failed",
+            "cancelled",
+        ):
+            ended[e.call_id] = e.t
+    return [
+        (name, t, ended.get(call_id, float("inf")))
+        for call_id, (name, t) in started.items()
+    ]

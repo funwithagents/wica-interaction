@@ -1,26 +1,24 @@
 """The person in front of the app (specs/e2e.md, "The person"): a voice played into the cable the
 app listens on, and a hand shown to its camera.
 
-The voice is a tts-engine phonon engine of its own, on a loop of its own, playing to the cable's
-playback end. What the camera sees is a *stage*: on the computer, the image file the webcam reads.
+The voice is a tts-engine phonon engine in a process of its own (`voice.py`), playing to the
+cable's playback end. What the camera sees is a *stage*: on the computer, the image file the webcam reads;
+on the robot, the props of the sim's scene.
 """
 
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
-import threading
-from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any, Protocol
 
-from tts_engine.config import TTSEngineConfig
-from tts_engine.engine import TTSEngine
-
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 NO_HAND = FIXTURES / "no_hand.jpg"
+VOICE = Path(__file__).resolve().parent / "voice.py"
 
 # The person's phonon voice, not the app's (`Micah`), so a transcript always tells them apart.
 PERSON_VOICE = "Harper"
@@ -62,29 +60,62 @@ class FileCamera:
         self._put(NO_HAND)
 
 
+class SceneStage:
+    """The robot's camera stage: the hand props of the sim's scene (`hand_1` … in `HAND_PHOTOS`'
+    order, declared by the conftest), one spawned straight ahead of the head to show a hand, the
+    scene cleared to take it away."""
+
+    # 0.45 m ahead at head height: the middle of the band where the spike read every sign.
+    HAND_POS = (0.45, 0.0, 0.20)
+
+    def __init__(self, scene: Any) -> None:
+        self._scene = scene
+        self._names = {photo: f"hand_{n}" for n, photo in enumerate(HAND_PHOTOS, 1)}
+
+    def show(self, photo: str) -> None:
+        self._scene.clear()
+        self._scene.spawn(self.HAND_POS, name=self._names[photo])
+
+    def hide(self) -> None:
+        self._scene.clear()
+
+
 class Person:
+    """The person: a voice in a process of its own (`voice.py`), started on the first `say`, and a
+    hand shown on the *stage*."""
+
     def __init__(self, voice_device: str, stage: Stage) -> None:
+        self._device = voice_device
         self._stage = stage
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-        self._thread.start()
-        config = TTSEngineConfig.from_dict(
-            {
-                "module": {"type": "phonon", "voice": PERSON_VOICE},
-                "player": {"device": voice_device},
-            }
-        )
-        self._engine = self._run(self._build(config))
+        self._voice: subprocess.Popen[str] | None = None
 
-    async def _build(self, config: TTSEngineConfig) -> TTSEngine:
-        return TTSEngine(config)
+    def _started(self) -> subprocess.Popen[str]:
+        if self._voice is None:
+            self._voice = subprocess.Popen(
+                [sys.executable, str(VOICE), self._device, PERSON_VOICE],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            self._expect("ready")
+        return self._voice
 
-    def _run[T](self, coro: Coroutine[Any, Any, T]) -> T:
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+    def _expect(self, word: str) -> None:
+        assert self._voice is not None and self._voice.stdout is not None
+        line = self._voice.stdout.readline().strip()
+        if line != word:
+            raise RuntimeError(
+                f"the person's voice answered {line!r}, not {word!r} "
+                f"(exit code {self._voice.poll()})"
+            )
 
     def say(self, text: str) -> None:
         """Speak *text* into the cable; returns once it has been played."""
-        self._run(self._engine.say(text))
+        voice = self._started()
+        assert voice.stdin is not None
+        voice.stdin.write(" ".join(text.split()) + "\n")
+        voice.stdin.flush()
+        self._expect("done")
 
     def show(self, photo: str) -> None:
         """Hold up the hand of *photo* (a key of `HAND_PHOTOS`)."""
@@ -95,8 +126,11 @@ class Person:
         self._stage.hide()
 
     def close(self) -> None:
+        if self._voice is None:
+            return
+        if self._voice.stdin is not None:
+            self._voice.stdin.close()
         try:
-            self._run(self._engine.close())
-        finally:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join(5.0)
+            self._voice.wait(10.0)
+        except subprocess.TimeoutExpired:
+            self._voice.kill()

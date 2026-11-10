@@ -3,6 +3,8 @@ code:
   - tests-e2e/conftest.py
   - tests-e2e/support.py
   - tests-e2e/person.py
+  - tests-e2e/voice.py
+  - tests-e2e/scenarios.py
   - tests-e2e/configs/computer.json
   - tests-e2e/configs/reachy.json
   - tests-e2e/fixtures/README.md
@@ -71,7 +73,7 @@ On Linux the mic is a remapped source, not the monitor itself, because upstream 
 
 **The app's speaker is never the cable.** BlackHole loops its output back to its input, so an app speaking into the cable it listens on would hear itself. The echo scenario is the one exception, and it sets this up on purpose.
 
-**On macOS the cable runs at the app's recording rate.** The app records at 16 kHz, asr-engine's capture format; BlackHole runs at 48 kHz by default, so PortAudio converts. While something plays into the cable, that conversion kills the capture (PortAudio error `-10863` or `-50`): the stream delivers one empty chunk and nothing more, and reports no error, so the ASR waits in silence. Measured on 2026-11-10: recording at the device's own rate works whatever plays into it; recording at 16 kHz on a 48 kHz cable fails in either open order. So the `devices` fixture sets the cable's own rate to 16 kHz before the run (a child process opens it with Core Audio's "change device parameters"; restarting PortAudio in the test process to read the rate back leaves that process's later streams silent too). The setting stays on the device after the run. Even at 16 kHz, playback opened before the app's capture is running still kills it, so the person's voice opens the cable on its first `say`, after the scenario has waited for the app to listen.
+**The person's voice plays from a process of its own.** On macOS, a process that plays into the cable stalls its own capture of the cable: the capture delivers a chunk or two and then nothing, and reports no error, so the ASR waits in silence. The app's capture is PortAudio on the computer and the bridge's GStreamer on the robot; both stalled whenever the person's voice played from the app's process, whatever the open order or the cable's rate, and neither did once it played from another. So `Person` runs its phonon engine in a child process (`tests-e2e/voice.py`), which speaks each line it is sent and answers once it has been played, and which starts on the first `say`. The person is not inside the app either. (Measured on 2026-11-10; a first fix that set the cable to the app's 16 kHz recording rate only made the failure rarer.)
 
 #### The computer embodiment
 
@@ -113,7 +115,7 @@ The five hand photos and the `no_hand` photo are copied from vision-modules' liv
 
 A `Person` helper (`tests-e2e/person.py`) acts for the human in front of the app:
 
-- **`say(text)`** speaks `text` into `WICA_E2E_PERSON_VOICE_DEVICE` with its own phonon engine and returns when playback ends.
+- **`say(text)`** speaks `text` into `WICA_E2E_PERSON_VOICE_DEVICE` with its own phonon engine, in a process of its own (above), and returns when playback ends.
 - **`show(photo)`** puts a hand photo in front of the camera: it rewrites the camera file on the computer, or spawns the matching prop on the robot.
 - **`hide()`** takes the hand away: it writes the `no_hand` photo on the computer, or clears the scene on the robot.
 
@@ -128,7 +130,7 @@ Each scenario builds and starts the real system, lets the person act, and assert
 | 1 | Startup | both | nothing | the system builds with nothing in `missing`; the agent, the ASR bridge and the gesture input run; on the robot, the bridge is connected |
 | 2 | Spoken turn | both | "Hello, what is your name?" | a final `speech_input` containing "name", then a `say` issued and completed |
 | 3 | Hand sign | both | nothing at first; then each photo in turn, hiding it between | no `hand_gesture_1` while nothing is shown; then `hand_gesture_1` equals each photo's sign, and a reaction of the agent has it among its triggers |
-| 4 | Emotion | robot | "Can you look happy?" | `play_emotion` issued with `happy` and completed, plus a `say` that does not overlap it |
+| 4 | Emotion | robot | "Can you show me that you are happy?" | `play_emotion` issued and completed, and a `say`; a `say` running at the same time as the emotion is recorded in the report, not failed on |
 | 5 | Interrupt | both | asks for a long story; then, while the app is speaking, says "stop" or shows `stop` | the running `say` is cancelled |
 | 6 | Dictation | both | the dictation trigger, a passage, the end phrase | dictation starts, the passage arrives as one input, and dictation stops |
 | 7 | Echo | computer | speaks while the app is speaking, with both voices on the cable | the app's own words never appear as a `speech_input` |
@@ -148,19 +150,23 @@ Each scenario builds and starts the real system, lets the person act, and assert
 
 ```
 tests-e2e/
-  conftest.py       # the devices, the keys, each embodiment's system fixture; the bridge's plugin
+  conftest.py       # the bridge's plugin, the sim's devices and props; the devices, the keys, each embodiment's fixture
   support.py        # require_env, require_device, WICA_E2E_FAIL_ON_MISSING, InputLog, the checks
-  person.py         # Person, FileCamera, the photos and their signs
+  person.py         # Person, FileCamera, SceneStage, the photos and their signs
+  voice.py          # the person's voice, a process of its own
+  scenarios.py      # the scenarios, written once, run by each embodiment's file
   configs/          # computer.json, reachy.json
   fixtures/         # the hand photos, no_hand, README
-  test_computer.py  # scenarios 1, 2, 3, 5, 6, 7
-  test_reachy.py    # scenarios 1–6
+  test_computer.py  # scenarios 1, 2, 3, 5, 6, 7 (1–3 so far)
+  test_reachy.py    # scenarios 1–6 (1–4 so far)
 ```
 
 - **One directory, one run.** `tests-e2e/conftest.py` loads the bridge's plugin (`reachy_mini_bridge.testing.fixtures`) for the whole tier. The computer's tests request none of its fixtures, so they never start a sim. `uv run pytest tests-e2e` runs both embodiments, and either file can be run on its own. The files sit flat in `tests-e2e/`, which is not a package, so they import `support` and `person` as the type checker resolves them: from their own directory.
-- **One fixture per embodiment** (`computer`, later `reachy`) builds the real system with `build_system` (no seams: the real ASR and the real hand models) from its committed config with the run's values filled in, asserts nothing is in `missing`, wires a transcript collector, and starts it. It yields an `E2E`: the system, its `TestRun`, its `InputLog` and the `Person` in front of it. It writes the evidence, then shuts the system down with `_shutdown` in a `finally`, as [testing.md](testing.md) requires of every `build_system`.
+- **One fixture per embodiment** (`computer`, `reachy`) builds the real system with `build_system` (no seams: the real ASR and the real hand models) from its committed config with the run's values filled in, asserts nothing is in `missing`, wires a transcript collector, and starts it. It yields an `E2E`: the system, its `TestRun`, its `InputLog` and the `Person` in front of it. It writes the evidence, then shuts the system down with `_shutdown` in a `finally`, as [testing.md](testing.md) requires of every `build_system`.
 - **`devices`** and **`keys`** (session) resolve the devices and the keys, skipping, or failing under `WICA_E2E_FAIL_ON_MISSING`, when one is missing.
-- **The robot's session fixtures**: the audio-device check, and the PNG conversion of the photos for the props hook.
+- **The robot's fixture** builds its own bridge over the harness's daemon (`live_daemon`, with `robot_options` for the connection) and takes `sim_scene` for the hand props, clearing the scene before and after. Its config turns face detection and head tracking off, so no face in the scene pulls the head away from the hand props; presence, breathing and wobbling stay on, as in the template. The plugin is registered from the conftest's `pytest_configure` (a conftest below the rootdir cannot declare `pytest_plugins`), and the props are declared through `pytest_reachy_mini_scene_props`, the photos converted to PNG once per run.
+- **The robot's session fixture `sim_audio`** is the audio-device check above, failing (never skipping) on a daemon that does not listen on the cable.
+- **Each scenario is written once** (`scenarios.py`) and run by each embodiment's file on its own fixture; the emotion is the robot's alone.
 
 ### Skips and failures
 
@@ -222,6 +228,7 @@ Windows on Arm (for example in Parallels on an Apple silicon Mac) is a different
 
 ## Open questions
 
-1. **The echo scenario on BlackHole.** The app's voice would play into the cable at phonon's 24 kHz while the app records it at 16 kHz; the cable runs at 16 kHz (above), so the playback is converted, which worked in the measurements. It also assumes one cable can carry both voices, and that the echo-cancellation coordinator, given its exact far-end reference, removes the app's voice. Confirm this on the Mac before the scenario is written.
+1. **The echo scenario on BlackHole.** It needs the app to speak into the cable it listens on, which is what stalls a process's capture of the cable on macOS ("The person's voice plays from a process of its own"): the app cannot be moved out of its own process. Possible ways: two cables (BlackHole 16ch's channels, or a second BlackHole) with the app's voice routed to the mic's cable by an aggregate device; or Linux only, where PulseAudio shows no such stall. To decide before the scenario is written.
 2. **Recording the cable.** A recording of what the mic heard would be the best evidence for a failed spoken scenario. The cost is one more input stream on the cable during the run.
-3. **The harness's startup timeout.** It is fixed at 45 s, which a first macOS launch exceeds. This is raised with the bridge. Until it is fixed, the workaround is a daemon started by hand.
+3. **The model and the persona's rules.** The full tier fixes one model (Claude Haiku 5.5) to test the assembled product. Rules the persona asks of the model — never `say` and `play_emotion` at once — are the model's behaviour: Haiku broke that one in 2 runs of 3. The emotion scenario records it rather than failing on it; the later agent tier, on the production model, is where such rules are asserted. To confirm.
+4. **The harness's startup timeout.** It is fixed at 45 s, which a first macOS launch exceeds. This is raised with the bridge. Until it is fixed, the workaround is a daemon started by hand.
