@@ -200,14 +200,16 @@ jobs:
       - name: Sync (the dev group, against the lock)
         run: uv sync --locked
       - name: The virtual cable
-        # As the computer's job, plus descriptions equal to the ALSA names: the bridge and the
-        # sim's daemon find devices through upstream's GStreamer listing, which shows PulseAudio's
-        # descriptions and skips monitor sources (hence the remapped source as the mic).
+        # As the computer's job, plus what the bridge and the sim's daemon need to find a device:
+        # upstream's matcher reads GStreamer's listing, matches PulseAudio's description, skips
+        # monitor sources (hence the remapped source as the mic), and on a PulseAudio host without
+        # PipeWire takes a virtual device only through its `device.string` — set to the name,
+        # which is both the PulseAudio device and the ALSA one below.
         run: |
           pulseaudio --start --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=wica_cable sink_properties=device.description=wica_cable
-          pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic source_properties=device.description=wica_mic
-          pactl load-module module-null-sink sink_name=wica_speaker sink_properties=device.description=wica_speaker
+          pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic "source_properties=device.description=wica_mic device.string=wica_mic"
+          pactl load-module module-null-sink sink_name=wica_speaker "sink_properties=device.description=wica_speaker device.string=wica_speaker"
           pactl set-default-sink wica_speaker
           pactl set-default-source wica_mic
           cat > ~/.asoundrc <<'ASOUND'
