@@ -38,7 +38,7 @@ With every feature **disabled** (the default), the embodiment's `mic` is `None` 
 
 1. **Resample the reference, not the playback.** Playback stays at the module's rate (full fidelity); only the *reference copy* is downsampled to 16 kHz with a **stateful** `samplerate` resampler (one `Resampler` carrying filter state across chunks), so a long utterance resamples without drift or boundary artifacts — drift would de-align the reference from the mic, which AEC punishes. (`samplerate` is MIT + BSD-2 libsamplerate; `soxr` was rejected as LGPL, `scipy` as ~90 MB for one function.)
 2. **Re-chunk to 10 ms frames.** A 100 ms mic chunk is ten 160-sample frames; the coordinator buffers near-end samples and processes complete frames only.
-3. **Rough alignment + delay hint (AEC).** The reference is enqueued as TTS *feeds* it (ahead of playback by output-buffer + acoustic latency); WebRTC AEC3's delay estimator, seeded by `stream_delay_ms`, absorbs the residual — the reason for a WebRTC-class processor over a bare adaptive filter.
+3. **Alignment from what plays + delay hint (AEC).** The reference is taken as the voice's stream sends each block to the device — ahead of what the mic hears by the output buffering and the acoustic path, and by a constant amount, since the stream stays open; WebRTC's delay estimator, seeded by `stream_delay_ms`, absorbs that — the reason for a WebRTC-class processor over a bare adaptive filter.
 
 ## The module: `computer/audio_processing.py`
 
@@ -144,4 +144,5 @@ Absent ⇒ all defaults ⇒ disabled. **Strict, like every other app-owned secti
 
 1. **Adaptive `stream_delay_ms`.** Per-device auto-calibration (measuring the round-trip at startup) is a deferral.
 2. **Processing status in the UI.** "AEC / NS: on / degraded" on the ASR line — nice-to-have ([computer-embodiment.md](computer-embodiment.md), open question 2).
-3. **Half-duplex fallback.** For hosts without the dependency, muting capture during `say` would still break the self-hearing loop; a lightweight second backend, deferred.
+3. **A better canceller.** With the reference on time and one voice stream, `aec-audio-processing` 1.0.1 still lets short bursts of the app's voice through, during and after the person talking over it, measured in the end-to-end tier ([e2e.md](e2e.md), open question 4). WebRTC's current canceller (AEC3), as LiveKit's Python SDK ships it, is the candidate, compared offline on the tier's recorded audio first; the `FrameProcessor` interface keeps the swap local.
+4. **Half-duplex fallback.** For hosts without the dependency, muting capture during `say` would still break the self-hearing loop; a lightweight second backend, deferred.
