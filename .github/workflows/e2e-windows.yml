@@ -46,8 +46,6 @@ jobs:
       # Microsoft, does not install on Windows Server 2025); Mesa for Windows, as naoqi-sim's.
       VBCABLE_URL: https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip
       VBCABLE_SHA256: b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb
-      HIFI_URL: https://download.vb-audio.com/Download_CABLE/HiFiCableAsioBridgeSetup_v1007.zip
-      HIFI_SHA256: 3ecf204bfd8579d36bb918f9856eb1eaddd49c75146f5e8a8f59dcb8375ae89a
       SCREAM_URL: https://github.com/duncanthrax/scream/releases/download/4.0/Scream4.0.zip
       SCREAM_SHA256: fa33e25f9a46c61e4e0cd83362c51c3d2a45c6fe4091aad7507e240e40f1a520
       MESA_WIN_URL: https://github.com/pal1000/mesa-dist-win/releases/download/26.2.3/mesa3d-26.2.3-release-msvc.7z
@@ -67,18 +65,17 @@ jobs:
       - name: Sync (the dev group, against the lock)
         run: uv sync --locked
 
-      - name: The virtual devices (VB-Cable, Hi-Fi Cable)
+      - name: The virtual devices (VB-Cable)
         # The runner has no sound card and its audio service is off. VB-Cable, signed by
         # Microsoft, installs with `devcon`; it is one cable (a second node of its driver does not
-        # start). The app's speaker is VB-Audio's Hi-Fi Cable, a second driver, through its own
-        # setup in silent mode. A hang (a driver waiting on a dialog) fails the step in minutes.
+        # start). A hang (a driver waiting on a dialog) fails the step in minutes.
         timeout-minutes: 5
         run: |
           Set-Service AudioEndpointBuilder -StartupType Automatic; Start-Service AudioEndpointBuilder
           Set-Service Audiosrv -StartupType Automatic; Start-Service Audiosrv
           $d = "$env:RUNNER_TEMP\drivers"
           New-Item -ItemType Directory -Force $d | Out-Null
-          foreach ($p in @(@("vbcable", $env:VBCABLE_URL, $env:VBCABLE_SHA256), @("hifi", $env:HIFI_URL, $env:HIFI_SHA256), @("scream", $env:SCREAM_URL, $env:SCREAM_SHA256))) {
+          foreach ($p in @(@("vbcable", $env:VBCABLE_URL, $env:VBCABLE_SHA256), @("scream", $env:SCREAM_URL, $env:SCREAM_SHA256))) {
             $zip = "$d\$($p[0]).zip"
             Invoke-WebRequest -UseBasicParsing -OutFile $zip $p[1]
             if ((Get-FileHash -Algorithm SHA256 $zip).Hash -ne $p[2]) { throw "$($p[0]): SHA-256 mismatch" }
@@ -87,24 +84,34 @@ jobs:
           $devcon = "$d\scream\Install\helpers\devcon-x64.exe"
           & $devcon install "$d\vbcable\vbMmeCable64_win10.inf" VBAudioVACWDM
           if ($LASTEXITCODE -ne 0) { throw "VB-Cable: devcon exited $LASTEXITCODE" }
-          $hifi = Start-Process -PassThru "$d\hifi\HiFiCableAsioBridgeSetup.exe" -ArgumentList "-i", "-h"
-          # Its setup ends on a message box nobody can close: the driver is in by then.
-          if (-not $hifi.WaitForExit(60000)) { $hifi.Kill(); "Hi-Fi Cable setup closed after 60 s" } else { "Hi-Fi Cable setup exited $($hifi.ExitCode)" }
-          # Its endpoints come after the device: wait for them, restarting the audio services once.
-          for ($s = 0; $s -lt 90; $s += 5) {
-            if (Get-PnpDevice -Class AudioEndpoint -FriendlyName "*Hi-Fi*" -ErrorAction SilentlyContinue) { break }
-            if ($s -eq 30) { Restart-Service Audiosrv, AudioEndpointBuilder -Force }
-            Start-Sleep 5
-          }
           $global:LASTEXITCODE = 0
           Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName | Out-String -Width 200
+
+      - name: Probe (which playback end feeds the cable's recording end)
+        shell: bash
+        run: |
+          uv run python - <<'PY'
+          import numpy as np
+          import sounddevice as sd
+
+          rate = 48000
+          tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(rate) / rate)).astype(np.float32)
+          mic = "CABLE Output (VB-Audio Virtual Cable), Windows DirectSound"
+          for out in ("Speakers (VB-Audio Virtual Cable)", "CABLE In 16 Ch (VB-Audio Virtual Cable)"):
+              rec = sd.playrec(tone, rate, channels=1, device=(mic, f"{out}, Windows DirectSound"))
+              sd.wait()
+              rms = float(np.sqrt(np.mean(rec[rate // 4 :] ** 2)))
+              print(f"{out} -> CABLE Output: rms {rms:.4f}")
+          if rms > 0.01:
+              raise SystemExit("CABLE In 16 Ch feeds the same cable: no separate speaker")
+          PY
 
       - name: The tier's devices
         # Windows lists each device once per host API, so a bare name matches several and
         # sounddevice refuses it: each is named with its host API, DirectSound first, which
         # converts the sample rate (the ASR's 16 kHz, the room's 48 kHz) as WASAPI's shared mode
         # does not. VB-Cable's two ends ("Speakers", "CABLE Output") are the person's voice and the
-        # app's mic, the Hi-Fi Cable's input the app's speaker. For now the echo is left out.
+        # app's mic, "CABLE In 16 Ch" the app's speaker. For now the echo is left out.
         shell: bash
         run: |
           uv run python - <<'PY'
@@ -129,13 +136,7 @@ jobs:
               "WICA_E2E_MIC_DEVICE": pick("CABLE Output (VB-Audio Virtual Cable)", "input"),
               "WICA_E2E_PERSON_VOICE_DEVICE": pick("Speakers (VB-Audio Virtual Cable)", "output"),
           }
-          named["WICA_E2E_SPEAKER_DEVICE"] = next(
-              f"{d['name']}, Windows DirectSound"
-              for d in sd.query_devices()
-              if "Hi-Fi" in d["name"]
-              and apis[d["hostapi"]] == "Windows DirectSound"
-              and d["max_output_channels"]
-          )
+          named["WICA_E2E_SPEAKER_DEVICE"] = pick("CABLE In 16 Ch (VB-Audio Virtual Cable)", "output")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
               for k, v in named.items():
                   print(f"{k}={v}")
