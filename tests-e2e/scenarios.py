@@ -241,15 +241,19 @@ def dictation(e2e: E2E, *, end_word: str | None) -> None:
         "start_dictation", state="complete", within=REPLY_WITHIN_S
     )
     assert started.ok, started.detail
-    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
-        "the agent never settled"
-    )
     assert bridge.status()["dictating"], bridge.status()
+    # Dictate as soon as the app's "go ahead" has been said, as a person would. Not before: on
+    # macOS the computer's echo cancellation swallows speech over the app's (open question 4). Not
+    # much later: a passage silent for the ASR's initial-silence timeout (10 s) closes empty, and
+    # waiting for the agent to settle as well ran past it on CI.
+    assert wait_until(lambda: not _voice_running(e2e), SPOKEN_WITHIN_S), (
+        "the agent's reply never ended"
+    )
 
     t = time.monotonic()
     e2e.person.say("Buy milk and eggs.")
     time.sleep(1.5)  # a pause that would close a conversational turn
-    e2e.person.say("Call the plumber tomorrow morning.")
+    e2e.person.say("Call the doctor tomorrow morning.")
     if end_word is not None:
         time.sleep(1.0)
         e2e.person.say(end_word)
@@ -261,7 +265,7 @@ def dictation(e2e: E2E, *, end_word: str | None) -> None:
     )
     assert passage is not None, e2e.inputs.delivered("speech_input")
     text = str(passage.value).lower()
-    assert "milk" in text and "plumber" in text, (
+    assert "milk" in text and "tomorrow" in text, (
         f"the passage did not arrive as one input: {e2e.inputs.delivered('speech_input')}"
     )
     assert wait_until(lambda: not bridge.status()["dictating"], HEARD_WITHIN_S), (
@@ -271,3 +275,11 @@ def dictation(e2e: E2E, *, end_word: str | None) -> None:
         "the agent never settled"
     )
     assert_checks(e2e)
+
+
+def _voice_running(e2e: E2E) -> bool:
+    voice = e2e.run.probe.output_command_name
+    return any(
+        name == voice and ended == float("inf")
+        for name, _start, ended in command_spans(e2e.run)
+    )

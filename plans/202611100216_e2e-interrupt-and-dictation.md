@@ -17,6 +17,17 @@ Implements [specs/e2e.md](../specs/e2e.md) scenarios 5 (interrupt: a spoken stop
 - **The computer's echo cancellation swallows the person while the app speaks.** With it on, the spoken stop never reaches the agent, run after run; with it off, it passes; the robot, with no software echo cancellation, passes. Open question 4 of the spec; the computer's spoken-stop test is an expected failure (`xfail`, strict) until it is answered.
 - **The model may meet a dictated note with `noop`.** The passage arrived as one input and dictation ended on "send", but Haiku answered with `noop` once on the robot, which the framework's `no_noop_on_input` check fails. Open question 3 of the spec, with the emotion overlap.
 
+## In CI (Linux)
+
+- The computer's spoken stop **passed** with echo cancellation on: the suppression is the Mac's (open question 4); the test is an expected failure on macOS only.
+- The computer's dictation closed empty before the person spoke: the dictation's 10 s initial-silence timeout ran out while the scenario waited for the agent to settle. The person now dictates a second after dictation starts. The ASR also misheard "Call the plumber" ("I'll look under"); the sentence is now "Call the doctor tomorrow morning".
+- The robot's dictation met the model's `noop` again: an expected failure until open question 3 is decided.
+
+## Back on the Mac
+
+- The person now dictates once the app's "go ahead" has been said (on the Mac, speech over the app's is swallowed, open question 4), not after the agent has settled (on CI that ran past the 10 s initial-silence timeout).
+- The passage still closed after its first sentence, about a second after the person started, in 2 runs of 3, and landed while the agent reacted to the completion of its own reply, so WICA dropped it. Open question 5 of the spec; the computer's dictation test is an expected failure until it is answered.
+
 ## Runs
 
 On the Mac (2026-11-10):

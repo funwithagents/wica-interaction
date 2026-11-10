@@ -4,6 +4,8 @@ The scenarios are `scenarios.py`'s, shared with the robot."""
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 import scenarios
 from support import E2E
@@ -22,9 +24,9 @@ def test_each_hand_sign_reaches_the_agent(computer: E2E) -> None:
 
 
 @pytest.mark.xfail(
-    strict=True,
-    reason="with echo cancellation on, the person's voice is suppressed while the app speaks, "
-    "so a spoken stop never reaches the agent (specs/e2e.md, open questions)",
+    sys.platform == "darwin",
+    reason="on macOS, with echo cancellation on, the person's voice is suppressed while the app "
+    "speaks, so a spoken stop never reaches the agent (specs/e2e.md, open question 4)",
 )
 def test_speaking_is_interrupted_by_a_spoken_stop(computer: E2E) -> None:
     scenarios.interrupt_spoken(computer)
@@ -34,6 +36,11 @@ def test_speaking_is_interrupted_by_a_stop_sign(computer: E2E) -> None:
     scenarios.interrupt_sign(computer)
 
 
+@pytest.mark.xfail(
+    reason="the passage can close after its first sentence, not after the pause timeout mode "
+    "waits for, and then lands while the agent reacts to its own reply, where WICA drops it "
+    "(specs/e2e.md, open question 5)",
+)
 def test_a_dictated_passage_arrives_as_one_input(computer: E2E) -> None:
     # The computer's config ends a passage on a pause ("timeout").
     scenarios.dictation(computer, end_word=None)

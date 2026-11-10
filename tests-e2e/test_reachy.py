@@ -38,6 +38,10 @@ def test_speaking_is_interrupted_by_a_stop_sign(reachy: E2E) -> None:
     scenarios.interrupt_sign(reachy)
 
 
+@pytest.mark.xfail(
+    reason="Claude Haiku meets the dictated note with noop, which the framework's "
+    "no_noop_on_input check fails (specs/e2e.md, open question 3)",
+)
 def test_a_dictated_passage_arrives_as_one_input(reachy: E2E) -> None:
     # The robot's config ends a passage on a trigger word ("trigger_word"); "send" is one.
     scenarios.dictation(reachy, end_word="Send.")
