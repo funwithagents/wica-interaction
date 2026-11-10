@@ -3,7 +3,7 @@ code:
   - tests-e2e/conftest.py
   - tests-e2e/support.py
   - tests-e2e/person.py
-  - tests-e2e/voice.py
+  - tests-e2e/room.py
   - tests-e2e/scenarios.py
   - tests-e2e/configs/computer.json
   - tests-e2e/configs/reachy.json
@@ -51,29 +51,43 @@ The production providers (the example configs' providers) are not this tier's co
 
 ### The configs
 
-- **One committed config per embodiment**: `tests-e2e/configs/computer.json` and `tests-e2e/configs/reachy.json`. Each holds the providers above, with keys read from the environment, and the template's persona (`prompts/computer.md`, `prompts/reachy.md`). The computer's config turns echo cancellation off: the cable carries no echo, which is a headset's case, where the guide says to turn it off (open question 4); the echo scenario turns it on, with an echo on the cable.
-- **The fixture fills in what the run controls**: the device names (below), the computer's camera file, and the robot's connection block (`robot_options(host, port)` from the bridge's harness, with `daemon.spawn: "never"`).
+- **One committed config per embodiment**: `tests-e2e/configs/computer.json` and `tests-e2e/configs/reachy.json`. Each holds the providers above, with keys read from the environment, and the template's persona (`prompts/computer.md`, `prompts/reachy.md`). The computer's echo cancellation follows the room (below): on when the room puts the app's voice back on the cable, off when it does not — no echo is a headset's case, where the guide says to turn it off.
+- **The fixture fills in what the run controls**: the device names (below), the computer's echo cancellation, the computer's camera file, and the robot's connection block (`robot_options(host, port)` from the bridge's harness, with `daemon.spawn: "never"`).
 - **Each config is loaded through the embodiment's own `load_config`**, so a config the app would reject fails the tier at its first step.
 
 ### Replacing the devices
 
 #### The virtual audio cable
 
-The tier names its devices through three environment variables:
+The tier names its devices through four environment variables:
 
 | Variable | What | macOS | Linux |
 |---|---|---|---|
 | `WICA_E2E_MIC_DEVICE` | the input device the app listens on: the cable's recording end | `BlackHole 2ch` | a remapped source over the cable sink's monitor |
 | `WICA_E2E_PERSON_VOICE_DEVICE` | the output device the test plays the person's voice into: the cable's playback end. When unset, `WICA_E2E_MIC_DEVICE` | unset | the cable's null sink |
-| `WICA_E2E_SPEAKER_DEVICE` | the output device the app speaks to. When unset, the default output, so the robot can be heard while iterating | unset, or a second virtual device | a second null sink |
+| `WICA_E2E_SPEAKER_DEVICE` | the output device the app speaks to. When unset, the default output, so the robot can be heard while iterating | unset, or a second virtual device (`BlackHole 16ch`) | a second null sink |
+| `WICA_E2E_ECHO_DEVICE` | the input device the room records the app's voice from: the speaker's recording end. When unset, `WICA_E2E_SPEAKER_DEVICE` if that is also an input device (a virtual one); otherwise there is no echo | unset | a source over the speaker sink's monitor |
 
-**A cable has two ends, and on Linux they have two names.** A virtual cable is one output device that something plays into and one input device that records what was played. BlackHole shows both ends under one name, so on macOS `WICA_E2E_MIC_DEVICE` is enough. On Linux the playback end is a PulseAudio null sink and the recording end is a separate source, each with its own name, so the person's voice needs its own variable there.
+**A cable has two ends, and on Linux they have two names.** A virtual cable is one output device that something plays into and one input device that records what was played. BlackHole shows both ends under one name, so on macOS `WICA_E2E_MIC_DEVICE` is enough, and a BlackHole speaker is its own echo device. On Linux the playback end is a PulseAudio null sink and the recording end is a separate source, each with its own name, so the person's voice and the echo need their own variables there.
 
 On Linux the mic is a remapped source, not the monitor itself, because upstream `reachy-mini`'s device matcher skips monitor sources.
 
-**The app's speaker is never the cable.** BlackHole loops its output back to its input, so an app speaking into the cable it listens on would hear itself. The echo scenario is the one exception, and it sets this up on purpose.
+**The app's speaker is never the cable.** BlackHole loops its output back to its input, so an app speaking into the cable it listens on would hear itself, and on macOS a process that plays into the cable stalls its own capture of it (next). The echo reaches the mic through the room instead.
 
-**The person's voice plays from a process of its own.** On macOS, a process that plays into the cable stalls its own capture of the cable: the capture delivers a chunk or two and then nothing, and reports no error, so the ASR waits in silence. The app's capture is PortAudio on the computer and the bridge's GStreamer on the robot; both stalled whenever the person's voice played from the app's process, whatever the open order or the cable's rate, and neither did once it played from another. So `Person` runs its phonon engine in a child process (`tests-e2e/voice.py`), which speaks each line it is sent and answers once it has been played, and which starts on the first `say`. The person is not inside the app either. (Measured on 2026-11-10; a first fix that set the cable to the app's 16 kHz recording rate only made the failure rarer.)
+#### The room
+
+The room is what stands between the app and the person: one process (`tests-e2e/room.py`) that plays everything the mic hears into the cable.
+
+- **The person's voice.** It speaks each line it is sent with its own phonon engine and answers once the line has been played.
+- **The app's echo.** When there is an echo device, it records the app's speaker from it and plays it back into the cable **50 ms later and 10 dB quieter**, mixed with the person's voice, for the whole run: the speaker-to-mic path of a laptop on a desk. Without one, the cable carries the person alone, as with a headset.
+
+So the echo is on whenever the run gives the app a virtual speaker: always in CI, and on a Mac with a second BlackHole (`brew install blackhole-16ch`, `WICA_E2E_SPEAKER_DEVICE="BlackHole 16ch"`). A Mac with BlackHole 2ch alone runs without it.
+
+**Echo cancellation follows the echo.** With the echo on, the computer runs with echo cancellation on, its loudspeaker configuration; with it off, without, its headset configuration. Echo cancellation on with no echo to learn from mutes the person while the app speaks (open question 4), which is why the two go together. The robot is in "The Reachy Mini embodiment" below.
+
+**Why the delay and the gain are fixed.** A real room adds reverberation and noise, which this does not; a fixed path makes a failure reproducible. The canceller learns this path within a second or two (open question 4), as it would a room's.
+
+**The room is a process of its own.** On macOS, a process that plays into the cable stalls its own capture of the cable: the capture delivers a chunk or two and then nothing, and reports no error, so the ASR waits in silence. The app's capture is PortAudio on the computer and the bridge's GStreamer on the robot; both stalled whenever the person's voice played from the app's process, whatever the open order or the cable's rate, and neither did once it played from another. So the room runs in a child process, which `Person` starts when the app is listening. The person is not inside the app either. (Measured on 2026-11-10; a first fix that set the cable to the app's 16 kHz recording rate only made the failure rarer.)
 
 #### The computer embodiment
 
@@ -81,6 +95,7 @@ On Linux the mic is a remapped source, not the monitor itself, because upstream 
 |---|---|---|
 | Mic | the cable | `asr.engine.audio.device` = `WICA_E2E_MIC_DEVICE` |
 | Speakers | `WICA_E2E_SPEAKER_DEVICE` | `tts.engine.player.device` |
+| The speaker-to-mic echo | the room, when there is an echo device | `audio_processing.echo_cancellation.enabled` = whether there is |
 | Webcam | one image file, rewritten to change what the camera sees | `camera.device` = the file's path |
 
 **A file as the webcam.** OpenCV opens a file path as a camera: it yields the image once, and the next read returns no frame without raising. `WebcamSource` treats a device that delivered frames and then yields none as a stream that ended, and reopens it in the same poll ([computer-embodiment.md](computer-embodiment.md), "`WebcamSource`"), so the file is read again at every poll, with no gap and no capture error. Building this tier found that rule missing: the webcam source used to go silent after the file's one frame, with a clean status, as a real webcam unplugged mid-stream would have. To change what the camera sees, the person replaces the file's contents atomically (writes a temporary file, then renames it over the path). "Nothing shown" is the `no_hand` photo.
@@ -90,12 +105,13 @@ On Linux the mic is a remapped source, not the monitor itself, because upstream 
 | Device | Replacement | Set through |
 |---|---|---|
 | Robot | the MuJoCo sim the bridge's harness runs | the harness's `live_daemon`; our embodiment builds its own bridge over it with `robot_options` |
-| Robot's mic | the cable | `REACHY_MINI_E2E_AUDIO_INPUT` = `WICA_E2E_MIC_DEVICE` |
+| Robot's mic | the cable | `REACHY_MINI_E2E_AUDIO_INPUT` = `WICA_E2E_MIC_DEVICE`; on Linux with the echo on, unset, the cable being the default input |
 | Robot's speaker | `WICA_E2E_SPEAKER_DEVICE` | `REACHY_MINI_E2E_AUDIO_OUTPUT` |
 | A hand in front of the robot | a hand photo as a prop, 0.36 m wide, at (0.45, 0, 0.20) m | `pytest_reachy_mini_scene_props` and `sim_scene.spawn(name=…)` |
 
 - **The conftest copies our variables into the bridge's.** It sets `REACHY_MINI_E2E_AUDIO_INPUT` and `_OUTPUT` from `WICA_E2E_MIC_DEVICE` and `WICA_E2E_SPEAKER_DEVICE` before the harness spawns its daemon, so one set of names drives both embodiments.
-- **The sim's audio devices are checked when the session starts.** The daemon reports the devices it opened on `GET /api/bridge/daemon`. A session fixture reads that report and fails the run when the input is not `WICA_E2E_MIC_DEVICE`. Without this check, a daemon borrowed from an earlier run, started without the cable, would leave the robot listening to the real mic, and every spoken scenario would time out with no clear cause.
+- **The robot's echo, on Linux only.** The real robot cancels its echo in its XVF3800; the sim has none. The daemon has a software canceller (GStreamer's `webrtcdsp`, fed by a `webrtcechoprobe` on what it plays), which upstream turns on only when it opens the system's default input, never a named one. So on Linux with the echo on, the conftest leaves `REACHY_MINI_E2E_AUDIO_INPUT` unset and the run makes the cable the default input (CI does): the daemon opens it with its canceller on, and the room echoes the robot's voice. On macOS the robot keeps the named cable and no echo: making the cable the default input there would take the Mac's own microphone away from every other app for the run. This tests the app with a canceller in the robot's loop, not the robot's own hardware canceller, which only a real robot has.
+- **The sim's audio devices are checked when the session starts.** The daemon reports the devices it opened on `GET /api/bridge/daemon`. A session fixture reads that report and fails the run when the input is not `WICA_E2E_MIC_DEVICE`, or, with the robot's echo on, when it is not the default input (`null`). Without this check, a daemon borrowed from an earlier run, started without the cable, would leave the robot listening to the real mic, and every spoken scenario would time out with no clear cause.
 - **The hand props.** The conftest's `pytest_reachy_mini_scene_props` declares one pool, `image_pool("hand", …, width=0.36)`: one prop per photo, `hand_1` … `hand_5`, hidden when the daemon boots. The photos are converted to PNG at session start with OpenCV, since props must be PNG. `Person.show` spawns a photo's prop by name at the position above. The tests are gated with `@pytest.mark.requires("camera", "props:hand")`.
 - **The hand position is measured.** In a spike on 2026-11-09, the real gesture pipeline read the sim's render of all five photos correctly, with scores of 0.71–0.83, at every distance from 0.30 m to 0.60 m. Beyond that the detector loses the hand: the failure is "no hand", never a wrong sign. 0.45 m, the bridge's default prop position, is the middle of the reliable band. The props' material is emissive, so lighting is not a variable.
 
@@ -115,7 +131,7 @@ The five hand photos and the `no_hand` photo are copied from vision-modules' liv
 
 A `Person` helper (`tests-e2e/person.py`) acts for the human in front of the app:
 
-- **`say(text)`** speaks `text` into `WICA_E2E_PERSON_VOICE_DEVICE` with its own phonon engine, in a process of its own (above), and returns when playback ends.
+- **`say(text)`** has the room speak `text` into `WICA_E2E_PERSON_VOICE_DEVICE` with its own phonon engine (above), and returns when playback ends.
 - **`show(photo)`** puts a hand photo in front of the camera: it rewrites the camera file on the computer, or spawns the matching prop on the robot.
 - **`hide()`** takes the hand away: it writes the `no_hand` photo on the computer, or clears the scene on the robot.
 
@@ -123,28 +139,50 @@ Each scenario's text is fixed in its test, so a failing run can be replayed with
 
 ### The scenarios
 
-Each scenario builds and starts the real system, lets the person act, and asserts on the agent's timeline through `wica.testing.TestRun(system.wica)`. The assertions are about behaviour, never exact strings ([testing.md](testing.md)).
+Two kinds, both plain pytest code asserting on the agent's timeline through `wica.testing.TestRun(system.wica)`, about behaviour, never exact strings ([testing.md](testing.md)):
+
+- **Focused scenarios**, each on a freshly started app: the quick diagnostics, which name what broke.
+- **One conversation per embodiment**: a person talking with the app from start to end, on one running app, so what only a whole interaction shows is tested too — the agent's history carried across turns, inputs that follow one another, the echo present through every reply.
+
+#### The focused scenarios
 
 | # | Scenario | Embodiment | The person | Expected |
 |---|---|---|---|---|
 | 1 | Startup | both | nothing | the system builds with nothing in `missing`; the agent, the ASR bridge and the gesture input run; on the robot, the bridge is connected |
 | 2 | Spoken turn | both | "Hello, what is your name?" | a final `speech_input` containing "name", then a `say` issued and completed |
 | 3 | Hand sign | both | nothing at first; then each photo in turn, hiding it between | no `hand_gesture_1` while nothing is shown; then `hand_gesture_1` equals each photo's sign, and a reaction of the agent has it among its triggers |
-| 4 | Emotion | robot | "Can you show me that you are happy?" | `play_emotion` issued and completed, and a `say`; a `say` running at the same time as the emotion is recorded in the report, not failed on |
-| 5 | Interrupt | both | asks for a long story; then, while the app is speaking, says "Please stop talking now, that is enough for me." (one test; a full sentence, since the ASR does poorly on short ones) or shows `stop` (another) | the running `say` is cancelled |
-| 6 | Dictation | both | asks to dictate a note; a second after dictation starts, two sentences with a pause between them, then "That is the end of my note, please send it.", a sentence holding a trigger word (both configs end a passage on one, as both templates do; a full sentence, since the ASR does poorly on short ones, and its own text is dropped by asr-engine) | `start_dictation` completes and dictation is on; the passage arrives as one `speech_input` holding both sentences; dictation is then off |
-| 7 | Echo | computer | speaks while the app is speaking, with both voices on the cable | the app's own words never appear as a `speech_input` |
 
-- **Scenario 1 is the cheapest**, and it catches most wiring breakage. Scenarios 2 and 3 are the core of the tier.
-- **The vision check comes before the agent check.** Scenario 3 asserts the World's `hand_gesture_1` first and the agent's reaction second, as two separate expectations. A vision failure then shows up as one, and an LLM failure cannot hide it. This keeps the verdict the old live gesture test gave without any LLM.
-- **The echo scenario wires the cable on purpose.** The app's speaker is `WICA_E2E_PERSON_VOICE_DEVICE`, the same cable it listens on, so echo cancellation is the only thing that keeps the app from hearing itself. The far-end reference is then exact.
+Scenario 1 is the cheapest, and it catches most wiring breakage.
+
+#### The conversation
+
+One test class per embodiment (`TestConversation`), one test per step. The steps share one running app, one `TestRun` and one person, through a fixture built once for the class, and run in file order. Each is reported on its own, so a run reads "step 4 failed, the others passed" rather than "the conversation failed".
+
+| Step | The person | Expected | Embodiment |
+|---|---|---|---|
+| 1. Ready | nothing | every input is up | both |
+| 2. A question | "Hello, what is your name?" | heard, then a `say` issued and completed | both |
+| 3. A sign | shows `hand_three2` | `hand_gesture_1` is `three`, and the agent reacts | both |
+| 4. An emotion | "Can you show me that you are happy?" | `play_emotion` issued and completed, and a `say`; the two running at once is recorded in the report, not failed on | robot |
+| 5. A spoken stop | asks for a long story; 2 s after the voice starts, "Please stop talking now, that is enough for me." | the running `say` is cancelled | both |
+| 6. A shown stop | asks for another story; 2 s after the voice starts, shows `hand_stop` | the running `say` is cancelled | both |
+| 7. A note | asks to dictate a note; once the app's reply has been said, "Buy milk and eggs.", a 1.5 s pause, "Call the doctor tomorrow morning.", a 1.5 s pause, "That is the end of my note, please send it."; then "What was in my note?" | `start_dictation` completes and dictation is on; the passage arrives as one `speech_input` holding both sentences; dictation is then off; the answer to the question is recorded in the report, a miss is not failed on | both |
+| 8. The app never heard itself | nothing | no `speech_input` of the whole conversation is the app's own words | both |
+
+- **Every step starts from a settled agent.** WICA drops a trigger that arrives while a reaction is in flight (the framework's open concurrency question): a sign shown while the agent still reasons about the completion of its last reply is lost. So a step first waits until no reaction is in flight and no Command runs, for a second in a row, as a person waits for the app to finish, and ends dictation if a failed step left it on. A failed step then does not take the next one with it: the conversation goes on, as it would with a person whose stop was not heard. A person who does not wait loses that input: a limit of the framework, recorded here, not worked around.
+- **A step can run alone.** `-k` on one step starts a fresh app for it; no step relies on what an earlier one said or did. The question about the note belongs to the note's step for that reason.
+- **The echo check (step 8)** compares each `speech_input` the conversation delivered with the person's lines and the app's `say` texts, by the words they share; one made mostly of the words of something the app said, and not mostly of the person's, is the app hearing itself. The person's lines count together, since a dictated passage of several lines arrives as one, and the app may read it back. With the room's echo off it passes trivially, which the report says.
+- **The full sentences.** The ASR does poorly on short sentences: a bare "Stop." delivered nothing, and a bare "Send." was joined to the sentence before it, whose text was then dropped with it (asr-engine drops the text of the final holding the trigger word). Both configs end a dictated passage on a trigger word, as both templates do.
+- **The answer about the note is model behaviour** (open question 3): the persona asks nothing of it, so it is recorded, not failed on.
+
+#### Rules for both kinds
+
+- **The vision check comes before the agent check.** A sign step asserts the World's `hand_gesture_1` first and the agent's reaction second, as two separate expectations. A vision failure then shows up as one, and an LLM failure cannot hide it.
 - **Time limits are generous and asserted as timeouts**, through the `within=` windows of the `expect_*` calls. Latencies are recorded in the report but not asserted; `expect_latency` is not used.
 - **What the inputs delivered is read from the World.** The harness's timeline records a trigger for each write but not its value, and `expect_world` only sees an entry's current value, which a TTL clears a moment later. An `InputLog` (a World listener on `speech_input` and the `hand_gesture_<n>` entries) records each value written, so a scenario asserts what the ASR heard and which sign the hand models delivered.
-- **The agent may ignore a sign.** The persona lets it decide whether a sign was meant for it, so a count can be met with `noop`. Scenario 3 asserts that the agent reacted (a reaction triggered by the sign), not what it did. `stop` is the exception the persona fixes: it is answered out loud.
-
-- **The agent settles before the next input.** WICA drops a trigger that arrives while a reaction is in flight (the framework's open concurrency question): a sign shown while the agent still reasons about the completion of its last reply is lost. Scenario 3 hit it on a second `stop` shown about a second after the first reply ended. So between inputs a scenario waits until no reaction is in flight and no Command runs, for a second in a row, as a person waits for the app to finish. A person who does not wait loses that input: a limit of the framework, recorded here, not worked around.
-- **The framework's checks run after every scenario**, over the whole timeline, through `wica.testing.run_check`: no reaction fails (`no_failed_reactions`), no cancel collides with a running action (`no_colliding_cancel`), and no spoken input is met with a no-op alone (`no_noop_on_input`, over `speech_input` only, since a sign may be ignored); the dictated note is the exception, left out of it, since nothing asks the agent to answer a note and the persona lets it stay silent). `answers_each_input` is left out: it counts a turn from an `input_written` event, which the harness records only for the tester's own writes, and here the app's inputs write the World, so it would pass over zero turns.
-- **The scenarios are plain pytest code, not WICA scenario files.** A scenario file's tester can only act through the fixed tester Commands, and its `set_<key>` Commands write the inputs straight into the World. That would bypass the ASR and the hand models, which are what this tier exists to test.
+- **The agent may ignore a sign.** The persona lets it decide whether a sign was meant for it, so a count can be met with `noop`. A sign step asserts that the agent reacted (a reaction triggered by the sign), not what it did. `stop` is the exception the persona fixes: it is answered out loud.
+- **The framework's checks run after every focused scenario and every step**, over the timeline since it started, through `wica.testing.run_check`: no reaction fails (`no_failed_reactions`), no cancel collides with a running action (`no_colliding_cancel`), and no spoken input is met with a no-op alone (`no_noop_on_input`, over `speech_input` only, since a sign may be ignored; the dictated note is left out of it, since nothing asks the agent to answer a note and the persona lets it stay silent). `answers_each_input` is left out: it counts a turn from an `input_written` event, which the harness records only for the tester's own writes, and here the app's inputs write the World, so it would pass over zero turns.
+- **Not WICA scenario files.** A scenario file's tester can only act through the fixed tester Commands, and its `set_<key>` Commands write the inputs straight into the World. That would bypass the ASR and the hand models, which are what this tier exists to test.
 
 ### Layout and fixtures
 
@@ -153,22 +191,22 @@ tests-e2e/
   conftest.py       # the bridge's plugin, the sim's devices and props; the devices, the keys, each embodiment's fixture
   support.py        # require_env, require_device, WICA_E2E_FAIL_ON_MISSING, InputLog, the checks
   person.py         # Person, FileCamera, SceneStage, the photos and their signs
-  voice.py          # the person's voice, a process of its own
-  scenarios.py      # the scenarios, written once, run by each embodiment's file
+  room.py           # the room: the person's voice and the app's echo, a process of its own
+  scenarios.py      # the focused scenarios and the conversation's steps, written once, run by each embodiment's file
   configs/          # computer.json, reachy.json
   fixtures/         # the hand photos, no_hand, README
-  test_computer.py  # scenarios 1, 2, 3, 5, 6, 7 (1–3, 5, 6 so far)
-  test_reachy.py    # scenarios 1–6
+  test_computer.py  # the focused scenarios and the computer's TestConversation
+  test_reachy.py    # the focused scenarios and the robot's TestConversation
 ```
 
 - **One directory, one run.** `tests-e2e/conftest.py` loads the bridge's plugin (`reachy_mini_bridge.testing.fixtures`) for the whole tier. The computer's tests request none of its fixtures, so they never start a sim. `uv run pytest tests-e2e` runs both embodiments, and either file can be run on its own. The files sit flat in `tests-e2e/`, which is not a package, so they import `support` and `person` as the type checker resolves them: from their own directory.
-- **One fixture per embodiment** (`computer`, `reachy`) builds the real system with `build_system` (no seams: the real ASR and the real hand models) from its committed config with the run's values filled in, asserts nothing is in `missing`, wires a transcript collector, and starts it. It yields an `E2E`: the system, its `TestRun`, its `InputLog` and the `Person` in front of it. It writes the evidence, then shuts the system down with `_shutdown` in a `finally`, as [testing.md](testing.md) requires of every `build_system`.
+- **One fixture per embodiment** (`computer`, `reachy`), and a class-scoped one per conversation (`computer_conversation`, `reachy_conversation`) built the same way, builds the real system with `build_system` (no seams: the real ASR and the real hand models) from its committed config with the run's values filled in, asserts nothing is in `missing`, wires a transcript collector, and starts it. It yields an `E2E`: the system, its `TestRun`, its `InputLog` and the `Person` in front of it. It writes the evidence, then shuts the system down with `_shutdown` in a `finally`, as [testing.md](testing.md) requires of every `build_system`.
 - **`devices`** and **`keys`** (session) resolve the devices and the keys, skipping, or failing under `WICA_E2E_FAIL_ON_MISSING`, when one is missing.
 - **The robot's fixture** builds its own bridge over the harness's daemon (`live_daemon`, with `robot_options` for the connection) and takes `sim_scene` for the hand props, clearing the scene before and after. Its config turns face detection and head tracking off, so no face in the scene pulls the head away from the hand props; presence, breathing and wobbling stay on, as in the template. The plugin is registered from the conftest's `pytest_configure` (a conftest below the rootdir cannot declare `pytest_plugins`), and the props are declared through `pytest_reachy_mini_scene_props`, the photos converted to PNG once per run.
 - **The robot's session fixture `sim_audio`** is the audio-device check above, failing (never skipping) on a daemon that does not listen on the cable.
 - **The robot's devices on Linux.** The bridge and the sim's daemon find a named device through upstream's GStreamer listing, which on a PulseAudio host without PipeWire only accepts a virtual device through its `device.string`; the CI job sets one ([ci.md](ci.md)). The bridge in the test's process still logs that it finds no `wica_mic` card and falls back to the default source, which the job makes the cable's: the robot hears the person either way, and the daemon's report, which the session fixture checks, names the cable.
 - **Building it found a crash in the app.** On Linux, MediaPipe's first import, once the robot's GStreamer media ran, killed the process inside matplotlib's FreeType extension (a segmentation fault, or an abort). Importing it on the main thread but after the body was entered crashed the same way; importing it before the body does not. `build_system` now imports it first ([gesture-input.md](gesture-input.md), "App integration"). The tier's process imports it at session start as well: the harness's own bridge sessions (its capability probe) run GStreamer media there before any app is built.
-- **Each scenario is written once** (`scenarios.py`) and run by each embodiment's file on its own fixture; the emotion is the robot's alone.
+- **Each scenario and step is written once** (`scenarios.py`) and run by each embodiment's file on its own fixture; the emotion is the robot's alone.
 
 ### Skips and failures
 
@@ -183,7 +221,8 @@ A failure in this tier is otherwise hard to diagnose, so each scenario writes it
 
 - the `TestRun` report (its timeline), as `report.json` and `report.md`;
 - what the inputs delivered (`inputs.json`);
-- the config the run was built from, with its values filled in, and, on the computer, the camera file as it last stood.
+- the config the run was built from, with its values filled in, and, on the computer, the camera file as it last stood;
+- for a conversation, one report for the whole of it, each step's start marked in its timeline (`TestRun.note`), written once the class is done.
 
 Recording the cable is an open question (below).
 
@@ -195,7 +234,8 @@ The tests are the same on every platform; only the setup differs.
 |---|---|---|
 | Sim camera | the viewer window: `REACHY_MINI_E2E_SIM_VIEWER=1`, an unlocked GUI session, `mjpython` | headless, rendered through EGL |
 | Cable | BlackHole 2ch | a PulseAudio null sink, plus a remapped source over its monitor |
-| App's speaker | the default output, or a second virtual device | a second null sink |
+| App's speaker | the default output (no echo), or a second virtual device, `BlackHole 16ch` (the computer's echo) | a second null sink, its monitor the echo device (the echo, for both) |
+| Robot's mic | the cable, named | the cable, as the default input (its software canceller on) |
 | Permissions | microphone access for the terminal or editor | none |
 
 - **The first viewer launch on macOS takes about 62 s** while GStreamer builds its plugin cache. The harness gives up after a fixed 45 s. The workaround is to start the sim daemon by hand once; the harness then borrows it. Later launches take about 8 s.
@@ -230,11 +270,11 @@ Windows on Arm (for example in Parallels on an Apple silicon Mac) is a different
 
 ## Open questions
 
-1. **The echo scenario on BlackHole.** It needs the app to speak into the cable it listens on, which is what stalls a process's capture of the cable on macOS ("The person's voice plays from a process of its own"): the app cannot be moved out of its own process. Possible ways: two cables (BlackHole 16ch's channels, or a second BlackHole) with the app's voice routed to the mic's cable by an aggregate device; or Linux only, where PulseAudio shows no such stall. To decide before the scenario is written.
+1. **The echo on BlackHole.** Decided on 2026-11-10: the room puts the app's voice back on the cable from a second virtual device, so the app never plays into the cable it listens on, and the echo is a check over the whole conversation rather than a scenario of its own. The robot's echo runs on Linux only ("The Reachy Mini embodiment").
 2. **Recording the cable.** A recording of what the mic heard would be the best evidence for a failed spoken scenario. The cost is one more input stream on the cable during the run.
 3. **The model and the persona's rules.** The full tier fixes one model (Claude Haiku 5.5) to test the assembled product, and some of what it asserts is that model's behaviour, not the product's wiring. Two cases so far: asked for an emotion, Haiku issued `say` and `play_emotion` at once in 2 runs of 3, against the persona's one-body rule (the emotion scenario records it rather than failing); and it met a dictated note with `noop`, on the robot (twice, on the Mac and in CI) and on the computer (5 runs of 5 on the Mac), which the framework's `no_noop_on_input` check fails, as it does any such answer, in every scenario. Whether such rules fail this tier, are recorded in its report, or are left to the later agent tier on the production model is to decide; the dictated note, which nothing asks the agent to answer and the persona lets it leave unanswered, is decided (2026-11-10): the dictation scenario does not run `no_noop_on_input`.
 4. **Speaking over the computer, with echo cancellation on.** While the app speaks, the person's voice can be suppressed: a spoken "stop" did not reach the agent in three runs of three on the Mac, and in one run of two on Linux in CI. With the computer's echo cancellation off it is heard, and the robot, whose named devices run without software echo cancellation, hears it. On the cable there is no echo at all — the reference is the app's voice, the mic carries only the person — so whether barge-in fails in a room too, or only in this setup (the reference's delay, a canceller that has not converged two seconds into the story), is to find out.
 
-   Found on 2026-11-10, from the mic, reference and output recorded during a live run and replayed offline (the replay reproduces it): WebRTC's canceller, before it has learned an echo path, treats near-end speech during playback as echo and suppresses it, 6 to 60 dB through most of each second. With no echo at all, as on the cable or with a headset, it has nothing to learn from and stays so until about 8 s of the app's voice in all (across replies); the scenario interrupts 2 s into the first story of a fresh app, every time inside that window. With a simulated room echo (a delayed copy at −10 dB) it learns within a second or two and lets the person through, apart from about the first quarter-second (~40 dB). So it is not a barge-in failure on loudspeakers; it is one with headphones and echo cancellation on, the template's default. Decided: the guide says to turn echo cancellation off with headphones, and the computer's config runs without it, as the headset case the cable is; the canceller is tested by the echo scenario, with an echo on the cable (open question 1). A real-room run, to confirm the simulated room, is still to do.
+   Found on 2026-11-10, from the mic, reference and output recorded during a live run and replayed offline (the replay reproduces it): WebRTC's canceller, before it has learned an echo path, treats near-end speech during playback as echo and suppresses it, 6 to 60 dB through most of each second. With no echo at all, as on the cable or with a headset, it has nothing to learn from and stays so until about 8 s of the app's voice in all (across replies); the scenario interrupts 2 s into the first story of a fresh app, every time inside that window. With a simulated room echo (a delayed copy at −10 dB) it learns within a second or two and lets the person through, apart from about the first quarter-second (~40 dB). So it is not a barge-in failure on loudspeakers; it is one with headphones and echo cancellation on, the template's default. Decided: the guide says to turn echo cancellation off with headphones, and the computer's echo cancellation follows the room's echo ("The room"), so the conversation's spoken stop runs through the canceller wherever the echo is on. Whether the robot's software canceller (`webrtcdsp`) behaves the same is for its first runs to show. A real-room run, to confirm the simulated room, is still to do.
 5. **Dictation on the computer.** In `timeout` mode the passage should end after a few seconds of silence, but on the Mac it closed right after the first of two sentences, about a second after the person started (2 runs of 3; the first run delivered both). It then reached WICA while the agent was still reacting to the completion of its own "go ahead", so WICA dropped it: the note never reached the agent. On Linux, in CI, the passage closed empty instead: the dictation's 10 s initial-silence timeout ran out while the scenario waited for the agent to settle. Why the passage closes early (asr-engine's segmentation, or Flux's own end of turn) is to find out. Decided on 2026-11-10: both templates, and so both e2e configs, end a passage on a trigger word, which a pause inside a note cannot cut short; `timeout` mode stays offered but is not exercised by this tier, and its early close is left to asr-engine. On the computer the passage then arrived whole, closed by the trigger word, in 4 runs of 5 (in the fifth Flux heard only "Morning." of the second sentence). Two findings for asr-engine: the final holding the trigger word closes the passage and its own text is dropped, so a sentence Flux joins to "Send." is lost (with a bare "Send." 1 s after the second sentence, the second sentence was lost in every run; the scenario now ends on a full sentence holding the word); and the substring match makes short words such as "go" fire inside others ("good", "ago").
 6. **The harness's startup timeout.** It is fixed at 45 s, which a first macOS launch exceeds. This is raised with the bridge. Until it is fixed, the workaround is a daemon started by hand.

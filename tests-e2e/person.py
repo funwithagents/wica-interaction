@@ -1,9 +1,10 @@
 """The person in front of the app (specs/e2e.md, "The person"): a voice played into the cable the
 app listens on, and a hand shown to its camera.
 
-The voice is a tts-engine phonon engine in a process of its own (`voice.py`), playing to the
-cable's playback end. What the camera sees is a *stage*: on the computer, the image file the webcam reads;
-on the robot, the props of the sim's scene.
+The voice is a tts-engine phonon engine in the room, a process of its own (`room.py`) playing into
+the cable's playback end, which also plays the app's echo back when the run has an echo device.
+What the camera sees is a *stage*: on the computer, the image file the webcam reads; on the robot,
+the props of the sim's scene.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any, Protocol
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 NO_HAND = FIXTURES / "no_hand.jpg"
-VOICE = Path(__file__).resolve().parent / "voice.py"
+ROOM = Path(__file__).resolve().parent / "room.py"
 
 # The person's phonon voice, not the app's (`Micah`), so a transcript always tells them apart.
 PERSON_VOICE = "Harper"
@@ -81,18 +82,24 @@ class SceneStage:
 
 
 class Person:
-    """The person: a voice in a process of its own (`voice.py`), started on the first `say`, and a
-    hand shown on the *stage*."""
+    """The person: a voice in the room (`room.py`), started on the first `say` — with the app's echo
+    when *echo_device* is given — and a hand shown on the *stage*. `said` keeps every line spoken,
+    for the echo check."""
 
-    def __init__(self, voice_device: str, stage: Stage) -> None:
+    def __init__(
+        self, voice_device: str, stage: Stage, echo_device: str | None = None
+    ) -> None:
         self._device = voice_device
         self._stage = stage
+        self._echo = echo_device
         self._voice: subprocess.Popen[str] | None = None
+        self.said: list[str] = []
 
     def _started(self) -> subprocess.Popen[str]:
         if self._voice is None:
+            echo = [self._echo] if self._echo is not None else []
             self._voice = subprocess.Popen(
-                [sys.executable, str(VOICE), self._device, PERSON_VOICE],
+                [sys.executable, str(ROOM), self._device, PERSON_VOICE, *echo],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 text=True,
@@ -105,7 +112,7 @@ class Person:
         line = self._voice.stdout.readline().strip()
         if line != word:
             raise RuntimeError(
-                f"the person's voice answered {line!r}, not {word!r} "
+                f"the room answered {line!r}, not {word!r} "
                 f"(exit code {self._voice.poll()})"
             )
 
@@ -113,6 +120,7 @@ class Person:
         """Speak *text* into the cable; returns once it has been played."""
         voice = self._started()
         assert voice.stdin is not None
+        self.said.append(text)
         voice.stdin.write(" ".join(text.split()) + "\n")
         voice.stdin.flush()
         self._expect("done")

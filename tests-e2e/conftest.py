@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import urllib.request
 from collections.abc import Iterator
@@ -26,6 +27,7 @@ from person import FIXTURES, HAND_PHOTOS, FileCamera, Person, SceneStage, Stage
 from support import (
     E2E,
     InputLog,
+    echo_device,
     missing,
     require_device,
     require_env,
@@ -49,6 +51,11 @@ INPUT_KEYS = ("speech_input", "hand_gesture_1", "hand_gesture_2")
 # Each photo's prop is 0.36 m wide (0.24 m tall): the size the hand-render spike validated.
 HAND_WIDTH_M = 0.36
 
+# Whether the robot's voice comes back on the cable (specs/e2e.md, "The Reachy Mini embodiment"):
+# on Linux, with an echo device, the sim's daemon opens the default input with its software
+# canceller on. Set by `pytest_configure`, before the harness spawns the daemon.
+ROBOT_ECHO = False
+
 
 def pytest_configure(config: pytest.Config) -> None:
     """Give the sim the cable before the harness spawns it, then register the harness's plugin.
@@ -56,9 +63,15 @@ def pytest_configure(config: pytest.Config) -> None:
     The tier names its devices once (`WICA_E2E_*_DEVICE`); the bridge's harness reads its own
     variables when it spawns the sim's daemon, so they are copied across here, unless the run set
     them itself. A conftest below the rootdir cannot declare `pytest_plugins`, hence the import."""
+    global ROBOT_ECHO
     mic = os.environ.get("WICA_E2E_MIC_DEVICE")
-    speaker = os.environ.get("WICA_E2E_SPEAKER_DEVICE")
-    if mic:
+    speaker = os.environ.get("WICA_E2E_SPEAKER_DEVICE") or None
+    # Upstream turns the daemon's echo canceller on only over the default input, never a named one:
+    # with the robot's echo, the mic stays unnamed and the run makes the cable the default input.
+    ROBOT_ECHO = (
+        sys.platform == "linux" and bool(mic) and echo_device(speaker) is not None
+    )
+    if mic and not ROBOT_ECHO:
         os.environ.setdefault("REACHY_MINI_E2E_AUDIO_INPUT", mic)
     if speaker:
         os.environ.setdefault("REACHY_MINI_E2E_AUDIO_OUTPUT", speaker)
@@ -97,6 +110,7 @@ class Devices:
     mic: str
     person_voice: str
     speaker: str | None
+    echo: str | None
 
 
 @pytest.fixture(scope="session")
@@ -108,7 +122,10 @@ def devices() -> Devices:
     speaker = os.environ.get("WICA_E2E_SPEAKER_DEVICE") or None
     if speaker is not None:
         require_device(speaker, "output")
-    return Devices(mic=mic, person_voice=person_voice, speaker=speaker)
+    echo = echo_device(speaker)
+    if echo is not None:
+        require_device(echo, "input")
+    return Devices(mic=mic, person_voice=person_voice, speaker=speaker, echo=echo)
 
 
 @pytest.fixture(scope="session")
@@ -148,7 +165,13 @@ def _evidence(e2e: E2E, out: Path) -> None:
 
 
 def _running(
-    system: AppSystem, devices: Devices, stage: Stage, out: Path, scenario: str
+    system: AppSystem,
+    devices: Devices,
+    stage: Stage,
+    out: Path,
+    scenario: str,
+    *,
+    echo: bool,
 ) -> Iterator[E2E]:
     """Wire and start a built *system*, yield it with what observes it and the person in front of
     it, then write the evidence and tear it all down, whatever happens."""
@@ -162,9 +185,9 @@ def _running(
         inputs = InputLog(system.wica.world, INPUT_KEYS)
         # The person's voice opens the cable on its first `say`, after the scenario has waited
         # for the app to listen (specs/e2e.md, "The virtual audio cable").
-        person = Person(devices.person_voice, stage)
+        person = Person(devices.person_voice, stage, devices.echo if echo else None)
         _start(system)
-        e2e = E2E(system=system, run=run, inputs=inputs, person=person)
+        e2e = E2E(system=system, run=run, inputs=inputs, person=person, echo=echo)
         try:
             yield e2e
         finally:
@@ -177,23 +200,39 @@ def _running(
         _shutdown(system)
 
 
-@pytest.fixture
-def computer(devices: Devices, keys: None, tmp_path: Path) -> Iterator[E2E]:
+def _computer(devices: Devices, out: Path, scenario: str) -> Iterator[E2E]:
     """The computer embodiment's real system: the cable as its mic, an image file as its webcam,
-    started, with the person in front of it."""
-    camera = FileCamera(tmp_path / "camera.jpg")
+    echo cancellation on when the room plays its voice back, started, with the person in front."""
+    camera = FileCamera(out / "camera.jpg")
     config_path = _fill(
         "computer.json",
         {
             "asr.engine.audio.device": devices.mic,
             "tts.engine.player.device": devices.speaker,
+            "audio_processing.echo_cancellation.enabled": devices.echo is not None,
             "camera.device": str(camera.path),
         },
-        tmp_path / "config.json",
+        out / "config.json",
     )
     config = load_computer_config(str(config_path))
     system = build_system(config.app, ComputerEmbodiment(config))
-    yield from _running(system, devices, camera, tmp_path, "computer")
+    yield from _running(
+        system, devices, camera, out, scenario, echo=devices.echo is not None
+    )
+
+
+@pytest.fixture
+def computer(devices: Devices, keys: None, tmp_path: Path) -> Iterator[E2E]:
+    yield from _computer(devices, tmp_path, "computer")
+
+
+@pytest.fixture(scope="class")
+def computer_conversation(
+    devices: Devices, keys: None, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[E2E]:
+    """One computer app for a whole conversation (specs/e2e.md, "The conversation")."""
+    out = tmp_path_factory.mktemp("computer-conversation")
+    yield from _computer(devices, out, "computer conversation")
 
 
 @pytest.fixture(scope="session")
@@ -208,22 +247,22 @@ def sim_audio(live_daemon: tuple[str, int], devices: Devices) -> None:
         report = json.load(answer)
     audio = report.get("audio") or {}
     heard = audio.get("input_device")
-    if heard != devices.mic:
+    # With the robot's echo, the default input, which the run made the cable (`ROBOT_ECHO`).
+    expected = None if ROBOT_ECHO else devices.mic
+    if heard != expected:
         pytest.fail(
-            f"the sim's daemon listens on {heard!r}, not the cable {devices.mic!r}: stop it "
+            f"the sim's daemon listens on {heard!r}, not {expected!r}: stop it "
             f"and let the run spawn its own (its report: {report})",
             pytrace=False,
         )
 
 
-@pytest.fixture
-def reachy(
+def _reachy(
     devices: Devices,
-    keys: None,
     live_daemon: tuple[str, int],
-    sim_audio: None,
     sim_scene: Any,
-    tmp_path: Path,
+    out: Path,
+    scenario: str,
 ) -> Iterator[E2E]:
     """The Reachy Mini embodiment's real system over the run's sim: its own bridge on the harness's
     daemon, the cable as the robot's mic, the hand props in front of its camera."""
@@ -236,11 +275,39 @@ def reachy(
     config_path = _fill(
         "reachy.json",
         {"reachy.robot": robot_options(host, port)},
-        tmp_path / "config.json",
+        out / "config.json",
     )
     config = load_reachy_config(str(config_path))
     system = build_system(config.app, ReachyEmbodiment(config))
     try:
-        yield from _running(system, devices, SceneStage(sim_scene), tmp_path, "reachy")
+        yield from _running(
+            system, devices, SceneStage(sim_scene), out, scenario, echo=ROBOT_ECHO
+        )
     finally:
         sim_scene.clear()
+
+
+@pytest.fixture
+def reachy(
+    devices: Devices,
+    keys: None,
+    live_daemon: tuple[str, int],
+    sim_audio: None,
+    sim_scene: Any,
+    tmp_path: Path,
+) -> Iterator[E2E]:
+    yield from _reachy(devices, live_daemon, sim_scene, tmp_path, "reachy")
+
+
+@pytest.fixture(scope="class")
+def reachy_conversation(
+    devices: Devices,
+    keys: None,
+    live_daemon: tuple[str, int],
+    sim_audio: None,
+    sim_scene: Any,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[E2E]:
+    """One robot app for a whole conversation (specs/e2e.md, "The conversation")."""
+    out = tmp_path_factory.mktemp("reachy-conversation")
+    yield from _reachy(devices, live_daemon, sim_scene, out, "reachy conversation")

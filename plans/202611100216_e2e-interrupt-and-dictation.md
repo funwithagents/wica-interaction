@@ -1,6 +1,6 @@
 # The end-to-end tier, part 3: interrupt and dictation
 
-**Status:** In progress
+**Status:** Done
 
 Implements [specs/e2e.md](../specs/e2e.md) scenarios 5 (interrupt: a spoken stop, and a shown `stop`) and 6 (dictation) on both embodiments. Leaves out scenario 7 (echo), whose setup is still an open question.
 
@@ -55,3 +55,7 @@ On the Mac (2026-11-10):
 
 - The scenarios pass on the Mac and in CI, apart from what the open questions decide.
 - Lint, format, types, the fast tier.
+
+## Outcome
+
+The interrupt and dictation scenarios pass on both embodiments, on the Mac and in CI, with no expected failure left. Part 4 ([202611101102_e2e-conversation-and-room.md](202611101102_e2e-conversation-and-room.md)) moves them into the conversation.

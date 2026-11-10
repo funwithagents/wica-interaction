@@ -10,6 +10,7 @@ what you have, and a contributor with none is never broken. A run that must not 
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -56,6 +57,28 @@ def require_device(name: str, kind: Literal["input", "output"]) -> str:
     except ValueError:
         missing(f"no {kind} audio device named {name!r}")
     return name
+
+
+def is_device(name: str, kind: Literal["input", "output"]) -> bool:
+    import sounddevice as sd
+
+    try:
+        sd.query_devices(name, kind)
+    except ValueError:
+        return False
+    return True
+
+
+def echo_device(speaker: str | None) -> str | None:
+    """The device the room records the app's voice from (specs/e2e.md, "The room"):
+    `WICA_E2E_ECHO_DEVICE`, else the app's *speaker* when it is also an input device (BlackHole),
+    else none — the run then has no echo."""
+    named = os.environ.get("WICA_E2E_ECHO_DEVICE") or None
+    if named is not None:
+        return named
+    if speaker is not None and is_device(speaker, "input"):
+        return speaker
+    return None
 
 
 def wait_until(predicate: Callable[[], bool], timeout: float) -> bool:
@@ -130,14 +153,16 @@ SCENARIO_CHECKS = ("no_noop_on_input", "no_failed_reactions", "no_colliding_canc
 
 
 def failed_checks(
-    run: TestRun, checks: tuple[str, ...] = SCENARIO_CHECKS
+    run: TestRun, checks: tuple[str, ...] = SCENARIO_CHECKS, *, since: float = 0.0
 ) -> list[Finding]:
-    """The framework's *checks* over *run*'s timeline so far; the ones that failed."""
-    timeline = run.timeline()
+    """The framework's *checks* over *run*'s timeline from the wall-clock time *since* (a step's
+    start; the whole run by default); the ones that failed."""
+    whole = run.timeline()
+    timeline = [e for e in whole if e.t >= since]
     context = CheckContext(
         output_command_name=run.probe.output_command_name,
         scenario_inputs=("speech_input",),
-        origin=timeline[0].t if timeline else 0.0,
+        origin=whole[0].t if whole else 0.0,
     )
     findings = [
         run_check(CHECKS[name], CheckSpec(name), timeline, context) for name in checks
@@ -159,12 +184,51 @@ def reactions_to(run: TestRun, key: str) -> int:
 
 @dataclass(frozen=True)
 class E2E:
-    """One scenario's running system and what it observes it through."""
+    """One scenario's running system and what it observes it through; *echo* is whether the room
+    plays the app's voice back into its mic."""
 
     system: AppSystem
     run: TestRun
     inputs: InputLog
     person: Person
+    echo: bool
+
+
+def forget_earlier(run: TestRun) -> None:
+    """Make *run*'s next `expect_*` match only what happens from now on. The harness moves its
+    cursor past a match, and on its own `set`; here the app's inputs write the World, so a
+    conversation's step would otherwise match an event left from an earlier one (a `say` still
+    listed as running). The harness has no public call for it."""
+    with run._cond:  # pyright: ignore[reportPrivateUsage]
+        run._watermark = len(run._timeline)  # pyright: ignore[reportPrivateUsage]
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z']+", text.lower()) if len(w) > 2}
+
+
+def _overlap(heard: set[str], said: str) -> float:
+    return len(heard & _words(said)) / len(heard) if heard else 0.0
+
+
+def echoes(run: TestRun, inputs: InputLog, person_said: list[str]) -> list[str]:
+    """The `speech_input`s that are the app's own words: mostly words of something its voice said,
+    and not mostly the person's (specs/e2e.md, "The conversation"). The person's lines count
+    together, since a passage of several is delivered as one, and the app may say it back."""
+    voice = run.probe.output_command_name
+    app_said = [
+        str((e.args or {}).get("text", ""))
+        for e in run.timeline()
+        if e.kind == "command_issued" and e.name == voice
+    ]
+    found = []
+    for d in inputs.delivered("speech_input"):
+        heard = _words(str(d.value or ""))
+        app = max((_overlap(heard, t) for t in app_said), default=0.0)
+        person = _overlap(heard, " ".join(person_said))
+        if app >= 0.5 and person < 0.5:
+            found.append(str(d.value))
+    return found
 
 
 # How long the agent must stay idle to count as settled: a Command's completion reaches the agent

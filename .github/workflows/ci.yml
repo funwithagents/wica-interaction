@@ -107,10 +107,12 @@ jobs:
     env:
       WICA_ANTHROPIC_API_KEY: ${{ secrets.WICA_ANTHROPIC_API_KEY }}
       DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
-      # The cable's two ends and the app's speaker, as ALSA names over PulseAudio (below).
+      # The cable's two ends, the app's speaker and its recording end (the room's echo), as ALSA
+      # names over PulseAudio (below).
       WICA_E2E_MIC_DEVICE: wica_mic
       WICA_E2E_PERSON_VOICE_DEVICE: wica_cable
       WICA_E2E_SPEAKER_DEVICE: wica_speaker
+      WICA_E2E_ECHO_DEVICE: wica_echo
       # A pull request from a fork gets no secrets: it skips the scenarios. Everywhere else a
       # missing key or device fails the job instead of turning it green with nothing tested.
       WICA_E2E_FAIL_ON_MISSING: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '1' || '0' }}
@@ -137,7 +139,8 @@ jobs:
         run: uv sync --locked
       - name: The virtual cable
         # A null sink is the cable: the person plays into it, and a source remapped over its
-        # monitor is the app's mic. A second null sink is the app's speaker. PortAudio, under
+        # monitor is the app's mic. A second null sink is the app's speaker, its monitor the echo
+        # device the room records the app's voice from (specs/e2e.md, "The room"). PortAudio, under
         # sounddevice, sees ALSA devices only, so each gets an ALSA name through the pulse plugin.
         run: |
           pulseaudio --start --exit-idle-time=-1
@@ -148,6 +151,7 @@ jobs:
           pcm.wica_cable { type pulse; device "wica_cable" }
           pcm.wica_mic { type pulse; device "wica_mic" }
           pcm.wica_speaker { type pulse; device "wica_speaker" }
+          pcm.wica_echo { type pulse; device "wica_speaker.monitor" }
           ASOUND
           uv run python -c "import sounddevice as sd; print(sd.query_devices())"
       - name: End-to-end, computer
@@ -174,6 +178,7 @@ jobs:
       WICA_E2E_MIC_DEVICE: wica_mic
       WICA_E2E_PERSON_VOICE_DEVICE: wica_cable
       WICA_E2E_SPEAKER_DEVICE: wica_speaker
+      WICA_E2E_ECHO_DEVICE: wica_echo
       WICA_E2E_FAIL_ON_MISSING: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '1' || '0' }}
       # A sim that comes up without its camera, its audio or the hand props fails the job
       # instead of skipping the scenarios.
@@ -211,11 +216,16 @@ jobs:
           pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic 'source_properties="device.description=wica_mic device.string=wica_mic"'
           pactl load-module module-null-sink sink_name=wica_speaker 'sink_properties="device.description=wica_speaker device.string=wica_speaker"'
           pactl set-default-sink wica_speaker
+          # The robot opens the default input, unnamed: the daemon's software echo canceller
+          # (webrtcdsp, from gst-plugins-bad) runs only there (specs/e2e.md, "The Reachy Mini
+          # embodiment").
           pactl set-default-source wica_mic
+          gst-inspect-1.0 webrtcdsp > /dev/null
           cat > ~/.asoundrc <<'ASOUND'
           pcm.wica_cable { type pulse; device "wica_cable" }
           pcm.wica_mic { type pulse; device "wica_mic" }
           pcm.wica_speaker { type pulse; device "wica_speaker" }
+          pcm.wica_echo { type pulse; device "wica_speaker.monitor" }
           ASOUND
           uv run python -c "import sounddevice as sd; print(sd.query_devices())"
       # The daemon's media server needs the gst-plugins-rs webrtcsink element, which no Ubuntu

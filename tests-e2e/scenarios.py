@@ -1,5 +1,6 @@
 """The end-to-end scenarios (specs/e2e.md, "The scenarios"), written once for both embodiments:
-each test file runs them on its own body's fixture.
+each test file runs them on its own body's fixture — the focused scenarios on a fresh app each, the
+conversation's steps one after another on one app.
 
 Every scenario reads what the app's inputs delivered (`InputLog`) before the agent's reaction (the
 harness's timeline), so a perception failure shows as one and an LLM failure cannot hide it. The
@@ -9,6 +10,7 @@ thresholds.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from person import HAND_PHOTOS
@@ -17,7 +19,9 @@ from support import (
     READY_TIMEOUT_S,
     SCENARIO_CHECKS,
     command_spans,
+    echoes,
     failed_checks,
+    forget_earlier,
     reactions_to,
     settled,
     wait_until,
@@ -55,22 +59,42 @@ def wait_ready(e2e: E2E) -> None:
     )
 
 
-def assert_checks(e2e: E2E, checks: tuple[str, ...] = SCENARIO_CHECKS) -> None:
-    failed = failed_checks(e2e.run, checks)
+def assert_checks(
+    e2e: E2E, checks: tuple[str, ...] = SCENARIO_CHECKS, *, since: float = 0.0
+) -> None:
+    failed = failed_checks(e2e.run, checks, since=since)
     assert not failed, [f"{f.expectation}: {f.detail}" for f in failed]
 
 
+def begin(e2e: E2E, step: str) -> float:
+    """Start a step from where a person would: every input up, the agent settled, dictation off and
+    no hand in view — whatever an earlier step left — then mark it in the report. Returns its
+    wall-clock start, for the checks over its own window."""
+    wait_ready(e2e)
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled before the step"
+    )
+    bridge, loop = e2e.system.bridge, e2e.system.loop
+    if bridge is not None and loop is not None and bridge.status()["dictating"]:
+        asyncio.run_coroutine_threadsafe(bridge.stop_dictation(), loop).result(10.0)
+    e2e.person.hide()
+    e2e.run.note(f"step: {step}")
+    forget_earlier(e2e.run)
+    return time.time()
+
+
 def startup(e2e: E2E) -> None:
-    """Scenario 1: the real system builds with nothing missing (the fixture asserts it) and every
-    input comes up — the ASR on the cable, the camera through the hand models."""
-    wait_ready(e2e)
-    assert_checks(e2e)
+    """Scenario 1 and the conversation's first step: the real system builds with nothing missing
+    (the fixture asserts it) and every input comes up — the ASR on the cable, the camera through the
+    hand models."""
+    since = begin(e2e, "ready")
+    assert_checks(e2e, since=since)
 
 
-def spoken_turn(e2e: E2E) -> None:
-    """Scenario 2: the person asks a question out loud; the ASR delivers it and the app answers
-    through its voice."""
-    wait_ready(e2e)
+def question(e2e: E2E) -> None:
+    """Scenario 2 and a conversation step: the person asks a question out loud; the ASR delivers it
+    and the app answers through its voice."""
+    since = begin(e2e, "a question")
     voice = e2e.run.probe.output_command_name
     assert voice is not None
 
@@ -88,13 +112,13 @@ def spoken_turn(e2e: E2E) -> None:
     assert issued.ok, issued.detail
     spoken = e2e.run.expect_action(voice, state="complete", within=SPOKEN_WITHIN_S)
     assert spoken.ok, spoken.detail
-    assert_checks(e2e)
+    assert_checks(e2e, since=since)
 
 
 def hand_signs(e2e: E2E) -> None:
     """Scenario 3: nothing is delivered while no hand is in view; then each photo, shown in turn,
     is delivered as its sign on hand 1, and the agent reacts to it."""
-    wait_ready(e2e)
+    since = begin(e2e, "hand signs")
 
     t = time.monotonic()
     time.sleep(QUIET_S)
@@ -104,7 +128,15 @@ def hand_signs(e2e: E2E) -> None:
     for photo, sign in HAND_PHOTOS.items():
         _show_and_expect(e2e, photo, sign)
 
-    assert_checks(e2e)
+    assert_checks(e2e, since=since)
+
+
+def sign(e2e: E2E) -> None:
+    """A conversation step: the person shows three fingers; the sign is delivered and the agent
+    reacts."""
+    since = begin(e2e, "a sign")
+    _show_and_expect(e2e, "hand_three2", "three")
+    assert_checks(e2e, since=since)
 
 
 def _show_and_expect(e2e: E2E, photo: str, sign: str) -> None:
@@ -133,13 +165,13 @@ def _show_and_expect(e2e: E2E, photo: str, sign: str) -> None:
 
 
 def emotion(e2e: E2E) -> None:
-    """Scenario 4 (the robot): asked for an emotion out loud, the agent plays one to its end and
-    speaks too.
+    """A conversation step (the robot): asked for an emotion out loud, the agent plays one to its
+    end and speaks too.
 
     The persona asks for the two in turn, never at once (one body, one speaker). Whether the model
     keeps that rule is its behaviour, not the product's wiring — Claude Haiku issued both together in
     2 runs of 3 on 2026-11-10 — so an overlap is recorded in the run's report, not failed on."""
-    wait_ready(e2e)
+    since = begin(e2e, "an emotion")
     voice = e2e.run.probe.output_command_name
     assert voice is not None
 
@@ -162,7 +194,7 @@ def emotion(e2e: E2E) -> None:
     assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
         "the agent never settled"
     )
-    spans = command_spans(e2e.run)
+    spans = [s for s in command_spans(e2e.run) if s[1] >= since]
     voices = [s for s in spans if s[0] == voice]
     emotions = [s for s in spans if s[0] == "play_emotion"]
     assert voices, "the agent never spoke"
@@ -173,7 +205,7 @@ def emotion(e2e: E2E) -> None:
             "the voice and an emotion ran at once (the persona's one-body rule)",
             repr(overlaps),
         )
-    assert_checks(e2e)
+    assert_checks(e2e, since=since)
 
 
 # A reply long enough to be interrupted: a story told at speaking pace.
@@ -182,55 +214,49 @@ LONG_REQUEST = (
     "at least ten sentences long."
 )
 
+# What the person says to interrupt the app.
+STOP_SENTENCE = "Please stop talking now, that is enough for me."
 
-def _speaking_started(e2e: E2E) -> None:
-    """Ask for a long story and wait until the voice is running with it."""
+
+def _speaking_started(e2e: E2E) -> str:
+    """Ask for a long story and wait until the voice is running with it; the voice's name."""
     voice = e2e.run.probe.output_command_name
     assert voice is not None
     e2e.person.say(LONG_REQUEST)
     running = e2e.run.expect_action(voice, state="running", within=REPLY_WITHIN_S)
     assert running.ok, running.detail
     time.sleep(2.0)  # well into the story
+    return voice
 
 
-# What the person says to interrupt the app.
-STOP_SENTENCE = "Please stop talking now, that is enough for me."
-
-
-def interrupt_spoken(e2e: E2E) -> None:
-    """Scenario 5 (spoken): the person says "stop" while the app tells a long story; the running
-    `say` is cancelled."""
-    wait_ready(e2e)
-    voice = e2e.run.probe.output_command_name
-    _speaking_started(e2e)
+def spoken_stop(e2e: E2E) -> None:
+    """A conversation step: the person says "stop" while the app tells a long story; the running
+    `say` is cancelled. With the room's echo, the stop reaches the ASR through the canceller."""
+    since = begin(e2e, "a spoken stop")
+    voice = _speaking_started(e2e)
     # One full sentence: the ASR does poorly on short ones (a bare "Stop." delivered nothing).
     e2e.person.say(STOP_SENTENCE)
-    cancelled = e2e.run.expect_action(
-        voice or "say", state="cancelled", within=REPLY_WITHIN_S
-    )
+    cancelled = e2e.run.expect_action(voice, state="cancelled", within=REPLY_WITHIN_S)
     assert cancelled.ok, cancelled.detail
     assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
         "the agent never settled"
     )
-    assert_checks(e2e)
+    assert_checks(e2e, since=since)
 
 
-def interrupt_sign(e2e: E2E) -> None:
-    """Scenario 5 (shown): the person shows `stop` while the app tells a long story; the running
+def shown_stop(e2e: E2E) -> None:
+    """A conversation step: the person shows `stop` while the app tells a long story; the running
     `say` is cancelled — the one sign the persona fixes."""
-    wait_ready(e2e)
-    voice = e2e.run.probe.output_command_name
-    _speaking_started(e2e)
+    since = begin(e2e, "a shown stop")
+    voice = _speaking_started(e2e)
     e2e.person.show("hand_stop")
-    cancelled = e2e.run.expect_action(
-        voice or "say", state="cancelled", within=REPLY_WITHIN_S
-    )
+    cancelled = e2e.run.expect_action(voice, state="cancelled", within=REPLY_WITHIN_S)
     e2e.person.hide()
     assert cancelled.ok, cancelled.detail
     assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
         "the agent never settled"
     )
-    assert_checks(e2e)
+    assert_checks(e2e, since=since)
 
 
 # The sentence that ends a dictated passage: both configs end one on a trigger word ("send"). A full
@@ -239,13 +265,15 @@ def interrupt_sign(e2e: E2E) -> None:
 END_SENTENCE = "That is the end of my note, please send it."
 
 
-def dictation(e2e: E2E) -> None:
-    """Scenario 6: asked to take a note, the agent starts dictation; the passage, two sentences
-    with a pause between them, arrives as one input, closed by a sentence holding a trigger word;
-    and dictation is over after it."""
-    wait_ready(e2e)
+def note(e2e: E2E) -> None:
+    """A conversation step: asked to take a note, the agent starts dictation; the passage, two
+    sentences with a pause between them, arrives as one input, closed by a sentence holding a
+    trigger word; dictation is over after it. Then the person asks what the note said: the answer
+    is recorded, not failed on (the persona asks nothing of it — open question 3)."""
+    since = begin(e2e, "a note")
     bridge = e2e.system.bridge
-    assert bridge is not None
+    voice = e2e.run.probe.output_command_name
+    assert bridge is not None and voice is not None
 
     e2e.person.say("I would like to dictate a note, please.")
     started = e2e.run.expect_action(
@@ -286,9 +314,36 @@ def dictation(e2e: E2E) -> None:
     assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
         "the agent never settled"
     )
+
+    forget_earlier(e2e.run)
+    asked = time.time()
+    e2e.person.say("What was in my note?")
+    answered = e2e.run.expect_action(voice, state="complete", within=SPOKEN_WITHIN_S)
+    said = [
+        str((e.args or {}).get("text", ""))
+        for e in e2e.run.timeline()
+        if e.kind == "command_issued" and e.name == voice and e.t >= asked
+    ]
+    if not answered.ok or not any("milk" in s.lower() for s in said):
+        e2e.run.report_issue(
+            "minor", "the answer about the note did not recall it", repr(said)
+        )
     # Nothing asks the agent to answer a note: the persona lets it stay silent, and Claude Haiku
     # does, every time. So the note may be met with `noop` (specs/e2e.md, open question 3).
-    assert_checks(e2e, tuple(c for c in SCENARIO_CHECKS if c != "no_noop_on_input"))
+    assert_checks(
+        e2e,
+        tuple(c for c in SCENARIO_CHECKS if c != "no_noop_on_input"),
+        since=since,
+    )
+
+
+def never_heard_itself(e2e: E2E) -> None:
+    """The conversation's last step: no `speech_input` of the whole conversation is the app's own
+    words. Without the room's echo nothing can come back, and the report says so."""
+    if not e2e.echo:
+        e2e.run.note("no echo in this run: the app's voice never reached its mic")
+    heard = echoes(e2e.run, e2e.inputs, e2e.person.said)
+    assert not heard, f"the app heard itself: {heard}"
 
 
 def _voice_running(e2e: E2E) -> bool:
