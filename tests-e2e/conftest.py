@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import urllib.request
 from collections.abc import Iterator
@@ -51,11 +50,6 @@ INPUT_KEYS = ("speech_input", "hand_gesture_1", "hand_gesture_2")
 # Each photo's prop is 0.36 m wide (0.24 m tall): the size the hand-render spike validated.
 HAND_WIDTH_M = 0.36
 
-# Whether the robot's voice comes back on the cable (specs/e2e.md, "The Reachy Mini embodiment"):
-# on Linux, with an echo device, the sim's daemon opens the default input with its software
-# canceller on. Set by `pytest_configure`, before the harness spawns the daemon.
-ROBOT_ECHO = False
-
 
 def pytest_configure(config: pytest.Config) -> None:
     """Give the sim the cable before the harness spawns it, then register the harness's plugin.
@@ -63,15 +57,9 @@ def pytest_configure(config: pytest.Config) -> None:
     The tier names its devices once (`WICA_E2E_*_DEVICE`); the bridge's harness reads its own
     variables when it spawns the sim's daemon, so they are copied across here, unless the run set
     them itself. A conftest below the rootdir cannot declare `pytest_plugins`, hence the import."""
-    global ROBOT_ECHO
     mic = os.environ.get("WICA_E2E_MIC_DEVICE")
-    speaker = os.environ.get("WICA_E2E_SPEAKER_DEVICE") or None
-    # Upstream turns the daemon's echo canceller on only over the default input, never a named one:
-    # with the robot's echo, the mic stays unnamed and the run makes the cable the default input.
-    ROBOT_ECHO = (
-        sys.platform == "linux" and bool(mic) and echo_device(speaker) is not None
-    )
-    if mic and not ROBOT_ECHO:
+    speaker = os.environ.get("WICA_E2E_SPEAKER_DEVICE")
+    if mic:
         os.environ.setdefault("REACHY_MINI_E2E_AUDIO_INPUT", mic)
     if speaker:
         os.environ.setdefault("REACHY_MINI_E2E_AUDIO_OUTPUT", speaker)
@@ -247,11 +235,9 @@ def sim_audio(live_daemon: tuple[str, int], devices: Devices) -> None:
         report = json.load(answer)
     audio = report.get("audio") or {}
     heard = audio.get("input_device")
-    # With the robot's echo, the default input, which the run made the cable (`ROBOT_ECHO`).
-    expected = None if ROBOT_ECHO else devices.mic
-    if heard != expected:
+    if heard != devices.mic:
         pytest.fail(
-            f"the sim's daemon listens on {heard!r}, not {expected!r}: stop it "
+            f"the sim's daemon listens on {heard!r}, not the cable {devices.mic!r}: stop it "
             f"and let the run spawn its own (its report: {report})",
             pytrace=False,
         )
@@ -265,7 +251,8 @@ def _reachy(
     scenario: str,
 ) -> Iterator[E2E]:
     """The Reachy Mini embodiment's real system over the run's sim: its own bridge on the harness's
-    daemon, the cable as the robot's mic, the hand props in front of its camera."""
+    daemon, the cable as the robot's mic, the hand props in front of its camera. No echo: the real
+    robot cancels it in hardware, which the sim does not have (specs/e2e.md, "The room")."""
     from reachy_mini_bridge.testing import robot_options
 
     if sim_scene is None:
@@ -281,7 +268,7 @@ def _reachy(
     system = build_system(config.app, ReachyEmbodiment(config))
     try:
         yield from _running(
-            system, devices, SceneStage(sim_scene), out, scenario, echo=ROBOT_ECHO
+            system, devices, SceneStage(sim_scene), out, scenario, echo=False
         )
     finally:
         sim_scene.clear()

@@ -221,11 +221,7 @@ jobs:
           pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic 'source_properties="device.description=wica_mic device.string=wica_mic"'
           pactl load-module module-null-sink sink_name=wica_speaker 'sink_properties="device.description=wica_speaker device.string=wica_speaker"'
           pactl set-default-sink wica_speaker
-          # The robot opens the default input, unnamed: the daemon's software echo canceller
-          # (webrtcdsp, from gst-plugins-bad) runs only there (specs/e2e.md, "The Reachy Mini
-          # embodiment").
           pactl set-default-source wica_mic
-          gst-inspect-1.0 webrtcdsp > /dev/null
           cat > ~/.asoundrc <<'ASOUND'
           pcm.wica_cable { type pulse; device "wica_cable" }
           pcm.wica_mic { type pulse; device "wica_mic" }

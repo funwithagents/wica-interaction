@@ -1,7 +1,7 @@
 """The end-to-end tier on the Reachy Mini embodiment (specs/e2e.md): the real app over the MuJoCo
-sim the bridge's harness runs — the cable as the robot's mic, hand photos as props of its scene; on
-Linux with an echo device, the robot's voice played back through the room, the daemon's software
-canceller on. The scenarios are `scenarios.py`'s, shared with the computer."""
+sim the bridge's harness runs — the cable as the robot's mic, hand photos as props of its scene, and
+no echo (the real robot cancels it in hardware). The scenarios are `scenarios.py`'s, shared with the
+computer."""
 
 from __future__ import annotations
 
