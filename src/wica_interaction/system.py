@@ -74,6 +74,7 @@ from wica_interaction.gesture_input import (
     GestureInput,
     GestureModels,
     hand_signs_prompt_section,
+    preload_mediapipe,
     sign_shown,
 )
 
@@ -201,6 +202,15 @@ def build_system(
     ).start()
 
     missing: list[str] = []
+
+    # MediaPipe before the body: imported once the robot's media runs, it aborts the process on
+    # Linux (see `preload_mediapipe`). Only for the shipped detector — an injected one needs none.
+    if (
+        config.vision is not None
+        and config.vision.enabled
+        and (gesture_models is None or gesture_models.detector is None)
+    ):
+        preload_mediapipe()
 
     # --- The body: entered on the app loop. Any failure is "no embodiment" — the agent still
     # builds and typed text still drives it, but nothing that needs a body is wired. The

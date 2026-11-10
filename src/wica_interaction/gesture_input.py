@@ -267,6 +267,18 @@ class _FpsMeter:
         self._last_count, self._last_t = published_count, now
 
 
+def preload_mediapipe() -> None:
+    """Import MediaPipe now, before the body is entered. The shipped hand detector would import it
+    on first use, on its stage's thread, once the camera runs; on Linux, after the robot's GStreamer
+    media has loaded the system's native libraries, that import aborted the process inside
+    matplotlib's FreeType extension, which MediaPipe pulls in (2026-11-10, specs/gesture-input.md,
+    "App integration"). A missing MediaPipe is left to the stage, which reports it as its error."""
+    try:
+        import mediapipe  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        pass
+
+
 @dataclass(frozen=True)
 class GestureModels:
     """Injectable perception backends (tests); ``None`` for either means the library's shipped

@@ -56,19 +56,26 @@ class FakeOpenCVSource:
         )
         self.raise_on_open: str | None = None
         self.raise_on_read: str | None = None
+        self.frames_per_open: int | None = None
         self.opens = 0
         self.closes = 0
         self.reads = 0
+        self._since_open = 0
 
     def open(self) -> None:
         self.opens += 1
         if self.raise_on_open is not None:
             raise RuntimeError(self.raise_on_open)
+        self._since_open = 0
 
     def read(self) -> np.ndarray | None:
         self.reads += 1
         if self.raise_on_read is not None:
             raise RuntimeError(self.raise_on_read)
+        if self.frames_per_open is not None:
+            if self._since_open >= self.frames_per_open:
+                return None
+            self._since_open += 1
         return self.frame
 
     def close(self) -> None:
