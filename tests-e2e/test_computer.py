@@ -12,7 +12,14 @@ from __future__ import annotations
 import time
 
 from person import HAND_PHOTOS
-from support import E2E, READY_TIMEOUT_S, failed_checks, reactions_to, wait_until
+from support import (
+    E2E,
+    READY_TIMEOUT_S,
+    failed_checks,
+    reactions_to,
+    settled,
+    wait_until,
+)
 
 # Spoken input: the person's speech played, then the ASR closing the turn.
 HEARD_WITHIN_S = 20.0
@@ -101,8 +108,10 @@ def test_each_hand_sign_reaches_the_agent(computer: E2E) -> None:
 
 
 def _show_and_expect(e2e: E2E, photo: str, sign: str) -> None:
-    """Show *photo*: hand 1 carries *sign*, the agent reacts to it; then take the hand away and let
-    the reaction's voice finish, so the next sign (a `stop`) cancels nothing of it."""
+    """Show *photo*: hand 1 carries *sign*, the agent reacts to it; then take the hand away and wait
+    for the agent to settle. WICA drops a trigger that arrives while a reaction is in flight, so a
+    sign shown while the agent still reasons about its last reply would be lost — a person waits
+    for the app to finish too."""
     reacted = reactions_to(e2e.run, "hand_gesture_1")
     t = time.monotonic()
     e2e.person.show(photo)
@@ -118,16 +127,6 @@ def _show_and_expect(e2e: E2E, photo: str, sign: str) -> None:
         lambda: reactions_to(e2e.run, "hand_gesture_1") > reacted, REPLY_WITHIN_S
     ), f"the agent never reacted to {sign!r} ({photo})"
     e2e.person.hide()
-    wait_until(lambda: not _speaking(e2e), SPOKEN_WITHIN_S)
-
-
-def _speaking(e2e: E2E) -> bool:
-    """Whether a call of the voice is still running."""
-    voice = e2e.run.probe.output_command_name
-    states: dict[str, str] = {}
-    for event in e2e.run.timeline():
-        if event.kind == "command_state" and event.name == voice and event.call_id:
-            states[event.call_id] = event.state or ""
-        elif event.kind == "command_issued" and event.name == voice and event.call_id:
-            states.setdefault(event.call_id, "running")
-    return any(state == "running" for state in states.values())
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )

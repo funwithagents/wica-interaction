@@ -71,6 +71,8 @@ On Linux the mic is a remapped source, not the monitor itself, because upstream 
 
 **The app's speaker is never the cable.** BlackHole loops its output back to its input, so an app speaking into the cable it listens on would hear itself. The echo scenario is the one exception, and it sets this up on purpose.
 
+**On macOS the cable runs at the app's recording rate.** The app records at 16 kHz, asr-engine's capture format; BlackHole runs at 48 kHz by default, so PortAudio converts. While something plays into the cable, that conversion kills the capture (PortAudio error `-10863` or `-50`): the stream delivers one empty chunk and nothing more, and reports no error, so the ASR waits in silence. Measured on 2026-11-10: recording at the device's own rate works whatever plays into it; recording at 16 kHz on a 48 kHz cable fails in either open order. So the `devices` fixture sets the cable's own rate to 16 kHz before the run (a child process opens it with Core Audio's "change device parameters"; restarting PortAudio in the test process to read the rate back leaves that process's later streams silent too). The setting stays on the device after the run. Even at 16 kHz, playback opened before the app's capture is running still kills it, so the person's voice opens the cable on its first `say`, after the scenario has waited for the app to listen.
+
 #### The computer embodiment
 
 | Device | Replacement | Set through |
@@ -137,6 +139,8 @@ Each scenario builds and starts the real system, lets the person act, and assert
 - **Time limits are generous and asserted as timeouts**, through the `within=` windows of the `expect_*` calls. Latencies are recorded in the report but not asserted; `expect_latency` is not used.
 - **What the inputs delivered is read from the World.** The harness's timeline records a trigger for each write but not its value, and `expect_world` only sees an entry's current value, which a TTL clears a moment later. An `InputLog` (a World listener on `speech_input` and the `hand_gesture_<n>` entries) records each value written, so a scenario asserts what the ASR heard and which sign the hand models delivered.
 - **The agent may ignore a sign.** The persona lets it decide whether a sign was meant for it, so a count can be met with `noop`. Scenario 3 asserts that the agent reacted (a reaction triggered by the sign), not what it did. `stop` is the exception the persona fixes: it is answered out loud.
+
+- **The agent settles before the next input.** WICA drops a trigger that arrives while a reaction is in flight (the framework's open concurrency question): a sign shown while the agent still reasons about the completion of its last reply is lost. Scenario 3 hit it on a second `stop` shown about a second after the first reply ended. So between inputs a scenario waits until no reaction is in flight and no Command runs, for a second in a row, as a person waits for the app to finish. A person who does not wait loses that input: a limit of the framework, recorded here, not worked around.
 - **The framework's checks run after every scenario**, over the whole timeline, through `wica.testing.run_check`: no reaction fails (`no_failed_reactions`), no cancel collides with a running action (`no_colliding_cancel`), and no spoken input is met with a no-op alone (`no_noop_on_input`, over `speech_input` only, since a sign may be ignored). `answers_each_input` is left out: it counts a turn from an `input_written` event, which the harness records only for the tester's own writes, and here the app's inputs write the World, so it would pass over zero turns.
 - **The scenarios are plain pytest code, not WICA scenario files.** A scenario file's tester can only act through the fixed tester Commands, and its `set_<key>` Commands write the inputs straight into the World. That would bypass the ASR and the hand models, which are what this tier exists to test.
 
@@ -218,6 +222,6 @@ Windows on Arm (for example in Parallels on an Apple silicon Mac) is a different
 
 ## Open questions
 
-1. **The echo scenario on BlackHole.** It assumes one cable can carry both voices, and that the echo-cancellation coordinator, given its exact far-end reference, removes the app's voice. Confirm this on the Mac before the scenario is written.
+1. **The echo scenario on BlackHole.** The app's voice would play into the cable at phonon's 24 kHz while the app records it at 16 kHz; the cable runs at 16 kHz (above), so the playback is converted, which worked in the measurements. It also assumes one cable can carry both voices, and that the echo-cancellation coordinator, given its exact far-end reference, removes the app's voice. Confirm this on the Mac before the scenario is written.
 2. **Recording the cable.** A recording of what the mic heard would be the best evidence for a failed spoken scenario. The cost is one more input stream on the cable during the run.
 3. **The harness's startup timeout.** It is fixed at 45 s, which a first macOS launch exceeds. This is raised with the bridge. Until it is fixed, the workaround is a daemon started by hand.

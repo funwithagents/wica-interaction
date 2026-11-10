@@ -20,7 +20,14 @@ from typing import Any
 
 import pytest
 from person import FileCamera, Person
-from support import E2E, InputLog, require_device, require_env
+from support import (
+    E2E,
+    MIC_RATE,
+    InputLog,
+    pin_device_rate,
+    require_device,
+    require_env,
+)
 from wica.contrib.gradio import TranscriptLog
 from wica.testing import TestRun
 
@@ -47,6 +54,7 @@ class Devices:
 @pytest.fixture(scope="session")
 def devices() -> Devices:
     mic = require_device(require_env("WICA_E2E_MIC_DEVICE"), "input")
+    pin_device_rate(mic, MIC_RATE)
     person_voice = require_device(
         os.environ.get("WICA_E2E_PERSON_VOICE_DEVICE") or mic, "output"
     )
@@ -116,8 +124,10 @@ def computer(devices: Devices, keys: None, tmp_path: Path) -> Iterator[E2E]:
         wire(system, TranscriptLog(system.wica, display_entry))
         run = TestRun(system.wica, scenario="computer")
         inputs = InputLog(system.wica.world, INPUT_KEYS)
-        person = Person(devices.person_voice, camera)
         _start(system)
+        # After the start, not before: on macOS, a process that opens the cable's playback end
+        # before its recording end gets a capture that stays silent (PortAudio error -10863).
+        person = Person(devices.person_voice, camera)
         e2e = E2E(system=system, run=run, inputs=inputs, person=person)
         try:
             yield e2e
