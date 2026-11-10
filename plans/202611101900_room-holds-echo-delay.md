@@ -1,6 +1,6 @@
 # The room holds its echo's delay
 
-**Status:** Todo
+**Status:** In progress
 
 Implements the settled behavior in `specs/e2e.md` ("The room", "The echo's delay holds"): the end-to-end room keeps the app's echo at its 50 ms delay for the whole run, against the drift between its recording and playback streams and a late recording block. It leaves out drift on purpose (a room variant for two devices), which the spec defers.
 
@@ -11,7 +11,7 @@ Implements the settled behavior in `specs/e2e.md` ("The room", "The echo's delay
 
 ## Steps
 
-1. In `Mixer`, replace the backlog cap in `heard` with a hold in `block`: track the average backlog (weight 0.01 per block, about a second), adjusted by each correction the room makes itself so it never chases its own steps; per block take `n + 1`, `n − 1` or `n` echo samples by the average's error against the delay (±24 samples at 48 kHz) and resample them to `n` (linear); beyond ±960 samples, drop the oldest or pad silence to the delay at once and count it.
+1. In `Mixer`, replace the backlog cap in `heard` with a hold in `block`: `heard` takes the block's ADC time and `block` the DAC time of its first sample, so the echo's delay is measured from recording to playback (the backlog alone moves with the streams' phase). Lock the delay held after 100 blocks; track it with two averages (weights 0.01 and 0.03 per block), each adjusted by the room's own corrections so they never chase them; per block take `n + 1`, `n − 1` or `n` echo samples by the slow average's error (±24 samples at 48 kHz) and resample them to `n` (linear); when the fast average is more than 960 samples over, cut the whole excess as measured now and count it. Never pad a shortfall at once.
 2. The room's log: the `rec` rows' last column becomes the count of hard corrections so far (it was "cut"); the module docstring says so.
 3. Check offline: drive the `Mixer` with a recording stream 400 ppm faster than its playback, and with a 90 ms late block, and read the delay of what it plays back (cross-correlation): it holds within a millisecond, and the late block is corrected at once.
 4. One CI run: the room's log shows the backlog flat at the delay, and the echo's delay measured on the app's side (`analysis/echo_bench.py track`) no longer creeps.
