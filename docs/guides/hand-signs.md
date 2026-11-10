@@ -6,7 +6,7 @@ The agent's second perception, after speech: the body's camera runs through the 
 
 One entry per hand, `hand_gesture_1` up to `hand_gesture_<max_hands>`, holding the sign that hand just showed. Showing a sign wakes the agent; a hand relaxing or leaving does not. The sign is a one-shot observation: it is cleared a second after it lands and gone from every later prompt, so it reads as what the person just did, not as something they are still holding ([agent.md](../reference/agent.md)).
 
-The persona section describing this is appended at startup, only when vision is on, and it describes the perception, not the reactions: the agent is told it can see the person's hands, which signs exist, and that hand numbers follow the order the hands appeared in, not left and right. It is not told what `like`, `ok` or a count means, nor whether to respond; it decides from the conversation. The one exception is `stop`: when any hand shows it, the agent cancels everything it is doing, then confirms out loud in the next turn.
+The persona section describing this is appended at startup, only when vision is on, and it describes the perception, not the reactions: the agent is told a camera detects hand gestures (not whose hand made them), which signs exist, and that hand numbers follow the order the hands appeared in, not left and right. It is not told what `like`, `ok` or a count means, nor whether to respond; it decides from the conversation. The one exception is `stop`: when it is detected on any hand, the agent cancels everything it is doing, then confirms out loud in the next turn.
 
 ## The vocabulary
 

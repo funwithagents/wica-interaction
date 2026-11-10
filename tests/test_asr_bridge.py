@@ -18,7 +18,7 @@ from typing import Any, cast
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
 
-from wica_interaction.asr_bridge import AsrBridge
+from wica_interaction.asr_bridge import AsrBridge, DictatedPassage
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -129,6 +129,30 @@ def test_interim_interim_final_yields_one_call_with_final_text() -> None:
 
     assert finals == ["hello world"]  # exactly one utterance, once
     assert bridge.display_text == ""
+
+
+def test_a_final_closing_a_dictation_is_marked_as_a_dictated_passage() -> None:
+    """A final closed by dictation's segmentation (a trigger word, a timeout) arrives as a
+    `DictatedPassage` — the same text — while a conversational final stays a plain string."""
+    engine = FakeASREngine()
+    bridge, finals = _make_bridge(engine)
+
+    run(bridge._on_segment(_segment("hello", is_final=True)))
+    for reason in ("trigger_word", "end_of_speech_timeout", "initial_silence_timeout"):
+        run(
+            bridge._on_segment(
+                SpeechSegment(
+                    transcript="buy milk",
+                    is_final=True,
+                    end_reason=reason,
+                    utterances=[],
+                )
+            )
+        )
+
+    assert finals == ["hello", "buy milk", "buy milk", "buy milk"]
+    assert not isinstance(finals[0], DictatedPassage)
+    assert all(isinstance(f, DictatedPassage) for f in finals[1:])
 
 
 def test_empty_final_still_fires() -> None:

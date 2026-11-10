@@ -42,6 +42,7 @@ Implementation plans for WICA Interaction (formerly Reachy Mini Interaction WICA
 | [202611092230_reachy-sim-extra.md](202611092230_reachy-sim-extra.md) | The `reachy-sim` extra ([specs/project.md](../specs/project.md)): the MuJoCo simulator mirrored from the bridge's `sim` extra under its own name, in `all` and pulled by `dev`, so an install that runs the reachy template as committed selects it by name instead of the whole tooling; the install reference, README and guides point at the extra | Done |
 | [202611092335_bridge-tracking-object.md](202611092335_bridge-tracking-object.md) | Catch up with reachy-mini-bridge dcb55de: `motion.tracking` is an object (`{"enabled": true}`) in the template, the tests and the docs | Done |
 | [202611100046_ci-source-build-cache.md](202611100046_ci-source-build-cache.md) | CI's uv cache keyed on the sdist-only packages' locked entries (`aec-audio-processing`, PyGObject, pycairo), not the whole `uv.lock` ([specs/ci.md](../specs/ci.md)): a sibling bump no longer costs a two-minute rebuild on every job | Done |
+| [202611101225_input-wordings.md](202611101225_input-wordings.md) | The input wordings ([specs/app.md](../specs/app.md), [specs/asr-bridge.md](../specs/asr-bridge.md), [specs/gesture-input.md](../specs/gesture-input.md)): speech heard, gestures detected, a dictated passage marked complete | Done |
 | _(add plans here — see [_plan-template.md](_plan-template.md))_ | | |
 
 ## Status legend

@@ -53,6 +53,17 @@ Both inputs are **one-shot perceptions**, not standing state: the person *said* 
 - **A TTL on each entry.** `speech_input` is registered with `ttl=SPEECH_INPUT_TTL` (**2 s**) and each `hand_gesture_<n>` with `ttl=HAND_GESTURE_TTL` (**1 s**), both module constants in `system.py`. The World resets the value to `None` that long after the update that set it — a reset that advances the entry's `id`, dispatches listeners (the World panel shows it clear) but **never triggers a step**. The step the input triggers observes it well within that window (the coalescing window is ~200 ms); a step started later does not.
 - **`None` renders nothing.** Both `serialize_fn`s return an empty `Content` for `None` — nothing said yet or the utterance expired; no sign delivered yet, the hand dropped, or the sign expired — and WICA **omits** such an entry from the render, envelope included ("Omitting an entry" in world.md). So a prompt carries a `speech_input` block only in the step the utterance triggered, and a `hand_gesture_<n>` block only while that hand's sign is live; there is no "hasn't said anything" or "not showing a sign" placeholder. History keeps what was observed (each observation is its own snapshot), so the model still sees earlier utterances and signs in context, just not as current.
 
+**What the prompt says.** Each line says what the app *perceived*, never more than the input knows: the mic cannot tell the person in front of the app from anyone else in the room, nor the camera whose hand it sees, and a wording that claimed it would be contradicted the moment it was wrong — the app hearing its own voice, a hand at the edge of the frame.
+
+| Entry, value | Rendered |
+|---|---|
+| `speech_input`, an utterance (typed lines included) | `You hear someone say: "<text>"` |
+| `speech_input`, a `DictatedPassage` ([asr-bridge.md](asr-bridge.md)) | `Dictation is over. You heard this complete dictated passage: "<text>"` |
+| `hand_gesture_<n>`, a sign | `Hand gesture detected on hand <n>: "<sign>".` |
+| either, `None` | nothing |
+
+The dictated passage says the dictation is over because the model otherwise read it as one more sentence of the note it had asked for.
+
 Two consequences are accepted by design: an utterance whose trigger was dropped because a step was in flight (`wica-framework/specs/agent.md`, "Concurrency") is lost unless a step observes it within 2 s (before, it lingered until the next unrelated step and was then answered late); and a sign the person keeps holding reads as no sign after 1 s until the hand changes, since `GestureInput` delivers changes only and never refreshes an unchanged value.
 
 ## What the user sees
@@ -83,7 +94,7 @@ A text box in the ASR panel, **always visible**, is the app's keyboard hatch int
 
 Both ways in write `speech_input` through one guarded World write, built by `build_system` as two closures over the agent — the only code that writes `speech_input`, so the paths cannot drift:
 
-- **`_deliver_speech(text)`** — the ASR path, wired as the bridge's `on_final_segment`: writes the transcript **verbatim**, empty included (the prompt renders `""` as `The person said to you: ""`, while `None` — nothing said yet, or expired — renders nothing at all; see "Inputs are transient"). Guarded on a running agent — `world.update` raises while stopped, so input before `start()` or after teardown, or with no agent, is dropped, not raised.
+- **`_deliver_speech(text)`** — the ASR path, wired as the bridge's `on_final_segment`: writes the transcript **verbatim**, empty included, a `DictatedPassage` kept as one (the prompt renders `""` as `You hear someone say: ""`, while `None` — nothing said yet, or expired — renders nothing at all; see "Inputs are transient"). Guarded on a running agent — `world.update` raises while stopped, so input before `start()` or after teardown, or with no agent, is dropped, not raised.
 - **`submit_speech(text)`** — the typed path, exposed as `AppSystem.submit_speech`: strips, drops empty, then `_deliver_speech`.
 
 `speech_input` is registered with `triggers_llm_call=True` and no trigger condition, so repeating the same text triggers again.
