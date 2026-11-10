@@ -15,7 +15,7 @@ tests:
 
 # End-to-end tier
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
@@ -80,6 +80,8 @@ The room is what stands between the app and the person: one process (`tests-e2e/
 
 - **The person's voice.** It speaks each line it is sent with its own phonon engine and answers once the line has been played.
 - **The app's echo.** When there is an echo device, it records the app's speaker from it and plays it back into the cable **50 ms later and 10 dB quieter**, mixed with the person's voice, for the whole run: the speaker-to-mic path of a laptop on a desk. Without one, the cable carries the person alone, as with a headset.
+
+**The echo's delay holds.** The room records the app's speaker on one stream and plays into the cable on another, paced by two devices whose clocks need not agree, so what it holds between the two grows or shrinks with their difference: measured in CI, 250–400 ppm, 20–30 ms over a conversation. An echo path that creeps is not a laptop's (its speakers and mic share one sound card's clock), and the canceller pays for it: re-adapting all along, it leaked ~1 s more per conversation (`analysis/202611101625_echo-canceller.md`). So the room holds its echo backlog at the delay. It averages the backlog over about a second and, while that average is more than 0.5 ms off, plays each 10 ms block from one sample more (or fewer) of the echo, resampled: steps of a fiftieth of a millisecond, enough for ±2,000 ppm. A backlog more than 20 ms off is not a clock but a late block, and is cut (or padded) back to the delay at once. Drift on purpose, the case of two devices (a USB speaker, Bluetooth), is a variant of the room still to add, not an accident of every run.
 
 So the computer's echo is on whenever the run gives it a virtual speaker: always in CI, and on a Mac with a second BlackHole (`brew install blackhole-16ch`, `WICA_E2E_SPEAKER_DEVICE="BlackHole 16ch"`). A Mac with BlackHole 2ch alone runs without it.
 
