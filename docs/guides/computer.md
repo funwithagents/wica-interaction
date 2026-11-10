@@ -34,6 +34,8 @@ The fields are `echo_cancellation.enabled` and `echo_cancellation.stream_delay_m
 
 When the extra is not installed, or the WebRTC binding failed to build, the app still opens: the banner carries an `Audio processing:` line with the reason, and the microphone goes to the speech recognizer raw ([troubleshooting.md](troubleshooting.md#the-agent-hears-itself)). The speech recognizer must be configured for 16 kHz mono, the default, which is the processor's working rate; another format is reported on the same banner line.
 
+**With headphones, turn it off.** Headphones remove the loop outright, and a canceller with no echo to learn from mutes you instead: until it has heard a few seconds of its own voice come back, it treats anything the microphone picks up while the voice plays as echo and suppresses it, so talking over the agent's first replies does not reach the speech recognizer. On loudspeakers it learns the echo within a second or two and lets your voice through, apart from the first fraction of a second of speaking over it.
+
 Echo cancellation removes the self-hearing loop. It does not add barge-in: talking over the agent is still not supported ([limits.md](limits.md)).
 
 ## Noise suppression

@@ -30,7 +30,7 @@
       "audio": {
         "device": null
       },
-      "dictation_default_segmentation_mode": "timeout"
+      "dictation_default_segmentation_mode": "trigger_word"
     }
   },
   "audio_processing": {
