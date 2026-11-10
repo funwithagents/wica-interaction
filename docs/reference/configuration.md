@@ -110,7 +110,7 @@ Computer only, optional: absent means both features off. One WebRTC processor cl
 | Field | Default | What it does |
 |---|---|---|
 | `echo_cancellation.enabled` | `false` | subtract what the voice is playing from the mic, so the agent does not hear itself |
-| `echo_cancellation.stream_delay_ms` | `0` | a hint for the canceller's delay estimator: the output latency of your audio path, in milliseconds |
+| `echo_cancellation.stream_delay_ms` | `0` | the output latency of your audio path, in milliseconds, passed to the canceller as a hint; the current one (AEC3) measures the delay itself and all but ignores it |
 | `noise_suppression.enabled` | `false` | attenuate steady ambient noise |
 | `noise_suppression.level` | `2` | WebRTC's aggressiveness, `0` (mild) to `3` (max) |
 
