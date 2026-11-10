@@ -25,6 +25,7 @@ import pytest
 from person import FIXTURES, HAND_PHOTOS, FileCamera, Person, SceneStage, Stage
 from support import (
     E2E,
+    EchoRecorder,
     InputLog,
     echo_device,
     missing,
@@ -204,9 +205,14 @@ def _computer(devices: Devices, out: Path, scenario: str) -> Iterator[E2E]:
     )
     config = load_computer_config(str(config_path))
     system = build_system(config.app, ComputerEmbodiment(config))
-    yield from _running(
-        system, devices, camera, out, scenario, echo=devices.echo is not None
-    )
+    if devices.echo is None:
+        yield from _running(system, devices, camera, out, scenario, echo=False)
+        return
+    with EchoRecorder() as recorder:
+        try:
+            yield from _running(system, devices, camera, out, scenario, echo=True)
+        finally:
+            recorder.save(out / "audio.npz")
 
 
 @pytest.fixture

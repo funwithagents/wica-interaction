@@ -223,8 +223,9 @@ A failure in this tier is otherwise hard to diagnose, so each scenario writes it
 - what the inputs delivered (`inputs.json`);
 - the config the run was built from, with its values filled in, and, on the computer, the camera file as it last stood;
 - for a conversation, one report for the whole of it, each step's start marked in its timeline (`TestRun.note`), written once the class is done.
+- on the computer with the room's echo on, what its echo canceller saw and made (`audio.npz`): the mic as captured, the voice's reference and the cleaned mic the ASR heard, at 16 kHz, from which the echo's delay and what the canceller removed are read back offline.
 
-Recording the cable is an open question (below).
+Recording the cable otherwise is an open question (below).
 
 ### Platforms
 

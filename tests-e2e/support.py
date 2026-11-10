@@ -15,7 +15,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, NoReturn
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, Self
 
 import pytest
 from wica.testing import CHECKS, CheckContext, CheckSpec, Finding, TestRun, run_check
@@ -280,3 +280,54 @@ def command_spans(run: TestRun) -> list[tuple[str, float, float]]:
         (name, t, ended.get(call_id, float("inf")))
         for call_id, (name, t) in started.items()
     ]
+
+
+class EchoRecorder:
+    """What the computer's echo canceller saw and made, saved as evidence when the room's echo is on
+    (specs/e2e.md, "Evidence on failure"): the mic as captured (`near`), the voice's reference
+    (`far`) and the cleaned mic the ASR heard (`out`), each int16 at 16 kHz, frame-aligned. From
+    them the echo's delay and how much of it the canceller removed can be read back offline."""
+
+    def __init__(self) -> None:
+        from wica_interaction.computer import audio_processing
+
+        self._cls = audio_processing.AudioProcessingCoordinator
+        self._process = self._cls._process_chunk
+        self._pop = self._cls._pop_far
+        self.near: list[Any] = []
+        self.far: list[Any] = []
+        self.out: list[Any] = []
+
+    def __enter__(self) -> Self:
+        import numpy as np
+
+        recorder, process, pop = self, self._process, self._pop
+
+        def _process_chunk(coordinator: Any, chunk: bytes) -> bytes:
+            recorder.near.append(np.frombuffer(chunk, np.int16).copy())
+            out = process(coordinator, chunk)
+            recorder.out.append(np.frombuffer(out, np.int16).copy())
+            return out
+
+        def _pop_far(coordinator: Any, n: int) -> Any:
+            frame = pop(coordinator, n)
+            recorder.far.append(frame.copy())
+            return frame
+
+        self._cls._process_chunk = _process_chunk  # pyright: ignore[reportAttributeAccessIssue]
+        self._cls._pop_far = _pop_far  # pyright: ignore[reportAttributeAccessIssue]
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._cls._process_chunk = self._process  # pyright: ignore[reportAttributeAccessIssue]
+        self._cls._pop_far = self._pop  # pyright: ignore[reportAttributeAccessIssue]
+
+    def save(self, path: Any) -> None:
+        import numpy as np
+
+        def joined(chunks: list[Any]) -> Any:
+            return np.concatenate(chunks) if chunks else np.zeros(0, np.int16)
+
+        np.savez_compressed(
+            path, near=joined(self.near), far=joined(self.far), out=joined(self.out)
+        )
