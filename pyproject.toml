@@ -141,10 +141,12 @@ target-version = "py312"  # keep in sync with requires-python
 [tool.pytest.ini_options]
 # Only the fast, deterministic tier is collected by default; tests-e2e/ is opt-in.
 testpaths = ["tests"]
-# sounddevice raises this NumPy 2 deprecation in every audio callback. A plain run ignores it, but
-# pytest records each one (~17k in an end-to-end conversation) and processes them at the end of
-# each test, freezing the process ~300 ms while the app's audio streams run: its mic then stays
-# ~85 ms behind, and the echo canceller relearns (analysis/202611101625_echo-canceller.md).
+# sounddevice 0.5.6 raises this NumPy 2.5 deprecation in every audio callback (`data.shape = …`).
+# A plain run ignores it, but pytest records each one (~17k in an end-to-end conversation) and
+# processes them at the end of each test, freezing the process ~300 ms while the app's audio
+# streams run: its mic then stays ~85 ms behind, and the echo canceller relearns
+# (analysis/202611101625_echo-canceller.md). Fixed upstream (spatialaudio/python-sounddevice#641),
+# not yet released: drop this filter once a sounddevice release after 0.5.6 is in uv.lock.
 filterwarnings = [
     "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning:sounddevice",
 ]
