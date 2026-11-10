@@ -19,7 +19,7 @@ Implements [specs/e2e.md](../specs/e2e.md) scenarios 5 (interrupt: a spoken stop
 
 ## In CI (Linux)
 
-- The computer's spoken stop **passed** with echo cancellation on: the suppression is the Mac's (open question 4); the test is an expected failure on macOS only.
+- The computer's spoken stop passed with echo cancellation on in one run, and failed in the next: the suppression is intermittent on Linux too (open question 4); the test is an expected failure everywhere.
 - The computer's dictation closed empty before the person spoke: the dictation's 10 s initial-silence timeout ran out while the scenario waited for the agent to settle. The person now dictates a second after dictation starts. The ASR also misheard "Call the plumber" ("I'll look under"); the sentence is now "Call the doctor tomorrow morning".
 - The robot's dictation met the model's `noop` again: an expected failure until open question 3 is decided.
 
