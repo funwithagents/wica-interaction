@@ -24,6 +24,14 @@ from asr_engine.segmenter import SpeechSegment
 logger = logging.getLogger(__name__)
 
 OnFinalSegment = Callable[[str], None]
+
+
+class DictatedPassage(str):
+    """A closed segment that ended a dictation: the transcript itself, marked so the prompt can say
+    the passage is complete (specs/asr-bridge.md, "Dictation"). A ``str`` subclass, so everything
+    that reads the transcript — the World, the transcript panel, the tests — reads it unchanged."""
+
+
 # The embodiment's capture health, read on every status() poll (specs/embodiment.md, `mic_error`).
 MicError = Callable[[], str | None]
 
@@ -74,13 +82,18 @@ class AsrBridge:
 
         Interim segments only update the live display text — the World is untouched, so the agent is
         not triggered. A final segment calls ``on_final_segment`` with its transcript (once, for every
-        final, including an empty one) and then clears the display text back to ``""``. Only in-memory
+        final, including an empty one) — a ``DictatedPassage`` when it closed a dictation — and then
+        clears the display text back to ``""``. Only in-memory
         state is mutated and the callback is synchronous, so this never blocks the ASR loop.
         """
         if not segment.is_final:
             self._display_text = segment.transcript
             return
-        self._on_final_segment(segment.transcript)
+        # Every mode but conversation's `utterance` is dictation's: a trigger word or a timeout
+        # closed the passage, and the engine has reverted to conversation.
+        dictated = segment.end_reason not in (None, "utterance")
+        text = segment.transcript
+        self._on_final_segment(DictatedPassage(text) if dictated else text)
         self._display_text = ""
 
     @property

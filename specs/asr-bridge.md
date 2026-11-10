@@ -25,9 +25,11 @@ The ASR engine emits a `SpeechSegment` on **every** change: interim updates whil
 | Segment | What the bridge does |
 |---|---|
 | **Interim** (`is_final=False`) | Updates its **live display text** to `segment.transcript`. Does **not** touch the World — the agent is not triggered. |
-| **Final** (`is_final=True`) | Calls the injected **`on_final_segment(transcript)`** callback (the app wires this to `world.update("speech_input", transcript)`, which triggers one reasoning step) and then **clears the live display text** back to `""`. |
+| **Final** (`is_final=True`) | Calls the injected **`on_final_segment(transcript)`** callback (the app wires this to `world.update("speech_input", transcript)`, which triggers one reasoning step) and then **clears the live display text** back to `""`. A final that closed a dictation is passed as a **`DictatedPassage`** (below). |
 
 So partial speech is *visible but inert* — it streams into the ASR panel character by character — and only a closed segment reaches the agent, exactly once, as one complete utterance. The World's `speech_input` entry changes once per closed segment, never on interims, so a burst of interim updates cannot wake the agent mid-utterance.
+
+**A passage that closed a dictation is marked.** A final whose `end_reason` is anything but `utterance` (a `trigger_word`, or one of the timeouts) was closed by dictation's segmentation, and the engine has reverted to conversation. The bridge passes it as a `DictatedPassage`: a `str` subclass holding the same text, so the World, the transcript panel and every reader of the text see it unchanged, while the prompt can say the dictation is over and the passage complete ([app.md](app.md), "Inputs are transient"). Without it the passage read like one more sentence: in the end-to-end tier the model met the note with `noop` every time, and, asked what the note said, answered that it was not finished yet.
 
 **Every** final fires the callback — including one whose transcript is empty or whitespace (e.g. a `timeout`-mode segment that closes on `initial_silence_timeout` with no speech). The bridge does not filter these: a closed-on-silence segment writes an empty `speech_input`, so the agent can react to the user saying *nothing* after dictation starts. What an empty utterance *means* is the consumer's decision ([app.md](app.md), "The input funnel"), and both personas tell the model.
 
@@ -126,6 +128,7 @@ Drive `AsrBridge` against a fake `ASREngine` (no audio, no network) that lets a 
 
 - An interim segment updates `display_text` and does **not** call `on_final_segment`.
 - A final segment calls `on_final_segment` once with its `transcript`, then `display_text` is `""`; an empty final still fires.
+- A final closed by dictation (`trigger_word`, a timeout) arrives as a `DictatedPassage` with the same text; a conversational final stays a plain string.
 - A sequence interim→interim→final yields exactly one `on_final_segment` call, with the final text.
 - `start_dictation()` calls the engine with `end_on_final_segment=True` and the resolved mode; `status()` reflects `dictating` / `segmentation_mode` from the (fake) engine.
 - The reply per mode: `timeout` speaks of the person stopping and asks for no word; `trigger_word` names the injected words and rules out a pause; with no mode passed it describes the mode the engine resolved.

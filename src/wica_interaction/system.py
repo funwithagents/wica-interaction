@@ -67,7 +67,7 @@ from wica.config import (
 from wica.contrib.gradio import TranscriptLog
 
 from wica_interaction.app_ui import build_ui
-from wica_interaction.asr_bridge import AsrBridge
+from wica_interaction.asr_bridge import AsrBridge, DictatedPassage
 from wica_interaction.config import AppConfig
 from wica_interaction.embodiment import Embodiment
 from wica_interaction.gesture_input import (
@@ -103,17 +103,26 @@ HAND_GESTURE_TTL = timedelta(seconds=1)
 
 
 def _speech_input(value: Any, previous: Any) -> Content:
-    """Render the triggering `speech_input` entry into the prompt (voice-assistant phrasing).
+    """Render the triggering `speech_input` entry into the prompt.
 
-    An empty string — an ASR final that closed on silence, delivered verbatim — is a real value,
-    rendered as ``said to you: ""``. ``None`` — nothing said yet, or the last utterance expired
+    It says what was *heard*, not who said it: the mic cannot tell the person in front of the app
+    from anyone else in the room. A ``DictatedPassage`` says the dictation is over and the passage
+    whole, so the model reads it as the note it asked for, not one more sentence of it. An empty
+    string — an ASR final that closed on silence, delivered verbatim — is a real value, rendered as
+    ``""``. ``None`` — nothing said yet, or the last utterance expired
     (`SPEECH_INPUT_TTL`) — renders **nothing**: WICA omits an entry whose serializer returns an empty
     `Content`, envelope included, so the prompt carries no `speech_input` block at all rather than
     a stale or empty one. Its person-facing counterpart (how the same entry reads in the transcript)
     is ``display_entry`` in [app_ui.py](app_ui.py)."""
     if value is None:
         return []
-    return [TextPart(f'The person said to you: "{value}"')]
+    if isinstance(value, DictatedPassage):
+        return [
+            TextPart(
+                f'Dictation is over. You heard this complete dictated passage: "{value}"'
+            )
+        ]
+    return [TextPart(f'You hear someone say: "{value}"')]
 
 
 def _hand_gesture(hand: int) -> Callable[[Any, Any], Content]:
@@ -122,12 +131,13 @@ def _hand_gesture(hand: int) -> Callable[[Any, Any], Content]:
     (`sign_shown`); ``None`` — no sign delivered yet, the hand dropped, or the sign expired
     (`HAND_GESTURE_TTL`) — renders nothing, so the entry is omitted rather than saying "no sign".
     What a sign *means* is deliberately not said here, nor in the persona (except `stop`): the agent
-    reads it from the interaction."""
+    reads it from the interaction. It says a gesture was *detected*, not that the person made it: the
+    camera cannot tell whose hand it is."""
 
     def serialize(value: Any, previous: Any) -> Content:
         if value is None:
             return []
-        return [TextPart(f'The person\'s hand {hand} is showing the "{value}" sign.')]
+        return [TextPart(f'Hand gesture detected on hand {hand}: "{value}".')]
 
     return serialize
 
