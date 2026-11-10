@@ -158,3 +158,21 @@ def test_camera_device_of_the_wrong_type_raises(tmp_path: Path, device: object) 
         ValueError, match="camera.device must be an integer or a string"
     ):
         load_config(_write(tmp_path, {**_composed(), "camera": {"device": device}}))
+
+
+def test_a_discarded_voice_loads_with_echo_cancellation_off(tmp_path: Path) -> None:
+    config = _composed()
+    config["tts"]["engine"]["player"] = {"discard": True}
+    loaded = load_config(_write(tmp_path, config))
+    assert loaded.tts_engine.player.discard is True
+
+
+def test_a_discarded_voice_with_echo_cancellation_on_is_rejected(
+    tmp_path: Path,
+) -> None:
+    # The coordinator's player would open the default device: the voice would not be discarded.
+    config = _composed()
+    config["tts"]["engine"]["player"] = {"discard": True}
+    config["audio_processing"] = {"echo_cancellation": {"enabled": True}}
+    with pytest.raises(ValueError, match="echo_cancellation"):
+        load_config(_write(tmp_path, config))

@@ -69,6 +69,12 @@ def is_device(name: str, kind: Literal["input", "output"]) -> bool:
     return True
 
 
+def discard_speaker() -> bool:
+    """`WICA_E2E_DISCARD_SPEAKER=1`: the app's voice goes to no device, played at real-time pace and
+    dropped — for a host whose only virtual device is the cable the app listens on (Windows CI)."""
+    return os.environ.get("WICA_E2E_DISCARD_SPEAKER", "").strip() == "1"
+
+
 def echo_device(speaker: str | None) -> str | None:
     """The device the room records the app's voice from (specs/e2e.md, "The room"):
     `WICA_E2E_ECHO_DEVICE`, else the app's *speaker* when it is also an input device (BlackHole),

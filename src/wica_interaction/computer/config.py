@@ -128,14 +128,21 @@ def load_config(path: str) -> ComputerConfig:
     app = load_app_config(data, path=path, sections=SECTIONS)
     if "tts" not in data:
         raise ValueError(f"config file {path!r} is missing required section(s): 'tts'")
+    tts_engine = TTSEngineConfig.from_dict(
+        engine_block(data["tts"], name="tts", path=path)
+    )
+    audio_processing = _audio_processing_config(data.get("audio_processing"), path=path)
+    # With echo cancellation on, the voice plays through the coordinator's own player, which knows
+    # devices only; a voice played nowhere leaves no echo to cancel either.
+    if tts_engine.player.discard and audio_processing.echo_cancellation.enabled:
+        raise ValueError(
+            f"config file {path!r}: 'tts.engine.player.discard' plays the voice on no device, "
+            "so there is no echo to cancel: turn 'audio_processing.echo_cancellation' off"
+        )
     return ComputerConfig(
         app=app,
-        tts_engine=TTSEngineConfig.from_dict(
-            engine_block(data["tts"], name="tts", path=path)
-        ),
-        audio_processing=_audio_processing_config(
-            data.get("audio_processing"), path=path
-        ),
+        tts_engine=tts_engine,
+        audio_processing=audio_processing,
         camera=(
             CameraConfig.from_dict(data["camera"], path=path)
             if data.get("camera") is not None

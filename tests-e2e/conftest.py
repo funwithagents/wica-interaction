@@ -27,6 +27,7 @@ from support import (
     E2E,
     EchoRecorder,
     InputLog,
+    discard_speaker,
     echo_device,
     missing,
     require_device,
@@ -55,15 +56,22 @@ HAND_WIDTH_M = 0.36
 def pytest_configure(config: pytest.Config) -> None:
     """Give the sim the cable before the harness spawns it, then register the harness's plugin.
 
-    The tier names its devices once (`WICA_E2E_*_DEVICE`); the bridge's harness reads its own
-    variables when it spawns the sim's daemon, so they are copied across here, unless the run set
-    them itself. A conftest below the rootdir cannot declare `pytest_plugins`, hence the import."""
+    The tier names its devices once (`WICA_E2E_*_DEVICE`, `WICA_E2E_DISCARD_SPEAKER`); the bridge's
+    harness reads its own variables when it spawns the sim's daemon, so they are copied across
+    here, unless the run set them itself. A conftest below the rootdir cannot declare
+    `pytest_plugins`, hence the import."""
     mic = os.environ.get("WICA_E2E_MIC_DEVICE")
     speaker = os.environ.get("WICA_E2E_SPEAKER_DEVICE")
+    if speaker and discard_speaker():
+        raise pytest.UsageError(
+            "WICA_E2E_SPEAKER_DEVICE and WICA_E2E_DISCARD_SPEAKER contradict each other"
+        )
     if mic:
         os.environ.setdefault("REACHY_MINI_E2E_AUDIO_INPUT", mic)
     if speaker:
         os.environ.setdefault("REACHY_MINI_E2E_AUDIO_OUTPUT", speaker)
+    if discard_speaker():
+        os.environ.setdefault("REACHY_MINI_E2E_DISCARD_AUDIO_OUTPUT", "1")
     config.pluginmanager.import_plugin("reachy_mini_bridge.testing.fixtures")
     # The app imports MediaPipe before entering the robot's body, because once GStreamer media runs
     # in a process MediaPipe's import aborts it on Linux (`preload_mediapipe`). In this process the
@@ -100,6 +108,8 @@ class Devices:
     person_voice: str
     speaker: str | None
     echo: str | None
+    # The app's voice played at real-time pace and dropped: no speaker at all.
+    discard_speaker: bool
 
 
 @pytest.fixture(scope="session")
@@ -111,10 +121,17 @@ def devices() -> Devices:
     speaker = os.environ.get("WICA_E2E_SPEAKER_DEVICE") or None
     if speaker is not None:
         require_device(speaker, "output")
-    echo = echo_device(speaker)
+    discard = discard_speaker()
+    echo = None if discard else echo_device(speaker)
     if echo is not None:
         require_device(echo, "input")
-    return Devices(mic=mic, person_voice=person_voice, speaker=speaker, echo=echo)
+    return Devices(
+        mic=mic,
+        person_voice=person_voice,
+        speaker=speaker,
+        echo=echo,
+        discard_speaker=discard,
+    )
 
 
 @pytest.fixture(scope="session")
@@ -198,6 +215,7 @@ def _computer(devices: Devices, out: Path, scenario: str) -> Iterator[E2E]:
         {
             "asr.engine.audio.device": devices.mic,
             "tts.engine.player.device": devices.speaker,
+            "tts.engine.player.discard": devices.discard_speaker,
             "audio_processing.echo_cancellation.enabled": devices.echo is not None,
             "camera.device": str(camera.path),
         },
@@ -241,9 +259,12 @@ def sim_audio(live_daemon: tuple[str, int], devices: Devices) -> None:
         report = json.load(answer)
     audio = report.get("audio") or {}
     heard = audio.get("input_device")
-    if heard != devices.mic:
+    # The name the harness was given: the mic's, unless the run named the cable for GStreamer
+    # itself (Windows, whose sounddevice names carry a host API that GStreamer's do not).
+    cable = os.environ.get("REACHY_MINI_E2E_AUDIO_INPUT") or devices.mic
+    if heard != cable:
         pytest.fail(
-            f"the sim's daemon listens on {heard!r}, not the cable {devices.mic!r}: stop it "
+            f"the sim's daemon listens on {heard!r}, not the cable {cable!r}: stop it "
             f"and let the run spawn its own (its report: {report})",
             pytrace=False,
         )

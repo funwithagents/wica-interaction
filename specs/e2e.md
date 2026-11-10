@@ -15,7 +15,7 @@ tests:
 
 # End-to-end tier
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
@@ -59,20 +59,21 @@ The production providers (the example configs' providers) are not this tier's co
 
 #### The virtual audio cable
 
-The tier names its devices through four environment variables:
+The tier names its devices through five environment variables:
 
-| Variable | What | macOS | Linux |
-|---|---|---|---|
-| `WICA_E2E_MIC_DEVICE` | the input device the app listens on: the cable's recording end | `BlackHole 2ch` | a remapped source over the cable sink's monitor |
-| `WICA_E2E_PERSON_VOICE_DEVICE` | the output device the test plays the person's voice into: the cable's playback end. When unset, `WICA_E2E_MIC_DEVICE` | unset | the cable's null sink |
-| `WICA_E2E_SPEAKER_DEVICE` | the output device the app speaks to. When unset, the default output, so the robot can be heard while iterating | unset, or a second virtual device (`BlackHole 16ch`) | a second null sink |
-| `WICA_E2E_ECHO_DEVICE` | the input device the room records the app's voice from: the speaker's recording end. When unset, `WICA_E2E_SPEAKER_DEVICE` if that is also an input device (a virtual one); otherwise there is no echo | unset | a source over the speaker sink's monitor |
+| Variable | What | macOS | Linux | Windows |
+|---|---|---|---|---|
+| `WICA_E2E_MIC_DEVICE` | the input device the app listens on: the cable's recording end | `BlackHole 2ch` | a remapped source over the cable sink's monitor | `CABLE Output (VB-Audio Virtual Cable), Windows DirectSound` |
+| `WICA_E2E_PERSON_VOICE_DEVICE` | the output device the test plays the person's voice into: the cable's playback end. When unset, `WICA_E2E_MIC_DEVICE` | unset | the cable's null sink | `Speakers (VB-Audio Virtual Cable), Windows DirectSound` |
+| `WICA_E2E_SPEAKER_DEVICE` | the output device the app speaks to. When unset, the default output, so the robot can be heard while iterating | unset, or a second virtual device (`BlackHole 16ch`) | a second null sink | unset |
+| `WICA_E2E_ECHO_DEVICE` | the input device the room records the app's voice from: the speaker's recording end. When unset, `WICA_E2E_SPEAKER_DEVICE` if that is also an input device (a virtual one); otherwise there is no echo | unset | a source over the speaker sink's monitor | unset |
+| `WICA_E2E_DISCARD_SPEAKER` | `1`: the app speaks to no device. Its voice is played at real-time pace and dropped (`tts.engine.player.discard`, the bridge's `daemon.audio.discard_output`), so a reply still takes as long as it lasts; no echo. A usage error together with `WICA_E2E_SPEAKER_DEVICE` | unset | unset | `1` |
 
 **A cable has two ends, and on Linux they have two names.** A virtual cable is one output device that something plays into and one input device that records what was played. BlackHole shows both ends under one name, so on macOS `WICA_E2E_MIC_DEVICE` is enough, and a BlackHole speaker is its own echo device. On Linux the playback end is a PulseAudio null sink and the recording end is a separate source, each with its own name, so the person's voice and the echo need their own variables there.
 
 On Linux the mic is a remapped source, not the monitor itself, because upstream `reachy-mini`'s device matcher skips monitor sources.
 
-**The app's speaker is never the cable.** BlackHole loops its output back to its input, so an app speaking into the cable it listens on would hear itself, and on macOS a process that plays into the cable stalls its own capture of it (next). The echo reaches the mic through the room instead.
+**The app's speaker is never the cable.** BlackHole loops its output back to its input, so an app speaking into the cable it listens on would hear itself, and on macOS a process that plays into the cable stalls its own capture of it (next). The echo reaches the mic through the room instead. Where the cable is the host's only virtual device — the Windows runner, whose drivers must be signed by Microsoft and whose one free cable is VB-Cable — the app's voice is discarded instead (`WICA_E2E_DISCARD_SPEAKER`).
 
 #### The room
 
@@ -94,7 +95,7 @@ So the computer's echo is on whenever the run gives it a virtual speaker: always
 | Device | Replacement | Set through |
 |---|---|---|
 | Mic | the cable | `asr.engine.audio.device` = `WICA_E2E_MIC_DEVICE` |
-| Speakers | `WICA_E2E_SPEAKER_DEVICE` | `tts.engine.player.device` |
+| Speakers | `WICA_E2E_SPEAKER_DEVICE`, or none (`WICA_E2E_DISCARD_SPEAKER`) | `tts.engine.player.device`, `tts.engine.player.discard` |
 | The speaker-to-mic echo | the room, when there is an echo device | `audio_processing.echo_cancellation.enabled` = whether there is |
 | Webcam | one image file, rewritten to change what the camera sees | `camera.device` = the file's path |
 
@@ -106,10 +107,10 @@ So the computer's echo is on whenever the run gives it a virtual speaker: always
 |---|---|---|
 | Robot | the MuJoCo sim the bridge's harness runs | the harness's `live_daemon`; our embodiment builds its own bridge over it with `robot_options` |
 | Robot's mic | the cable | `REACHY_MINI_E2E_AUDIO_INPUT` = `WICA_E2E_MIC_DEVICE` |
-| Robot's speaker | `WICA_E2E_SPEAKER_DEVICE` | `REACHY_MINI_E2E_AUDIO_OUTPUT` |
+| Robot's speaker | `WICA_E2E_SPEAKER_DEVICE`, or none (`WICA_E2E_DISCARD_SPEAKER`) | `REACHY_MINI_E2E_AUDIO_OUTPUT`, `REACHY_MINI_E2E_DISCARD_AUDIO_OUTPUT` |
 | A hand in front of the robot | a hand photo as a prop, 0.36 m wide, at (0.45, 0, 0.20) m | `pytest_reachy_mini_scene_props` and `sim_scene.spawn(name=…)` |
 
-- **The conftest copies our variables into the bridge's.** It sets `REACHY_MINI_E2E_AUDIO_INPUT` and `_OUTPUT` from `WICA_E2E_MIC_DEVICE` and `WICA_E2E_SPEAKER_DEVICE` before the harness spawns its daemon, so one set of names drives both embodiments.
+- **The conftest copies our variables into the bridge's.** It sets `REACHY_MINI_E2E_AUDIO_INPUT` and `_OUTPUT` from `WICA_E2E_MIC_DEVICE` and `WICA_E2E_SPEAKER_DEVICE`, and `REACHY_MINI_E2E_DISCARD_AUDIO_OUTPUT` from `WICA_E2E_DISCARD_SPEAKER`, before the harness spawns its daemon, so one set of names drives both embodiments.
 - **The robot has no echo.** The real robot cancels its echo in its XVF3800, which the sim does not have, so the room never plays the robot's voice back. The daemon has a software canceller (GStreamer's `webrtcdsp`), but upstream turns it on only over the system's default input, and Ubuntu 24.04, the CI's runner, no longer ships the element (it left `gstreamer1.0-plugins-bad` after 22.04). Decided on 2026-11-10 to keep it simple: the echo is tested on the computer only.
 - **The sim's audio devices are checked when the session starts.** The daemon reports the devices it opened on `GET /api/bridge/daemon`. A session fixture reads that report and fails the run when the input is not `WICA_E2E_MIC_DEVICE`. Without this check, a daemon borrowed from an earlier run, started without the cable, would leave the robot listening to the real mic, and every spoken scenario would time out with no clear cause.
 - **The hand props.** The conftest's `pytest_reachy_mini_scene_props` declares one pool, `image_pool("hand", …, width=0.36)`: one prop per photo, `hand_1` … `hand_5`, hidden when the daemon boots. The photos are converted to PNG at session start with OpenCV, since props must be PNG. `Person.show` spawns a photo's prop by name at the position above. The tests are gated with `@pytest.mark.requires("camera", "props:hand")`.
@@ -234,12 +235,12 @@ The tests are the same on every platform; only the setup differs.
 | | macOS (iteration) | Linux (CI) | Windows (CI, by hand) |
 |---|---|---|---|
 | Sim camera | the viewer window: `REACHY_MINI_E2E_SIM_VIEWER=1`, an unlocked GUI session, `mjpython` | headless, rendered through EGL | the viewer window: `REACHY_MINI_E2E_SIM_VIEWER=1`, drawn by Mesa's llvmpipe on the runner's desktop |
-| Cable | BlackHole 2ch | a PulseAudio null sink, plus a remapped source over its monitor | VB-Audio Virtual Cable: "CABLE Input" the person's voice, "CABLE Output" the mic |
-| App's speaker | the default output (no echo), or a second virtual device, `BlackHole 16ch` (the computer's echo) | a second null sink, its monitor the echo device (the computer's echo) | Scream, an output-only virtual sound card (no echo) |
-| Permissions | microphone access for the terminal or editor | none | none |
+| Cable | BlackHole 2ch | a PulseAudio null sink, plus a remapped source over its monitor | VB-Audio Virtual Cable: "Speakers (VB-Audio Virtual Cable)" its playback end, the person's voice; "CABLE Output" the mic |
+| App's speaker | the default output (no echo), or a second virtual device, `BlackHole 16ch` (the computer's echo) | a second null sink, its monitor the echo device (the computer's echo) | none: the voice discarded, `WICA_E2E_DISCARD_SPEAKER=1` (no echo) |
+| Permissions | microphone access for the terminal or editor | none | Windows' microphone consent, allowed in the registry: without it every host API fails to open a capture stream |
 
 - **The first viewer launch on macOS takes about 62 s** while GStreamer builds its plugin cache. The harness gives up after a fixed 45 s. The workaround is to start the sim daemon by hand once; the harness then borrows it. Later launches take about 8 s.
-- **Windows runs the tier in a workflow started by hand** ([ci.md](ci.md), "The Windows end-to-end tier, by hand"). Windows lists each device once per host API, so the devices are named with theirs (`"CABLE Output (VB-Audio Virtual Cable), Windows DirectSound"`): a bare name matches several. The run has no echo: the free cable is one cable. What virtual devices cannot show, real hardware, stays a manual check (below).
+- **Windows runs the tier in a workflow started by hand** ([ci.md](ci.md), "The Windows end-to-end tier, by hand"). Windows lists each device once per host API, so the devices are named with theirs (`"CABLE Output (VB-Audio Virtual Cable), Windows DirectSound"`): a bare name matches several. The cable is the runner's only virtual device, so the app's voice is discarded (`WICA_E2E_DISCARD_SPEAKER=1`) and the run has no echo. The robot's mic is opened by the bridge through GStreamer, whose names carry no host API, so the run names the cable for it in `REACHY_MINI_E2E_AUDIO_INPUT` itself (`CABLE Output (VB-Audio Virtual Cable)`), and the check that the sim's daemon listens on the cable compares the daemon's report with that name. What virtual devices cannot show, real hardware, stays a manual check (below).
 
 ### Cost and cadence
 

@@ -1,9 +1,10 @@
 # The end-to-end tier on Windows, started by hand — specs/ci.md, "The Windows end-to-end tier, by hand".
 #
 # The tier's scenarios (specs/e2e.md) on `windows-2025`, one runner per embodiment: the real app
-# with VB-Audio's virtual cable as the person's voice and the app's mic, Scream as the app's
-# speaker, and for the robot the MuJoCo sim with its viewer drawn by Mesa's software OpenGL. Not
-# part of ci.yml: each run pays the LLM and the ASR, and it installs audio drivers on the runner.
+# with VB-Audio's virtual cable as the person's voice and the app's mic, the app's own voice
+# discarded (the cable is the runner's only virtual device), and for the robot the MuJoCo sim with
+# its viewer drawn by Mesa's software OpenGL. Not part of ci.yml: each run pays the LLM and the
+# ASR, and it installs an audio driver on the runner.
 # Start it before a release, or after a change to Windows-sensitive code.
 
 name: Windows end-to-end tier
@@ -41,6 +42,8 @@ jobs:
       DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
       # A missing key or device fails the job instead of turning it green with nothing tested.
       WICA_E2E_FAIL_ON_MISSING: '1'
+      # No speaker: the app's voice is played at real-time pace and dropped (specs/e2e.md).
+      WICA_E2E_DISCARD_SPEAKER: '1'
       # The downloads, each pinned with its SHA-256 and bumped on purpose. VB-Audio's cable, the
       # free one; Scream's release, for the `devcon` it ships (its own driver, not signed by
       # Microsoft, does not install on Windows Server 2025); Mesa for Windows, as naoqi-sim's.
@@ -96,54 +99,12 @@ jobs:
           $global:LASTEXITCODE = 0
           Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName | Out-String -Width 200
 
-      - name: Probe (which playback end feeds the cable's recording end)
-        shell: bash
-        run: |
-          uv run python - <<'PY'
-          import numpy as np
-          import sounddevice as sd
-
-          # Each host API on its own (MME cuts names to 31 characters, hence the prefixes and the
-          # indices), the mic opened as the ASR does (16 kHz mono) and at the device's own format,
-          # the tone played at 48 kHz as the room does, through each playback end in turn.
-          apis = [a["name"] for a in sd.query_hostapis()]
-
-          def find(prefix, api, kind):
-              for i, d in enumerate(sd.query_devices()):
-                  if d["name"].startswith(prefix) and apis[d["hostapi"]] == api and d[f"max_{kind}_channels"]:
-                      return i
-              return None
-
-          tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(48000) / 48000)).astype(np.float32)
-          separate = False
-          for api in ("MME", "Windows DirectSound", "Windows WASAPI"):
-              mic = find("CABLE Output (VB-Audio Virtual", api, "input")
-              for rate, channels in ((16000, 1), (48000, 2)):
-                  for out_name in ("Speakers (VB-Audio Virtual", "CABLE In 16 Ch (VB-Audio"):
-                      out = find(out_name, api, "output")
-                      label = f"{api}, mic {rate} Hz x{channels}, {out_name}"
-                      blocks = []
-                      try:
-                          with sd.InputStream(rate, device=mic, channels=channels, callback=lambda b, *_: blocks.append(b.copy())):
-                              sd.play(tone, 48000, device=out)
-                              sd.wait()
-                          rec = np.concatenate(blocks)[rate // 4 :, 0]
-                          rms = float(np.sqrt(np.mean(rec**2)))
-                          print(f"{label}: rms {rms:.4f}")
-                          if "16 Ch" in out_name and rms < 0.01:
-                              separate = True
-                      except Exception as e:
-                          print(f"{label}: {type(e).__name__}: {e}")
-          if not separate:
-              raise SystemExit("no separate speaker on the cable")
-          PY
-
       - name: The tier's devices
         # Windows lists each device once per host API, so a bare name matches several and
         # sounddevice refuses it: each is named with its host API, DirectSound first, which
         # converts the sample rate (the ASR's 16 kHz, the room's 48 kHz) as WASAPI's shared mode
-        # does not. VB-Cable's two ends ("Speakers", "CABLE Output") are the person's voice and the
-        # app's mic, "CABLE In 16 Ch" the app's speaker. For now the echo is left out.
+        # does not (MME does too, but cuts names at 31 characters). VB-Cable's two ends,
+        # "Speakers" and "CABLE Output", are the person's voice and the app's mic.
         shell: bash
         run: |
           uv run python - <<'PY'
@@ -168,7 +129,6 @@ jobs:
               "WICA_E2E_MIC_DEVICE": pick("CABLE Output (VB-Audio Virtual Cable)", "input"),
               "WICA_E2E_PERSON_VOICE_DEVICE": pick("Speakers (VB-Audio Virtual Cable)", "output"),
           }
-          named["WICA_E2E_SPEAKER_DEVICE"] = pick("CABLE In 16 Ch (VB-Audio Virtual Cable)", "output")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
               for k, v in named.items():
                   print(f"{k}={v}")
@@ -193,6 +153,9 @@ jobs:
           # camera, its audio or the hand props fails the job.
           REACHY_MINI_E2E_SIM_VIEWER: ${{ matrix.embodiment == 'reachy' && '1' || '' }}
           REACHY_MINI_E2E_REQUIRED_CAPS: ${{ matrix.embodiment == 'reachy' && 'audio,camera,props:hand' || '' }}
+          # The robot's mic is opened by the bridge through GStreamer, whose device names carry no
+          # host API: the cable named as GStreamer lists it.
+          REACHY_MINI_E2E_AUDIO_INPUT: ${{ matrix.embodiment == 'reachy' && 'CABLE Output (VB-Audio Virtual Cable)' || '' }}
         run: uv run pytest tests-e2e/test_${{ matrix.embodiment }}.py -v -rs -o log_cli=true --log-cli-level=WARNING --basetemp=${{ runner.temp }}/e2e
       - name: Evidence
         if: failure()
