@@ -10,13 +10,21 @@ of the cable — the app's capture, when the room shares the app's process. The 
 the app either.
 
     python room.py <cable device> <voice> [<echo device>]
+
+With the echo on and `WICA_E2E_ROOM_LOG` set to a path, the room logs its echo path block by block
+and saves it there as `.npz` on exit (specs/e2e.md, "Evidence on failure"): `play` rows (time,
+output latency, echo backlog, echo samples short so far) and `rec` rows (time, input latency, echo
+backlog, cut), the times and latencies from PortAudio, in seconds, the backlogs in samples. A
+change in the echo's delay is then told apart: the room's backlog, or a device's latency.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import threading
+from typing import Any
 
 import numpy as np
 import samplerate
@@ -42,18 +50,28 @@ class Mixer:
         self._echo = np.zeros(int(ECHO_DELAY_S * RATE), np.float32)
         self.played = threading.Event()
         self.played.set()
+        self.echo_short = (
+            0  # echo samples the cable played as silence, the echo not yet recorded
+        )
 
     def speak(self, samples: np.ndarray) -> None:
         with self._lock:
             self._voice = np.concatenate([self._voice, samples])
             self.played.clear()
 
-    def heard(self, block: np.ndarray) -> None:
-        """A block recorded from the echo device."""
+    def heard(self, block: np.ndarray) -> bool:
+        """A block recorded from the echo device; whether the backlog was cut back."""
         with self._lock:
             self._echo = np.concatenate([self._echo, block * ECHO_GAIN])
             if len(self._echo) > (ECHO_DELAY_S + ECHO_SLACK_S) * RATE:
                 self._echo = self._echo[-int(ECHO_DELAY_S * RATE) :]
+                return True
+            return False
+
+    @property
+    def echo_backlog(self) -> int:
+        with self._lock:
+            return len(self._echo)
 
     def _take(self, buffer: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray]:
         out = np.zeros(n, np.float32)
@@ -64,6 +82,7 @@ class Mixer:
     def block(self, n: int) -> np.ndarray:
         with self._lock:
             voice, self._voice = self._take(self._voice, n)
+            self.echo_short += max(n - len(self._echo), 0)
             echo, self._echo = self._take(self._echo, n)
             if len(self._voice) == 0:
                 self.played.set()
@@ -88,14 +107,33 @@ class VoiceSink:
 
 async def main(cable: str, voice: str, echo_device: str | None) -> None:
     mixer = Mixer()
+    log_path = os.environ.get("WICA_E2E_ROOM_LOG") if echo_device else None
+    play_log: list[tuple[float, float, int, int]] = []
+    rec_log: list[tuple[float, float, int, int]] = []
 
-    def play(outdata: np.ndarray, frames: int, _time: object, _status: object) -> None:
+    def play(outdata: np.ndarray, frames: int, time: Any, _status: object) -> None:
+        if log_path:
+            play_log.append(
+                (
+                    time.currentTime,
+                    time.outputBufferDacTime - time.currentTime,
+                    mixer.echo_backlog,
+                    mixer.echo_short,
+                )
+            )
         outdata[:, 0] = mixer.block(frames)
 
-    def record(
-        indata: np.ndarray, _frames: int, _time: object, _status: object
-    ) -> None:
-        mixer.heard(indata[:, 0].copy())
+    def record(indata: np.ndarray, _frames: int, time: Any, _status: object) -> None:
+        cut = mixer.heard(indata[:, 0].copy())
+        if log_path:
+            rec_log.append(
+                (
+                    time.currentTime,
+                    time.currentTime - time.inputBufferAdcTime,
+                    mixer.echo_backlog,
+                    int(cut),
+                )
+            )
 
     sink = VoiceSink(mixer)
     config = TTSEngineConfig.from_dict({"module": {"type": "phonon", "voice": voice}})
@@ -137,6 +175,8 @@ async def main(cable: str, voice: str, echo_device: str | None) -> None:
             for stream in streams:
                 stream.stop()
                 stream.close()
+            if log_path:
+                np.savez(log_path, play=np.array(play_log), rec=np.array(rec_log))
 
 
 if __name__ == "__main__":

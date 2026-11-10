@@ -174,7 +174,12 @@ def _running(
         inputs = InputLog(system.wica.world, INPUT_KEYS)
         # The person's voice opens the cable on its first `say`, after the scenario has waited
         # for the app to listen (specs/e2e.md, "The virtual audio cable").
-        person = Person(devices.person_voice, stage, devices.echo if echo else None)
+        person = Person(
+            devices.person_voice,
+            stage,
+            devices.echo if echo else None,
+            room_log=out / "room.npz" if echo else None,
+        )
         _start(system)
         e2e = E2E(system=system, run=run, inputs=inputs, person=person, echo=echo)
         try:
