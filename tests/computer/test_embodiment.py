@@ -223,11 +223,19 @@ def test_a_failed_voice_build_leaves_the_body_up_with_a_say_that_reports_it(
     assert embodiment.camera(fps=5.0) is not None  # the camera does not need the voice
 
 
-def test_exit_releases_nothing_and_never_raises() -> None:
-    """Stopping the ASR bridge releases the devices; `exit()` is a no-op (specs/audio-processing.md,
-    "Teardown")."""
+def test_exit_without_processing_releases_nothing_and_never_raises() -> None:
+    """With no coordinator there is no voice stream of the app's own to close."""
     embodiment = _entered(_config())
     run(embodiment.exit())  # must not raise
+
+
+def test_exit_closes_the_coordinators_voice_stream() -> None:
+    """The coordinator's player keeps one stream open for the app's lifetime; `exit()` closes it
+    (specs/audio-processing.md, "Teardown")."""
+    coordinator = FakeCoordinator()
+    embodiment = _entered(_config(ns=True), factory=lambda _c: cast(Any, coordinator))
+    run(embodiment.exit())
+    assert coordinator.closed == 1
 
 
 # --- say ------------------------------------------------------------------------------------------
