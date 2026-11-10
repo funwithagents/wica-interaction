@@ -48,7 +48,7 @@ Every field, the providers and their notes (Gemini thinks by default, Mistral's 
   "engine": {
     "module": { "type": "deepgram_v2", "api_key_env": "DEEPGRAM_API_KEY", "model": "flux-general-en" },
     "audio": { "device": null },
-    "dictation_default_segmentation_mode": "timeout"
+    "dictation_default_segmentation_mode": "trigger_word"
   }
 }
 ```
@@ -59,7 +59,7 @@ The `engine` block is an asr-engine engine block, handed to `ASREngineConfig.fro
 |---|---|
 | `module.type` | the speech recognizer: `deepgram_v2` (Deepgram's Flux models, turn-based) or `deepgram_v1` (Nova models); the `asr-deepgram` extra. Other fields of `module` are the module's own: `api_key_env`, `model`, `language` |
 | `audio.device` | **the computer's microphone** (a name, an index, or `null` for the system default). The robot ignores it: the mic is the robot's |
-| `dictation_default_segmentation_mode` | how a dictated passage ends: `timeout` (a pause) or `trigger_word` (a word from `segmentation.trigger_words`) ([guides/dictation.md](../guides/dictation.md)) |
+| `dictation_default_segmentation_mode` | how a dictated passage ends: `timeout` (a pause) or `trigger_word` (a word from `segmentation.trigger_words`, both templates) ([guides/dictation.md](../guides/dictation.md)) |
 | `segmentation.trigger_words`, `segmentation.end_of_speech_timeout_s`, `segmentation.initial_silence_timeout_s` | the words and the silences the two dictation modes use |
 
 The module must deliver **16 kHz mono linear16**, the default: that is the robot's mic rate and the echo canceller's working rate. `auto_start` and `auto_start_dictation` are not honored: the app starts the engine itself, in conversation mode. The complete schema, the modes and the default trigger words are in asr-engine's [configuration spec](https://github.com/funwithagents/asr-engine/blob/main/specs/configuration.md); the Kyutai local modules are not offered here ([install.md](install.md#extras)).

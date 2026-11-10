@@ -31,7 +31,7 @@ The page opens even when something could not be built, with one line per failure
 
 The transcript shows the agent's own sentences coming back as 🗣️ input, and it answers them.
 
-- **On the computer**, echo cancellation must be on: `audio_processing.echo_cancellation.enabled`, the `audio-processing` extra installed, and no `Audio processing:` banner line. Tune `stream_delay_ms` to your audio path's latency ([computer.md](computer.md#echo-cancellation)). Headphones remove the loop outright.
+- **On the computer**, echo cancellation must be on: `audio_processing.echo_cancellation.enabled`, the `audio-processing` extra installed, and no `Audio processing:` banner line. Tune `stream_delay_ms` to your audio path's latency ([computer.md](computer.md#echo-cancellation)). Headphones remove the loop outright: with them, turn echo cancellation off, since with no echo to learn from it mutes you while the agent speaks.
 - **On the robot**, the XVF3800 cancels the echo in hardware only when the voice plays through the robot's own media session, which is how the app plays it. A `tts.engine.player.device` has no place in a reachy config (the loader rejects it); the robot's volume still matters at the extremes.
 
 ## No camera frame, or no sign

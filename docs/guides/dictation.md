@@ -6,9 +6,9 @@ How speech reaches the agent, and how to speak a longer passage without it being
 
 The speech recognizer closes a **segment** of speech and the app writes it to the agent as one utterance, which triggers one reasoning step. While a segment is still open, its growing text streams into the ASR panel's `Live speech (interim)` box and nothing reaches the agent: partial speech is visible but inert, and only a closed segment wakes the agent, exactly once, as one complete utterance.
 
-In **conversation**, the default, a segment is one spoken sentence: you talk in short turns and the agent replies to each. In **dictation**, a segment is one longer passage, a message, a note, a paragraph, delivered to the agent whole. Dictation is entered by the **agent**, on request: when you say you want to dictate something, it calls its `start_dictation` command, and the recognizer switches mode for exactly one passage, then reverts to conversation on its own. Speech still flows the same way during dictation; the only difference is how long the recognizer waits before closing the segment. The agent is still fed and still replies.
+In **conversation**, the default, a segment is one spoken sentence: you talk in short turns and the agent replies to each. In **dictation**, a segment is one longer passage, a message, a note, a paragraph, delivered to the agent whole. Dictation is entered by the **agent**, on request: when you say you want to dictate something, it calls its `start_dictation` command, and the recognizer switches mode for exactly one passage, then reverts to conversation on its own. Speech still flows the same way during dictation; the only difference is what closes the segment. The agent is still fed and still replies.
 
-The ASR panel's status line shows the current mode: `ASR: running · mode: conversation (utterance)` or `mode: dictation (timeout)`.
+The ASR panel's status line shows the current mode: `ASR: running · mode: conversation (utterance)` or `mode: dictation (trigger_word)`.
 
 ## How a passage ends
 
@@ -16,8 +16,8 @@ What closes a dictated passage is the speech recognizer's `dictation_default_seg
 
 | Mode | The passage is delivered when | Fields |
 |---|---|---|
-| `timeout` | you stop speaking for a few seconds (the computer template) | `segmentation.end_of_speech_timeout_s`, 5 s by default; `initial_silence_timeout_s`, 10 s, when nothing was said at all |
-| `trigger_word` | you say one of the trigger words; a pause does **not** end it (the reachy template) | `segmentation.trigger_words`; by default `submit`, `enter`, `validate`, `send`, `confirm`, `go` and their French equivalents, matched as case-insensitive substrings of a sentence |
+| `timeout` | you stop speaking for a few seconds | `segmentation.end_of_speech_timeout_s`, 5 s by default; `initial_silence_timeout_s`, 10 s, when nothing was said at all |
+| `trigger_word` | you say one of the trigger words; a pause does **not** end it (both templates: a pause inside a note would otherwise cut it short) | `segmentation.trigger_words`; by default `submit`, `enter`, `validate`, `send`, `confirm`, `go` and their French equivalents, matched as case-insensitive substrings of a sentence |
 
 The reply `start_dictation` returns says which it is, `Dictation started (timeout mode): …` or `(trigger_word mode): …`, naming the configured words. That reply is for the model, not for you: neither it nor the persona asks the agent to announce how the passage ends, since you chose the mode and an extra spoken turn before every dictation would break the flow. It is there so the model's picture matches the config, for what it answers if asked and what it makes of the passage it then receives.
 
