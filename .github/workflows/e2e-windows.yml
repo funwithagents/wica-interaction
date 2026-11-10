@@ -84,6 +84,15 @@ jobs:
           $devcon = "$d\scream\Install\helpers\devcon-x64.exe"
           & $devcon install "$d\vbcable\vbMmeCable64_win10.inf" VBAudioVACWDM
           if ($LASTEXITCODE -ne 0) { throw "VB-Cable: devcon exited $LASTEXITCODE" }
+          # Recording needs Windows' microphone consent, off on the runner: every host API fails to
+          # open a capture stream without it. Allowed for the machine and for desktop apps.
+          foreach ($root in "HKLM:", "HKCU:") {
+            $k = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+            New-Item -Force $k | Out-Null
+            Set-ItemProperty $k Value Allow
+            New-Item -Force "$k\NonPackaged" | Out-Null
+            Set-ItemProperty "$k\NonPackaged" Value Allow
+          }
           $global:LASTEXITCODE = 0
           Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Class, FriendlyName | Out-String -Width 200
 
