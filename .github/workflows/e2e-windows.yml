@@ -94,16 +94,25 @@ jobs:
           import numpy as np
           import sounddevice as sd
 
-          rate = 48000
-          tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(rate) / rate)).astype(np.float32)
-          mic = "CABLE Output (VB-Audio Virtual Cable), Windows DirectSound"
-          for out in ("Speakers (VB-Audio Virtual Cable)", "CABLE In 16 Ch (VB-Audio Virtual Cable)"):
-              rec = sd.playrec(tone, rate, channels=1, device=(mic, f"{out}, Windows DirectSound"))
-              sd.wait()
-              rms = float(np.sqrt(np.mean(rec[rate // 4 :] ** 2)))
-              print(f"{out} -> CABLE Output: rms {rms:.4f}")
-          if rms > 0.01:
-              raise SystemExit("CABLE In 16 Ch feeds the same cable: no separate speaker")
+          # Each host API on its own: the mic opened mono at 16 kHz as the ASR does, the tone played
+          # at 48 kHz as the room does, through each playback end in turn.
+          tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(48000) / 48000)).astype(np.float32)
+          heard = {}
+          for api in ("Windows DirectSound", "MME", "Windows WASAPI"):
+              mic = f"CABLE Output (VB-Audio Virtual Cable), {api}"
+              for out in ("Speakers (VB-Audio Virtual Cable)", "CABLE In 16 Ch (VB-Audio Virtual Cable)"):
+                  try:
+                      with sd.InputStream(16000, device=mic, channels=1) as stream:
+                          sd.play(tone, 48000, device=f"{out}, {api}")
+                          sd.wait()
+                          block, _ = stream.read(stream.read_available)
+                      rms = float(np.sqrt(np.mean(block[4000:] ** 2)))
+                      heard[(api, out)] = rms
+                      print(f"{api}: {out} -> CABLE Output: rms {rms:.4f}")
+                  except Exception as e:
+                      print(f"{api}: {out}: {type(e).__name__}: {e}")
+          if not heard or any(rms > 0.01 for (_, out), rms in heard.items() if "16 Ch" in out):
+              raise SystemExit("no separate speaker on the cable")
           PY
 
       - name: The tier's devices
