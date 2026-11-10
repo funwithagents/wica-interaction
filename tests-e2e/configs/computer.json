@@ -25,7 +25,7 @@
     }
   },
   "audio_processing": {
-    "echo_cancellation": { "enabled": true, "stream_delay_ms": 50 },
+    "echo_cancellation": { "enabled": false, "stream_delay_ms": 50 },
     "noise_suppression": { "enabled": false, "level": 2 }
   },
   "vision": {

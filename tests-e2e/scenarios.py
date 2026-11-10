@@ -253,10 +253,7 @@ def dictation(e2e: E2E) -> None:
     )
     assert started.ok, started.detail
     assert bridge.status()["dictating"], bridge.status()
-    # Dictate as soon as the app's "go ahead" has been said, as a person would. Not before: on
-    # macOS the computer's echo cancellation swallows speech over the app's (open question 4). Not
-    # much later: a passage silent for the ASR's initial-silence timeout (10 s) closes empty, and
-    # waiting for the agent to settle as well ran past it on CI.
+    # Dictate as soon as the app's "go ahead" has been said, as a person would, not over it.
     assert wait_until(lambda: not _voice_running(e2e), SPOKEN_WITHIN_S), (
         "the agent's reply never ended"
     )

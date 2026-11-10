@@ -40,6 +40,10 @@ Then decided with the maintainer: nothing asks the agent to answer a note and th
 
 The ASR does poorly on short sentences, so the passage now ends on "That is the end of my note, please send it." 1.5 s after the second sentence, and the spoken stop is "Please stop talking now, that is enough for me." On the Mac, with the finals logged: the computer's dictation passed 3 runs of 3 and the robot's 1 of 1, the closing sentence heard whole each time. The robot heard the stop sentence word for word and passed; the computer, over the same cable, heard only "now." or "talking", or nothing, while its voice played: its echo cancellation, open question 4, still an expected failure.
 
+## Echo cancellation and the spoken stop on the computer
+
+Recorded live (mic, reference, output) and replayed offline: WebRTC's canceller, with no echo to learn from (the cable, or a headset), suppresses the person while the app speaks until it has heard about 8 s of the app's voice; the scenario interrupts 2 s into a fresh app's first story. With a simulated room echo it learns in a second or two. Decided with the maintainer: the computer guide and troubleshooting page say to turn echo cancellation off with headphones; the computer's e2e config runs without it (the cable is the headset case), and its spoken-stop test is no longer an expected failure. The canceller is the echo scenario's to test (open question 1).
+
 ## Runs
 
 On the Mac (2026-11-10):
