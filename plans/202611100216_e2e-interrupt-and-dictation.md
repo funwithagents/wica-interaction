@@ -36,6 +36,10 @@ On the Mac, with the ASR's finals logged: with a 1 s pause before "Send." the se
 
 Then decided with the maintainer: nothing asks the agent to answer a note and the persona lets it stay silent, so the dictation scenario leaves `no_noop_on_input` out and neither dictation test is an expected failure. On the Mac the computer's then passed in 5 runs of 6; in the sixth, as once before, the second sentence never reached the passage (Flux's recognition of the synthetic voice; with 3 s before "Send." the second sentence was lost in 2 runs of 10 overall).
 
+## Full sentences for the trigger word and the stop
+
+The ASR does poorly on short sentences, so the passage now ends on "That is the end of my note, please send it." 1.5 s after the second sentence, and the spoken stop is "Please stop talking now, that is enough for me." On the Mac, with the finals logged: the computer's dictation passed 3 runs of 3 and the robot's 1 of 1, the closing sentence heard whole each time. The robot heard the stop sentence word for word and passed; the computer, over the same cable, heard only "now." or "talking", or nothing, while its voice played: its echo cancellation, open question 4, still an expected failure.
+
 ## Runs
 
 On the Mac (2026-11-10):

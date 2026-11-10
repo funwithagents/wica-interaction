@@ -193,14 +193,18 @@ def _speaking_started(e2e: E2E) -> None:
     time.sleep(2.0)  # well into the story
 
 
+# What the person says to interrupt the app.
+STOP_SENTENCE = "Please stop talking now, that is enough for me."
+
+
 def interrupt_spoken(e2e: E2E) -> None:
     """Scenario 5 (spoken): the person says "stop" while the app tells a long story; the running
     `say` is cancelled."""
     wait_ready(e2e)
     voice = e2e.run.probe.output_command_name
     _speaking_started(e2e)
-    # A bare "Stop." gave the ASR too little to close a turn on: nothing was delivered.
-    e2e.person.say("Stop, please. That's enough.")
+    # One full sentence: the ASR does poorly on short ones (a bare "Stop." delivered nothing).
+    e2e.person.say(STOP_SENTENCE)
     cancelled = e2e.run.expect_action(
         voice or "say", state="cancelled", within=REPLY_WITHIN_S
     )
@@ -229,10 +233,16 @@ def interrupt_sign(e2e: E2E) -> None:
     assert_checks(e2e)
 
 
-def dictation(e2e: E2E, *, end_word: str | None) -> None:
+# The sentence that ends a dictated passage: both configs end one on a trigger word ("send"). A full
+# sentence, since the ASR does poorly on short ones; asr-engine drops the text of the sentence that
+# holds the trigger word, so it carries nothing of the note.
+END_SENTENCE = "That is the end of my note, please send it."
+
+
+def dictation(e2e: E2E) -> None:
     """Scenario 6: asked to take a note, the agent starts dictation; the passage, two sentences
-    with a pause between them, arrives as one input; and dictation is over after it. It ends on a
-    pause, or on *end_word* when the embodiment's config ends passages on a trigger word."""
+    with a pause between them, arrives as one input, closed by a sentence holding a trigger word;
+    and dictation is over after it."""
     wait_ready(e2e)
     bridge = e2e.system.bridge
     assert bridge is not None
@@ -255,11 +265,8 @@ def dictation(e2e: E2E, *, end_word: str | None) -> None:
     e2e.person.say("Buy milk and eggs.")
     time.sleep(1.5)  # a pause that would close a conversational turn
     e2e.person.say("Call the doctor tomorrow morning.")
-    if end_word is not None:
-        # A clear pause first: asr-engine closes the passage on the final that holds the trigger
-        # word and drops that final's text, so a sentence Flux joins to "Send." is lost with it.
-        time.sleep(3.0)
-        e2e.person.say(end_word)
+    time.sleep(1.5)
+    e2e.person.say(END_SENTENCE)
     passage = e2e.inputs.wait_for(
         "speech_input",
         lambda value: isinstance(value, str) and value.strip() != "",

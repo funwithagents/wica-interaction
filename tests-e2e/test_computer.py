@@ -34,5 +34,4 @@ def test_speaking_is_interrupted_by_a_stop_sign(computer: E2E) -> None:
 
 
 def test_a_dictated_passage_arrives_as_one_input(computer: E2E) -> None:
-    # The computer's config ends a passage on a trigger word ("trigger_word"); "send" is one.
-    scenarios.dictation(computer, end_word="Send.")
+    scenarios.dictation(computer)
