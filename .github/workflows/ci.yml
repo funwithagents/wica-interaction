@@ -208,8 +208,8 @@ jobs:
         run: |
           pulseaudio --start --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=wica_cable sink_properties=device.description=wica_cable
-          pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic "source_properties=device.description=wica_mic device.string=wica_mic"
-          pactl load-module module-null-sink sink_name=wica_speaker "sink_properties=device.description=wica_speaker device.string=wica_speaker"
+          pactl load-module module-remap-source master=wica_cable.monitor source_name=wica_mic 'source_properties="device.description=wica_mic device.string=wica_mic"'
+          pactl load-module module-null-sink sink_name=wica_speaker 'sink_properties="device.description=wica_speaker device.string=wica_speaker"'
           pactl set-default-sink wica_speaker
           pactl set-default-source wica_mic
           cat > ~/.asoundrc <<'ASOUND'
