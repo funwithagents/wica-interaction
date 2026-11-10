@@ -151,7 +151,7 @@ jobs:
           ASOUND
           uv run python -c "import sounddevice as sd; print(sd.query_devices())"
       - name: End-to-end, computer
-        run: uv run pytest tests-e2e/test_computer.py -rs --basetemp=${{ runner.temp }}/e2e
+        run: uv run pytest tests-e2e/test_computer.py -v -rs --basetemp=${{ runner.temp }}/e2e
       - name: Evidence
         if: failure()
         uses: actions/upload-artifact@v7
