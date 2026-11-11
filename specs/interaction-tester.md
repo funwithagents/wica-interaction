@@ -115,7 +115,10 @@ For the live tester, a scenario is data: a **direction** (who the person is and 
 Two Reachy Minis facing each other in one sim, the SUT in one and the tester in the other. It is the harness's demonstration, and the ground for a future robot detector as a vision input: each robot's camera sees the other.
 
 - **One shared physics**, each robot behind its own `reachy-mini-bridge`.
-- **It depends on reachy-mini-bridge** serving two robots from one MuJoCo model, which upstream does not do. A spike there (branch `spike/two-robot-sim`) decides whether and how.
+- **It depends on reachy-mini-bridge's sim world** (its `specs/daemon/sim_world.md`, Draft): one simulation started on its own, each app's bridge joining its robot with `daemon.spawn: "never"`. A spike there (branch `spike/two-robot-sim`) ran it with two bridges on macOS and on Linux in CI.
+- **The voices cross on two virtual cables**, each robot's speaker being the other's microphone. Measured in that spike: a robot hears the other and nothing of itself, so the pair needs no echo canceller.
+- **A hand is shown to the side** of the line between the robots: straight ahead, it would stand between them and hide one from the other.
+- **The camera is slow in CI**, under 5 frames a second per robot on a CPU-only runner. Speech and hand signs held for `hold_s` do not need more; anything that does is not run on the pair there.
 - **It adds nothing to what is tested by sound.** The first pair is computer against computer.
 
 ### Phases
