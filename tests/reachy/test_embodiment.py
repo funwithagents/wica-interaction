@@ -28,7 +28,7 @@ from wica_interaction.reachy.embodiment import (
     RobotCameraFeed,
     RobotMicSource,
 )
-from wica_interaction.reachy.people import PeopleInput
+from wica_interaction.reachy.users import UsersInput
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -66,7 +66,7 @@ def test_enter_brings_the_robot_up_and_wires_every_member() -> None:
     assert embodiment.mic_error is None
     assert isinstance(embodiment.camera(fps=5.0), RobotCameraFeed)
     assert embodiment.missing == []
-    # No face detector configured: the robot sees no people, so no input and no tracking.
+    # No face detector configured: the robot sees no users, so no input and no tracking.
     assert embodiment.inputs() == ()
 
 
@@ -108,10 +108,10 @@ def test_prompt_addendum_names_every_emotion_and_the_command() -> None:
         assert name in addendum
 
 
-def test_a_robot_with_a_detector_sees_people_and_may_follow_them() -> None:
+def test_a_robot_with_a_detector_sees_users_and_may_follow_them() -> None:
     """With a face detector configured, `enter()` runs detection for the session even when the
-    config left it off (the people the agent is told about exist only while it runs), and the body
-    brings the people input, the tracking pair among its Commands, and the people section in its
+    config left it off (the users the agent is told about exist only while it runs), and the body
+    brings the users input, the tracking pair among its Commands, and the users section in its
     addendum after the emotions."""
 
     async def scenario() -> None:
@@ -131,8 +131,8 @@ def test_a_robot_with_a_detector_sees_people_and_may_follow_them() -> None:
                 await asyncio.sleep(0.02)
             assert bridge.users.value.active
 
-            (people,) = embodiment.inputs()
-            assert isinstance(people, PeopleInput)
+            (users,) = embodiment.inputs()
+            assert isinstance(users, UsersInput)
             names = [
                 c.tool.name if isinstance(c, Command) else c.__name__
                 for c in embodiment.commands()
@@ -146,7 +146,7 @@ def test_a_robot_with_a_detector_sees_people_and_may_follow_them() -> None:
             ]
             addendum = embodiment.prompt_addendum
             assert addendum.index("## Your emotions") < addendum.index(
-                "## People around you"
+                "## The users around you"
             )
         finally:
             await embodiment.exit()

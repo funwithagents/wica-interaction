@@ -201,7 +201,7 @@ def _names(control: RobotControl) -> list[str]:
     ]
 
 
-def test_the_tracking_pair_is_registered_only_when_the_robot_sees_people() -> None:
+def test_the_tracking_pair_is_registered_only_when_the_robot_sees_users() -> None:
     with _control(_FAKE_NAMES) as (control, _):
         assert "start_tracking" not in _names(control)
     bridge = ReachyMiniBridge("fake")
@@ -218,7 +218,7 @@ async def _until(predicate: Callable[[], bool], timeout: float = 6.0) -> bool:
     return predicate()
 
 
-def test_start_tracking_pins_a_person_present_and_stop_tracking_lets_go() -> None:
+def test_start_tracking_pins_a_user_present_and_stop_tracking_lets_go() -> None:
     """The agent's choice of whom reaches the bridge's head tracker: a number pins that user, none
     returns to the automatic target, `stop_tracking` turns tracking off; the replies say so."""
 
@@ -230,13 +230,13 @@ def test_start_tracking_pins_a_person_present_and_stop_tracking_lets_go() -> Non
             control = RobotControl(bridge, tracking=True)
             faces.show((0.0, 0.2))
             assert await _until(lambda: bool(bridge.users.value.users))
-            person = bridge.users.value.users[0].track_id
+            user = bridge.users.value.users[0].track_id
 
-            reply = await control.start_tracking(person)
-            assert reply == f"OK — your head now follows person {person}."
+            reply = await control.start_tracking(user)
+            assert reply == f"OK — your head now follows user {user}."
             tracking = bridge.head_tracking.value
-            assert tracking.active and tracking.pinned_track_id == person
-            assert await _until(lambda: bridge.head_tracking.value.track_id == person)
+            assert tracking.active and tracking.pinned_track_id == user
+            assert await _until(lambda: bridge.head_tracking.value.track_id == user)
 
             reply = await control.start_tracking()
             assert reply == "OK — your head now follows whoever is in front of you."
@@ -245,8 +245,8 @@ def test_start_tracking_pins_a_person_present_and_stop_tracking_lets_go() -> Non
             reply = await control.stop_tracking()
             assert reply == "OK — your head no longer follows anyone."
             assert not bridge.head_tracking.value.active
-            # Detection keeps running for the people input: the person is still present.
-            assert [u.track_id for u in bridge.users.value.users] == [person]
+            # Detection keeps running for the users input: the user is still present.
+            assert [u.track_id for u in bridge.users.value.users] == [user]
         finally:
             await bridge.stop()
 
@@ -254,7 +254,7 @@ def test_start_tracking_pins_a_person_present_and_stop_tracking_lets_go() -> Non
 
 
 def test_following_someone_who_left_is_answered_not_raised() -> None:
-    """The person left between the step that read them and the call: the bridge refuses the pin,
+    """The user left between the step that read them and the call: the bridge refuses the pin,
     the agent reads why, tracking is left as it was."""
 
     async def scenario() -> None:
@@ -264,7 +264,7 @@ def test_following_someone_who_left_is_answered_not_raised() -> None:
         try:
             control = RobotControl(bridge, tracking=True)
             reply = await control.start_tracking(42)
-            assert reply == "Can't follow person 42: they are not in view."
+            assert reply == "Can't follow user 42: they are not in view."
             assert not bridge.head_tracking.value.active
         finally:
             await bridge.stop()

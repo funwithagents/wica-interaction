@@ -34,9 +34,9 @@ A sign the person keeps holding is delivered once, when it is first held long en
 
 The agent has no gaze pose, head or body command: it can play a recorded emotion, set its motors' state and, when the robot sees people, choose whom its head follows, nothing else ([../reference/agent.md](../reference/agent.md#the-commands)). Where the head aims while it follows someone, breathing between actions and swaying with the voice are the bridge's motion loop, configured in the `motion` block ([../reference/configuration.md](../reference/configuration.md#reachy-the-robot)) and invisible to the model. Following is framed as whom the robot pays attention to, deliberately: when tracking was an on/off switch for the agent, the model treated idle aliveness as its own job.
 
-## A person is a number, not someone
+## A user is a number, not someone
 
-The robot tells the agent about *a person* in view under a number, and nothing more: it does not recognise anyone. The same person coming back after a break, or hidden for more than two seconds in view, gets a new number, and the agent is told a person left and another came into view. Every arrival and departure wakes the agent: in a busy place the robot comments on people coming and going more than a person would. Who is in view is not shown on the page, only in the World panel ([agent.md](../reference/agent.md#the-world)).
+The robot tells the agent about *a user* in view under a number, and nothing more: it does not recognise anyone. The same person coming back after a break, or hidden for more than two seconds in view, gets a new number, and the agent is told a user left and another came into view. Every arrival, departure and change of who is in the personal space wakes the agent: in a busy place the robot comments on people coming and going more than a person would. Who is in view is not shown on the page, only in the World panel ([agent.md](../reference/agent.md#the-world)).
 
 ## No per-body panel
 

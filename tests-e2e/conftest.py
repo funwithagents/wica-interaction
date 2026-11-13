@@ -46,13 +46,15 @@ from wica_interaction.system import AppSystem, _shutdown, _start, build_system, 
 CONFIGS = Path(__file__).resolve().parent / "configs"
 
 # The app's inputs a scenario reads back: speech, the hands (`vision.max_hands` is 2) and, on the
-# robot, the people (an entry a body does not register is skipped).
+# robot, its users (an entry a body does not register is skipped).
 INPUT_KEYS = (
     "speech_input",
     "hand_gesture_1",
     "hand_gesture_2",
-    "person_event",
-    "people_in_view",
+    "user_event",
+    "users_in_view",
+    "personal_space",
+    "tracked_user",
 )
 
 # Each photo's prop is 0.36 m wide (0.24 m tall): the size the hand-render spike validated.

@@ -4,8 +4,8 @@ The **actions** half of the app (specs/reachy-embodiment.md): a thin, **non-rais
 the sibling ``reachy-mini-bridge`` ``ReachyMiniBridge`` verbs into WICA Commands the agent chooses among
 while reasoning — express an emotion (``play_emotion``), read/set the motor torque state, and,
 when the robot sees people, follow one with its head (``start_tracking`` / ``stop_tracking``: whom
-it attends to, chosen from the people its input describes — specs/reachy-embodiment.md, "People:
-``PeopleInput``"). ``say`` is *not* here (that is WICA's output Command, see embodiment.py); this
+it attends to, chosen from the users its input describes — specs/reachy-embodiment.md, "Users:
+``UsersInput``"). ``say`` is *not* here (that is WICA's output Command, see embodiment.py); this
 module holds the invokable **action** commands. Presence, breathing and wobbling are not
 agent-facing: the bridge's motion loop drives them.
 
@@ -149,26 +149,26 @@ class RobotControl:
             return f"set_motors_state failed: {exc}"
         return f"OK — set the motors to {state!r}."
 
-    async def start_tracking(self, person: int | None = None) -> str:
-        """Follow a person with your head, to show whom you are paying attention to. Give their
-        number from the people in view to follow that person only; leave it out to follow whoever
-        is in front of you. Your head keeps following until you call stop_tracking."""
+    async def start_tracking(self, user: int | None = None) -> str:
+        """Follow a user with your head, to show whom you are paying attention to. Give their
+        number from the users in view to follow that user only; leave it out to follow whoever is
+        in front of you. Your head keeps following until you call stop_tracking."""
         try:
-            await self._bridge.start_head_tracking(track_id=person)
+            await self._bridge.start_head_tracking(track_id=user)
         except ValueError as exc:
-            if person is not None:
-                # The bridge pins only a user present: the person left between the step that read
-                # the people in view and this call.
-                return f"Can't follow person {person}: they are not in view."
+            if user is not None:
+                # The bridge pins only a user present: they left between the step that read the
+                # users in view and this call.
+                return f"Can't follow user {user}: they are not in view."
             return f"start_tracking failed: {exc}"
         except Exception as exc:  # noqa: BLE001 - any bridge failure becomes a readable reply
             return f"start_tracking failed: {exc}"
-        if person is None:
+        if user is None:
             return "OK — your head now follows whoever is in front of you."
-        return f"OK — your head now follows person {person}."
+        return f"OK — your head now follows user {user}."
 
     async def stop_tracking(self) -> str:
-        """Stop following people with your head; it goes back to its idle movement."""
+        """Stop following users with your head; it goes back to its idle movement."""
         try:
             await self._bridge.stop_head_tracking()
         except Exception as exc:  # noqa: BLE001 - any bridge failure becomes a readable reply

@@ -15,7 +15,7 @@ tests:
 
 # Reachy Mini embodiment
 
-**Status:** Updated
+**Status:** Implemented
 
 ## Purpose
 
@@ -175,14 +175,18 @@ class UsersInput:  # an `Input` (embodiment.py)
     @property
     def entries(
         self,
-    ) -> Sequence[InputEntry]: ...  # user_event, users_in_view, personal_space, tracked_user
+    ) -> Sequence[
+        InputEntry
+    ]: ...  # user_event, users_in_view, personal_space, tracked_user
     async def start(
         self, deliver: Deliver
     ) -> None: ...  # the start-up snapshot, then the watchers
     async def stop(self) -> None: ...  # cancels the watchers
 
 
-def users_prompt_section() -> str: ...  # "## The users around you …", appended to the persona
+def users_prompt_section() -> (
+    str
+): ...  # "## The users around you …", appended to the persona
 ```
 
 **One entry per concept.**

@@ -6,8 +6,9 @@ protocol the shared lifecycle is written against: ``say`` out of the robot's spe
 reader of the microphone), ``RobotCameraFeed`` over its camera feed
 (``bridge.camera``, the bridge's one reader of the camera), and the action Commands of
 [robot_control.py](robot_control.py) — following a person with its head among them, when it sees
-people: with a face detector configured, ``PeopleInput`` ([people.py](people.py)) tells the agent who
-arrives, leaves, comes very close and is present, through ``inputs()``. All of it rides the *same*
+people: with a face detector configured, ``UsersInput`` ([users.py](users.py)) tells the agent who
+arrives and leaves, who is present, who is in its personal space and whom it follows, through
+``inputs()``. All of it rides the *same*
 bridge instance — one robot connection,
 one media session, one mic feed, one camera feed — built and started in ``enter()`` on the app loop: the
 bridge's session is its ``start()`` / ``stop()`` pair, which is what a host with lifecycle hooks of
@@ -33,8 +34,8 @@ from wica import Command
 from wica_interaction.embodiment import Input, Voice
 from wica_interaction.gesture_input import CameraFeed
 from wica_interaction.reachy.config import ReachyConfig
-from wica_interaction.reachy.people import PeopleInput, people_prompt_section
 from wica_interaction.reachy.robot_control import RobotControl, emotions_prompt_section
+from wica_interaction.reachy.users import UsersInput, users_prompt_section
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,7 @@ class ReachyEmbodiment:
         self._injected = bridge is not None
         self._mic: RobotMicSource | None = None
         self._emotions: tuple[str, ...] | None = None
-        self._people: PeopleInput | None = None
+        self._users: UsersInput | None = None
         self.missing: list[str] = []
 
     async def enter(self) -> None:
@@ -226,25 +227,25 @@ class ReachyEmbodiment:
             self.missing.append(f"Robot: emotions unavailable: {exc}")
         self._mic = RobotMicSource(bridge)
         if self._config.reachy.face_detection.detector is not None:
-            await self._see_people(bridge)
+            await self._see_users(bridge)
 
-    async def _see_people(self, bridge: ReachyMiniBridge) -> None:
-        """With a face detector configured: detection on for the whole session, and the people
-        input built (the lifecycle starts it once the agent runs). The people the agent is told
+    async def _see_users(self, bridge: ReachyMiniBridge) -> None:
+        """With a face detector configured: detection on for the whole session, and the users
+        input built (the lifecycle starts it once the agent runs). The users the agent is told
         about are the bridge's users present, which exist only while detection runs — tracking
         alone would not keep it running: the agent's ``stop_tracking`` would stop the loop and every
-        user would leave. A failure costs the people (no input, no tracking Commands), never the
+        user would leave. A failure costs the users (no input, no tracking Commands), never the
         rest of the robot."""
         try:
             if not self._config.reachy.face_detection.enabled:
                 logger.info(
-                    "face detection turned on for the session: the people input needs it "
+                    "face detection turned on for the session: the users input needs it "
                     "(reachy.face_detection.enabled is false in the config)"
                 )
                 await bridge.set_face_detection(True)
-            self._people = PeopleInput(bridge)
-        except Exception as exc:  # noqa: BLE001 - the people degrade alone, never the robot
-            self.missing.append(f"People: {exc}")
+            self._users = UsersInput(bridge)
+        except Exception as exc:  # noqa: BLE001 - the users degrade alone, never the robot
+            self.missing.append(f"Users: {exc}")
 
     async def exit(self) -> None:
         """Stop the bridge's session: the motion loop, the camera feed, the media session, the
@@ -294,19 +295,19 @@ class ReachyEmbodiment:
         naming the names fetched at enter), the motors, and — when it sees people — tracking."""
         assert self._bridge is not None
         return RobotControl(
-            self._bridge, emotions=self._emotions, tracking=self._people is not None
+            self._bridge, emotions=self._emotions, tracking=self._users is not None
         ).commands()
 
     def inputs(self) -> Sequence[Input]:
-        """The people in view, when the robot sees people (a face detector configured)."""
-        return (self._people,) if self._people is not None else ()
+        """The users in view, when the robot sees people (a face detector configured)."""
+        return (self._users,) if self._users is not None else ()
 
     @property
     def prompt_addendum(self) -> str:
-        """The emotion names, when fetched, then the people section, when the robot sees people."""
+        """The emotion names, when fetched, then the users section, when the robot sees people."""
         sections = []
         if self._emotions:
             sections.append(emotions_prompt_section(self._emotions))
-        if self._people is not None:
-            sections.append(people_prompt_section())
+        if self._users is not None:
+            sections.append(users_prompt_section())
         return "".join(sections)

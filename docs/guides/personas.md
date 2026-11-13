@@ -48,7 +48,7 @@ Some facts are seeded into the prompt from the config or the code, so the file m
 - **The emotion names.** They come from the robot's library at session start and are appended as "Your emotions"; the file only says to use the names listed further down.
 - **The hand vocabulary.** The "Hand signs" section is appended only when vision is on, from the same table the classifier's labels map through. A file that described hands would describe them to an agent with no camera.
 - **Narrating movements**, or anything about presence, breathing or wobbling: the bridge does those on its own, and a persona that mentions them had the model treating idle aliveness as its job.
-- **The people.** The "People around you" section is appended when the robot has a face detector: what the two people entries say, that a person's number is not a name, and how to follow someone with `start_tracking`. A file that described people would describe them to a robot that sees none.
+- **The users.** The "The users around you" section is appended when the robot has a face detector: what the four users entries say, that a user's number is not a name, and how to follow someone with `start_tracking`. A file that described people would describe them to a robot that sees none.
 - **A chatty style.** The replies are heard, not read: markdown, lists and emoji come out of a speaker as noise.
 
 ## Editing and language

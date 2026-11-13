@@ -32,7 +32,7 @@ Set `vision.enabled` to `true` ([reference](../reference/configuration.md#vision
 
 The first run downloads the models, a MediaPipe hand bundle and a gesture classifier of about 340 MB, into the Hugging Face cache ([first-run downloads](../reference/install.md#first-run-downloads)); until they are loaded the Vision line shows no label. The models load on the first frame, so a download that fails, with no network, is reported on the Vision line rather than crashing the app.
 
-Which camera is the body's: the computer's webcam, named by `camera.device` ([computer.md](computer.md#the-webcam)); on the robot, its own camera, the same feed the bridge's face detector samples ([reachy-mini.md](reachy-mini.md#the-people-in-front-of-the-robot)). Hand signs are not available on Linux arm64 or an Intel Mac, where MediaPipe ships no wheel ([platforms](../reference/install.md#platforms)).
+Which camera is the body's: the computer's webcam, named by `camera.device` ([computer.md](computer.md#the-webcam)); on the robot, its own camera, the same feed the bridge's face detector samples ([reachy-mini.md](reachy-mini.md#the-users-in-front-of-the-robot)). Hand signs are not available on Linux arm64 or an Intel Mac, where MediaPipe ships no wheel ([platforms](../reference/install.md#platforms)).
 
 ## Tuning
 
