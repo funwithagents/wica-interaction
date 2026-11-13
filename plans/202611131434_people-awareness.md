@@ -1,6 +1,6 @@
 # People awareness on the Reachy Mini
 
-**Status:** In progress
+**Status:** Done
 
 Implements the settled behaviour in [specs/embodiment.md](../specs/embodiment.md) ("`inputs()` is the mirror of `commands()`"), [specs/app.md](../specs/app.md) (build step 5b, `_start` / `_shutdown`, the one standing entry, `entry_display`), [specs/reachy-embodiment.md](../specs/reachy-embodiment.md) ("People: `PeopleInput`", the tracking Commands, the persona, the template) and [specs/e2e.md](../specs/e2e.md) (scenarios 4 and 5). The robot tells the agent who arrives, leaves, comes very close and is present, and the agent starts, pins and stops head tracking. It builds on reachy-mini-bridge `d2516aa` (`bridge.users`, pinned tracking), already pinned on this branch. It deliberately leaves out the People line on the page (reachy-embodiment open question 7), recognition (8) and any arrival gate (6).
 
