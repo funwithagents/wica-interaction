@@ -11,7 +11,7 @@ tests:
 
 # App
 
-**Status:** Updated
+**Status:** Implemented
 
 > **Code layout.** [system.py](../src/wica_interaction/system.py) holds the **wiring + lifecycle** (`build_system`, the `AppSystem` snapshot, `wire`, `_start`, `_shutdown`, `run_app`); [app_ui.py](../src/wica_interaction/app_ui.py) the **Gradio presentation layer** (the `display_entry` hook, `build_ui` returning an `AppUi` handle, the ASR/Vision live views its timer polls); each embodiment's `app.py` is a `main()` of a few lines that loads its config, constructs its embodiment, and calls `run_app`. The three framework-observability panels — Conversation, World state, Reaction — are WICA's reusable `wica.contrib.gradio` components (the `wica[gradio]` extra — `wica-framework/specs/gradio-contrib.md`), which `build_ui` places. `system` imports `build_ui` from `app_ui`; `app_ui` depends on `system` only for the `AppSystem` type, so there is no import cycle.
 

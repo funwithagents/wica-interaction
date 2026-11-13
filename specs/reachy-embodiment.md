@@ -15,7 +15,7 @@ tests:
 
 # Reachy Mini embodiment
 
-**Status:** Updated
+**Status:** Implemented
 
 ## Purpose
 
@@ -182,7 +182,7 @@ def people_prompt_section() -> (
 | Entry | Kind | Wakes the agent | Rendered (examples) | In the transcript |
 |---|---|---|---|---|
 | `person_event` | transient: `ttl` `PERSON_EVENT_TTL` (2 s), `None` renders nothing — like `speech_input` | yes, every write | `A person came into view: person 3, about 0.7 m away, in front of you.` · `Person 3 left your view.` · `Person 3 came very close to you (about 0.3 m away).` · `A person is in view as you start: person 3, …` | `👤 <the event>` |
-| `people_in_view` | **standing**: no TTL, the app's one exception ([app.md](app.md), "World, Commands, persona") | never | `In view: person 3 (about 0.7 m away, in front of you; very close to you), person 5 (about 1.5 m away, to your left; out of your sight right now). Your head is following person 3, as you chose.` · `Nobody is in view. You are not following anyone with your head.` · omitted while detection is not running | `👥 <who is present>` |
+| `people_in_view` | **standing**: no TTL, the app's one exception ([app.md](app.md), "World, Commands, persona") | never | `In view: person 3 (about 0.7 m away, in front of you; very close to you), person 5 (about 1.5 m away, to your left; out of your sight right now). Your head is following person 3, as you chose.` · `Nobody is in view. You are not following anyone with your head.` · between a pin and the pinned person's next sighting, `Your head is turning to follow person 3, as you chose.` (the bridge reports the pin from the call, the follow from that sighting); once they left, `You chose to follow person 3, who is not in view; your head is waiting for them.` · omitted while detection is not running | `👥 <who is present>` |
 
 **What each bridge change becomes.** Two watchers on the app loop, each reading every published report in order (`changes(every=True)`, so a busy loop misses no arrival):
 
