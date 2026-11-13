@@ -33,7 +33,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, Literal
 
@@ -64,6 +64,9 @@ EVENT_JOIN_S = 0.5
 # How often the standing entries are re-rendered between changes (a user moving to the other side,
 # coming nearer); each is written only when its value changed.
 STANDING_REFRESH_S = 1.0
+# How long the personal space says what just changed (someone came in, stepped out) before it is
+# rewritten settled — a state alone reads the same in the step it wakes as in every later one.
+SPACE_CHANGE_S = 2.0
 
 # The side a face is on, from its normalised x in [-1, 1]: the outer thirds are left and right. The
 # robot's camera is not mirrored, so the image's right is the robot's right.
@@ -103,10 +106,13 @@ class UserInView:
 @dataclass(frozen=True)
 class PersonalSpace:
     """The ``personal_space`` entry's value while it is judged (the head following someone):
-    the user inside it, or ``None`` for nobody, and how far they are."""
+    the user inside it, or ``None`` for nobody, and how far they are; for ``SPACE_CHANGE_S`` after
+    a change, what just happened: ``came_in``, or ``stepped_out`` with the user who ``left``."""
 
     user: int | None
     distance_m: float | None = None
+    change: Literal["came_in", "stepped_out"] | None = None
+    left: int | None = None
 
 
 @dataclass(frozen=True)
@@ -271,10 +277,20 @@ def tracked_line(tracked: TrackedUser) -> str:
 
 
 def personal_space_line(value: PersonalSpace) -> str:
-    if value.user is None:
-        return "Nobody is in your personal space."
     distance = about(value.distance_m)
     where = f" ({distance})" if distance else ""
+    if value.change == "stepped_out" and value.left is not None:
+        return (
+            f"User {value.left} just stepped back out of your personal space; "
+            "nobody is in it now."
+        )
+    if value.user is None:
+        return "Nobody is in your personal space."
+    if value.change == "came_in":
+        return (
+            f"User {value.user} just came into your personal space: "
+            f"they are very close to you{where}."
+        )
     return f"User {value.user} is in your personal space, very close to you{where}."
 
 
@@ -305,8 +321,9 @@ def users_prompt_section() -> str:
         "nothing; don't break off a conversation to comment on every coming and going.\n"
         f"- `{USERS_IN_VIEW}` tells you who is in view right now, and where.\n"
         f"- `{PERSONAL_SPACE}` tells you which user, if any, is very close to you, inside your "
-        "personal space; it changes when someone comes in or steps back out. You may make a light "
-        "remark, or none. It is only known while your head follows someone.\n"
+        "personal space, and says when someone just came in or just stepped back out. Answer "
+        "each out loud, briefly and lightly: a word about them coming so close, then about them "
+        "stepping back. It is only known while your head follows someone.\n"
         f"- `{TRACKED_USER}` tells you whom your head is following, if anyone.\n\n"
         "Following a user with your head shows them you are paying attention: "
         "`start_tracking(user)` follows that user, `start_tracking()` follows whoever is in "
@@ -347,6 +364,9 @@ class UsersInput:
         self._written: dict[str, Any] = {}  # each standing entry's value last delivered
         self._event: tuple[UserChange, ...] = ()  # the events last delivered, and when
         self._event_at = -math.inf
+        self._space_changed_at = (
+            -math.inf
+        )  # when personal_space last said what just changed
         self._entries = (
             InputEntry(
                 USER_EVENT,
@@ -464,8 +484,30 @@ class UsersInput:
         tracking = self._bridge.head_tracking.value
         present = frozenset(u.track_id for u in users.users)
         self._standing(USERS_IN_VIEW, users_in_view(users))
-        self._standing(PERSONAL_SPACE, personal_space(users, tracking))
+        self._standing(PERSONAL_SPACE, self._space(personal_space(users, tracking)))
         self._standing(TRACKED_USER, tracked_user(tracking, present))
+
+    def _space(self, now: PersonalSpace | None) -> PersonalSpace | None:
+        """*now* (settled), saying what just changed: a change of who is inside is written with it
+        (and wakes the agent, by ``personal_space_changed``), kept for ``SPACE_CHANGE_S``, then
+        rewritten settled (waking no one: who is inside is the same)."""
+        last = self._written.get(PERSONAL_SPACE)
+        if now is None:
+            return None
+        clock = self._clock()
+        if personal_space_changed(last, now):
+            self._space_changed_at = clock
+            if now.user is not None:
+                return replace(now, change="came_in")
+            left = last.user if isinstance(last, PersonalSpace) else None
+            return replace(now, change="stepped_out", left=left)
+        if (
+            isinstance(last, PersonalSpace)
+            and last.change is not None
+            and clock - self._space_changed_at < SPACE_CHANGE_S
+        ):
+            return replace(now, change=last.change, left=last.left)
+        return now
 
     def _standing(self, key: str, value: Any) -> None:
         if key in self._written and self._written[key] == value:

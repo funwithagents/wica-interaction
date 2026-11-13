@@ -369,6 +369,18 @@ def test_the_personal_space_changes_when_the_followed_user_comes_in_and_steps_ou
                 if personal_space_changed(old, new)
             ]
             assert [v.user for v in woken] == [user, None]
+            # Each waking value says what just changed; the settling rewrite after it does not.
+            assert [(v.change, v.left) for v in woken] == [
+                ("came_in", None),
+                ("stepped_out", user),
+            ]
+            assert world.render(PERSONAL_SPACE, woken[0]).startswith(
+                f"User {user} just came into your personal space"
+            )
+            assert world.render(PERSONAL_SPACE, woken[1]) == (
+                f"User {user} just stepped back out of your personal space; nobody is in it now."
+            )
+            assert world.current(PERSONAL_SPACE).change is None  # settled
 
             await bridge.stop_head_tracking()
             assert await _until(lambda: world.current(PERSONAL_SPACE) is None)
@@ -549,6 +561,17 @@ def test_the_personal_space_is_judged_only_while_the_head_follows() -> None:
     )
     assert personal_space_line(PersonalSpace(3, 0.3)) == (
         "User 3 is in your personal space, very close to you (about 0.3 m away)."
+    )
+    assert personal_space_line(PersonalSpace(3, 0.3, change="came_in")) == (
+        "User 3 just came into your personal space: they are very close to you "
+        "(about 0.3 m away)."
+    )
+    assert personal_space_line(PersonalSpace(None, change="stepped_out", left=3)) == (
+        "User 3 just stepped back out of your personal space; nobody is in it now."
+    )
+    # Settling a change is not a change of who is inside: it wakes no one.
+    assert not personal_space_changed(
+        PersonalSpace(3, 0.3, change="came_in"), PersonalSpace(3, 0.3)
     )
     assert (
         personal_space_line(PersonalSpace(None)) == "Nobody is in your personal space."

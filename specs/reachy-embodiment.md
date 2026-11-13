@@ -15,7 +15,7 @@ tests:
 
 # Reachy Mini embodiment
 
-**Status:** Updated
+**Status:** Implemented
 
 ## Purpose
 

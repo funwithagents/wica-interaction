@@ -1,6 +1,6 @@
 # The personal space says what just changed, and is answered
 
-**Status:** Todo
+**Status:** In progress
 
 Implements [specs/reachy-embodiment.md](../specs/reachy-embodiment.md) ("Users: `UsersInput`": "The personal space says what just changed"; "Persona"). In a session on the robot, every `personal_space` change woke the agent, and the agent answered each one with `noop`. Two causes:
 
