@@ -1,7 +1,7 @@
 """The end-to-end tier on the Reachy Mini embodiment (specs/e2e.md): the real app over the MuJoCo
-sim the bridge's harness runs — the cable as the robot's mic, hand photos as props of its scene, and
-no echo (the real robot cancels it in hardware). The scenarios are `scenarios.py`'s, shared with the
-computer."""
+sim the bridge's harness runs — the cable as the robot's mic, hand photos and the bridge's portraits
+as props of its scene, and no echo (the real robot cancels it in hardware). The scenarios are
+`scenarios.py`'s, shared with the computer; the people are the robot's alone."""
 
 from __future__ import annotations
 
@@ -24,6 +24,16 @@ def test_a_spoken_turn_is_heard_and_answered(reachy: E2E) -> None:
 
 def test_each_hand_sign_reaches_the_agent(reachy: E2E) -> None:
     scenarios.hand_signs(reachy)
+
+
+@pytest.mark.requires("audio", "camera", "props:face")
+def test_people_arriving_coming_close_and_leaving_reach_the_agent(reachy: E2E) -> None:
+    scenarios.people(reachy)
+
+
+@pytest.mark.requires("audio", "camera", "props:face")
+def test_an_emotion_does_not_lose_the_person(reachy: E2E) -> None:
+    scenarios.a_move_keeps_the_person(reachy)
 
 
 class TestConversation:

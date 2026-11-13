@@ -35,7 +35,7 @@ from support import (
 from wica.contrib.gradio import TranscriptLog
 from wica.testing import TestRun
 
-from wica_interaction.app_ui import display_entry
+from wica_interaction.app_ui import entry_display
 from wica_interaction.computer.config import load_config as load_computer_config
 from wica_interaction.computer.embodiment import ComputerEmbodiment
 from wica_interaction.gesture_input import preload_mediapipe
@@ -45,8 +45,15 @@ from wica_interaction.system import AppSystem, _shutdown, _start, build_system, 
 
 CONFIGS = Path(__file__).resolve().parent / "configs"
 
-# The app's inputs a scenario reads back: speech, and the hands (`vision.max_hands` is 2).
-INPUT_KEYS = ("speech_input", "hand_gesture_1", "hand_gesture_2")
+# The app's inputs a scenario reads back: speech, the hands (`vision.max_hands` is 2) and, on the
+# robot, the people (an entry a body does not register is skipped).
+INPUT_KEYS = (
+    "speech_input",
+    "hand_gesture_1",
+    "hand_gesture_2",
+    "person_event",
+    "people_in_view",
+)
 
 # Each photo's prop is 0.36 m wide (0.24 m tall): the size the hand-render spike validated.
 HAND_WIDTH_M = 0.36
@@ -169,9 +176,10 @@ def _running(
     try:
         assert not system.missing, system.missing
         assert system.wica is not None
-        wire(system, TranscriptLog(system.wica, display_entry))
+        wire(system, TranscriptLog(system.wica, entry_display(system)))
         run = TestRun(system.wica, scenario=scenario)
-        inputs = InputLog(system.wica.world, INPUT_KEYS)
+        world = system.wica.world
+        inputs = InputLog(world, [k for k in INPUT_KEYS if world.is_registered(k)])
         # The person's voice opens the cable on its first `say`, after the scenario has waited
         # for the app to listen (specs/e2e.md, "The virtual audio cable").
         person = Person(
