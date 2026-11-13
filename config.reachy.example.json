@@ -59,7 +59,7 @@
       "presence": true,
       "idle": "breathing",
       "wobbling": true,
-      "tracking": { "enabled": true } }
+      "tracking": { "enabled": false } }
   },
   "vision": {
     "enabled": true,

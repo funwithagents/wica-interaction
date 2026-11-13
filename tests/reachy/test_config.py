@@ -209,9 +209,11 @@ def test_a_boolean_tracking_is_the_bridges_config_error(tmp_path: Path) -> None:
 
 
 def test_the_committed_template_loads() -> None:
-    """The shipped template must open: it turns tracking on, so it must name a detector."""
+    """The shipped template must open, seeing people (a detector, detection on) with tracking off:
+    tracking is the agent's to start (specs/reachy-embodiment.md, "Configuration")."""
     cfg = load_config(
         str(Path(__file__).resolve().parents[2] / "config.reachy.example.json")
     )
     assert cfg.reachy.face_detection.detector == "yunet"
-    assert cfg.reachy.motion.tracking.enabled is True
+    assert cfg.reachy.face_detection.enabled is True
+    assert cfg.reachy.motion.tracking.enabled is False

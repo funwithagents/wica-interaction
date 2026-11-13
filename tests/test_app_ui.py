@@ -16,7 +16,13 @@ from wica.contrib.gradio import EntryDisplay
 from wica.world import WorldEntry, WorldEntryVersion
 
 from tests.fakes import FakeEmbodiment
-from wica_interaction.app_ui import build_ui, display_entry, tick_asr, tick_vision
+from wica_interaction.app_ui import (
+    build_ui,
+    display_entry,
+    entry_display,
+    tick_asr,
+    tick_vision,
+)
 from wica_interaction.asr_bridge import AsrBridge
 from wica_interaction.gesture_input import GestureInput
 from wica_interaction.system import AppSystem
@@ -53,6 +59,30 @@ def test_display_entry_labels_the_app_entries() -> None:
         display_entry(_command_entry("c2", "play_emotion", {"name": "happy"})) is None
     )
     assert display_entry(_entry("something_else", "value")) is None
+
+
+def test_entry_display_labels_the_bodys_entries_by_their_own_wording() -> None:
+    """An embodiment's entry is labelled by its own `display_fn` (the robot's `👤 …`); a cleared one
+    (`None`, still labelling a reaction whose prompt carried it) and every app entry fall through to
+    `display_entry`, so the app's labels are unchanged."""
+    system = AppSystem(
+        loop=None,
+        display_name="fake body",
+        embodiment=None,
+        wica=None,
+        bridge=None,
+        gesture=None,
+        missing=[],
+        submit_speech=lambda _text: None,
+        input_displays={"person_event": lambda value: f"👤 {value}"},
+    )
+    display = entry_display(system)
+    assert display(_entry("person_event", "A person came into view.")) == EntryDisplay(
+        "👤 A person came into view."
+    )
+    assert display(_entry("person_event", None)) is None
+    assert display(_entry("speech_input", "hi")) == EntryDisplay('🗣️ "hi"')
+    assert display(_entry("something_else", "value")) is None
 
 
 class _FakeEngine:

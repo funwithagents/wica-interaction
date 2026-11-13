@@ -34,7 +34,7 @@ from wica_interaction.computer.audio_processing import (
     build_coordinator,
 )
 from wica_interaction.computer.config import ComputerConfig
-from wica_interaction.embodiment import Voice
+from wica_interaction.embodiment import Input, Voice
 from wica_interaction.gesture_input import CameraFeed, StreamFeed
 
 logger = logging.getLogger(__name__)
@@ -298,6 +298,10 @@ class ComputerEmbodiment:
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:
         """Empty: the computer has nothing to act with beyond speaking."""
+        return ()
+
+    def inputs(self) -> Sequence[Input]:
+        """Empty: the computer perceives nothing of its own (its webcam feeds the hand signs)."""
         return ()
 
     @property

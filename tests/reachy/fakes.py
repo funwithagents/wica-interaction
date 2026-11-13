@@ -1,4 +1,5 @@
-"""Doubles for the Reachy Mini embodiment's tests: the slice of `ReachyMiniBridge` it touches."""
+"""Doubles for the Reachy Mini embodiment's tests: the slice of `ReachyMiniBridge` it touches, and a
+scripted face detector for the tests that run the real bridge on its `fake` backend."""
 
 from __future__ import annotations
 
@@ -6,7 +7,8 @@ import threading
 import time
 
 import numpy as np
-from reachy_mini_bridge import CameraFrame
+from reachy_mini_bridge import CameraFrame, PixelFace
+from reachy_mini_bridge.config import FaceDetectionSettings, ReachyMiniConfig
 
 
 class FakeCameraFeed:
@@ -116,3 +118,51 @@ class FakeReachyMiniBridge:
         if self._raise_on_list_emotions is not None:
             raise RuntimeError(self._raise_on_list_emotions)
         return list(self.emotions)
+
+
+class ScriptedFaces:
+    """A `FaceDetector` for the bridge's `custom` source, scripted by the test: `show` the faces the
+    next frames hold, `hide` them all. The bridge runs it once per frame of its `fake` backend (a
+    small synthetic frame), so everything downstream — the confirmation of a user, the tracks, the
+    departures, the head tracker's pin and personal space — is the real bridge's.
+
+    A face is placed by `x` (the bridge's normalised image coordinate, -1 left … 1 right) and `size`
+    (its box height as a fraction of the frame's): the fake's camera model turns 0.2 into about
+    0.7 m away and 0.9 into well inside the personal space."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._faces: list[tuple[float, float]] = []
+
+    def show(self, *faces: tuple[float, float]) -> None:
+        """The faces from the next frame on, each `(x, size)`."""
+        with self._lock:
+            self._faces = list(faces)
+
+    def hide(self) -> None:
+        with self._lock:
+            self._faces = []
+
+    def detect(self, frame_bgr: np.ndarray, ts: float) -> list[PixelFace]:
+        height, width = frame_bgr.shape[:2]
+        with self._lock:
+            faces = list(self._faces)
+        boxes = []
+        for x, size in faces:
+            side = size * height
+            centre = (x + 1.0) / 2.0 * width
+            boxes.append(
+                PixelFace(bbox=(centre - side / 2, height / 2 - side / 2, side, side))
+            )
+        return boxes
+
+
+def seeing_config(faces: ScriptedFaces, *, enabled: bool = True) -> ReachyMiniConfig:
+    """A `fake`-backend bridge config whose face detector is *faces* (the `custom` source); detection
+    on at session start unless *enabled* is False."""
+    return ReachyMiniConfig(
+        backend="fake",
+        face_detection=FaceDetectionSettings(
+            detector="custom", enabled=enabled, face_detector=lambda: faces
+        ),
+    )

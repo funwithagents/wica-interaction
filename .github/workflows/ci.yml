@@ -189,9 +189,9 @@ jobs:
       WICA_E2E_SPEAKER_DEVICE: wica_speaker
       WICA_E2E_ECHO_DEVICE: wica_echo
       WICA_E2E_FAIL_ON_MISSING: '1'
-      # A sim that comes up without its camera, its audio or the hand props fails the job
+      # A sim that comes up without its camera, its audio, the hand props or the portraits fails the job
       # instead of skipping the scenarios.
-      REACHY_MINI_E2E_REQUIRED_CAPS: audio,camera,props:hand
+      REACHY_MINI_E2E_REQUIRED_CAPS: audio,camera,props:hand,props:face
     steps:
       - uses: actions/checkout@v7
       - name: System packages (the app's; PulseAudio and its ALSA and GStreamer plugins; the daemon's ICE library; Mesa's EGL for the offscreen camera)
