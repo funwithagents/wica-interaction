@@ -87,11 +87,16 @@ class Person:
     for the echo check."""
 
     def __init__(
-        self, voice_device: str, stage: Stage, echo_device: str | None = None
+        self,
+        voice_device: str,
+        stage: Stage,
+        echo_device: str | None = None,
+        room_log: Path | None = None,
     ) -> None:
         self._device = voice_device
         self._stage = stage
         self._echo = echo_device
+        self._room_log = room_log
         self._voice: subprocess.Popen[str] | None = None
         self.said: list[str] = []
 
@@ -103,6 +108,11 @@ class Person:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 text=True,
+                env=(
+                    {**os.environ, "WICA_E2E_ROOM_LOG": str(self._room_log)}
+                    if self._room_log is not None
+                    else None
+                ),
             )
             self._expect("ready")
         return self._voice
