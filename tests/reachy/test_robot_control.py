@@ -17,14 +17,16 @@ trajectory ends (see reachy-mini-bridge specs/motion.md, "Emotions through the l
 play is observed here as its sidecar sound reaching the fake's media layer (``media.play_sound``), not
 as a discrete "move" command.
 
-Head tracking is deliberately not exercised here: it is no longer an agent-facing command (the
-bridge's motion loop drives it automatically, like presence and breathing) — see specs/reachy-embodiment.md.
+The tracking pair runs over a ``fake`` bridge that sees people: its face detector a scripted one
+(``ScriptedFaces``, the bridge's ``custom`` source), so the pin is the bridge's own, accepted only for
+a user it holds present.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine, Iterator
+import time
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -32,6 +34,7 @@ from reachy_mini_bridge import ReachyMiniBridge
 from reachy_mini_bridge.fake_reachy_mini import FakeReachyMini
 from wica import Command
 
+from tests.reachy.fakes import ScriptedFaces, seeing_config
 from wica_interaction.reachy.robot_control import (
     RobotControl,
     emotions_prompt_section,
@@ -187,3 +190,93 @@ def test_set_unknown_motor_state_is_reported_not_raised() -> None:
         assert "failed" in result
         # The state was not changed by an invalid request: it stays at the fake's initial "disabled".
         assert "disabled" in run(control.get_motors_state())
+
+
+# --- Following a person: start_tracking / stop_tracking (specs/reachy-embodiment.md) ---------------
+
+
+def _names(control: RobotControl) -> list[str]:
+    return [
+        c.name if isinstance(c, Command) else c.__name__ for c in control.commands()
+    ]
+
+
+def test_the_tracking_pair_is_registered_only_when_the_robot_sees_people() -> None:
+    with _control(_FAKE_NAMES) as (control, _):
+        assert "start_tracking" not in _names(control)
+    bridge = ReachyMiniBridge("fake")
+    names = _names(RobotControl(bridge, emotions=_FAKE_NAMES, tracking=True))
+    assert names[-2:] == ["start_tracking", "stop_tracking"]
+
+
+async def _until(predicate: Callable[[], bool], timeout: float = 6.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(0.02)
+    return predicate()
+
+
+def test_start_tracking_pins_a_person_present_and_stop_tracking_lets_go() -> None:
+    """The agent's choice of whom reaches the bridge's head tracker: a number pins that user, none
+    returns to the automatic target, `stop_tracking` turns tracking off; the replies say so."""
+
+    async def scenario() -> None:
+        faces = ScriptedFaces()
+        bridge = ReachyMiniBridge(seeing_config(faces))
+        await bridge.start()
+        try:
+            control = RobotControl(bridge, tracking=True)
+            faces.show((0.0, 0.2))
+            assert await _until(lambda: bool(bridge.users.value.users))
+            person = bridge.users.value.users[0].track_id
+
+            reply = await control.start_tracking(person)
+            assert reply == f"OK — your head now follows person {person}."
+            tracking = bridge.head_tracking.value
+            assert tracking.active and tracking.pinned_track_id == person
+            assert await _until(lambda: bridge.head_tracking.value.track_id == person)
+
+            reply = await control.start_tracking()
+            assert reply == "OK — your head now follows whoever is in front of you."
+            assert bridge.head_tracking.value.pinned_track_id is None
+
+            reply = await control.stop_tracking()
+            assert reply == "OK — your head no longer follows anyone."
+            assert not bridge.head_tracking.value.active
+            # Detection keeps running for the people input: the person is still present.
+            assert [u.track_id for u in bridge.users.value.users] == [person]
+        finally:
+            await bridge.stop()
+
+    run(scenario())
+
+
+def test_following_someone_who_left_is_answered_not_raised() -> None:
+    """The person left between the step that read them and the call: the bridge refuses the pin,
+    the agent reads why, tracking is left as it was."""
+
+    async def scenario() -> None:
+        faces = ScriptedFaces()
+        bridge = ReachyMiniBridge(seeing_config(faces))
+        await bridge.start()
+        try:
+            control = RobotControl(bridge, tracking=True)
+            reply = await control.start_tracking(42)
+            assert reply == "Can't follow person 42: they are not in view."
+            assert not bridge.head_tracking.value.active
+        finally:
+            await bridge.stop()
+
+    run(scenario())
+
+
+def test_tracking_without_a_detector_is_reported_not_raised() -> None:
+    bridge = ReachyMiniBridge("fake")
+    run(bridge.start())
+    try:
+        reply = run(RobotControl(bridge, tracking=True).start_tracking())
+        assert reply.startswith("start_tracking failed:")
+    finally:
+        run(bridge.stop())

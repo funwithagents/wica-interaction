@@ -43,13 +43,17 @@ class InputEntry:  # one World entry an input writes: its registration, and its 
     triggers_llm_call: bool = False
     trigger_condition_fn: Callable[[Any, Any], bool] | None = None
     ttl: timedelta | None = None
-    display_fn: Callable[[Any], str] | None = None  # the transcript's label; None ⇒ the default
+    display_fn: Callable[[Any], str] | None = (
+        None  # the transcript's label; None ⇒ the default
+    )
 
 
 class Input(Protocol):  # a producer of perceptions, and the entries it writes
     @property
     def entries(self) -> Sequence[InputEntry]: ...
-    async def start(self, deliver: Deliver) -> None: ...  # on the app loop, the agent running
+    async def start(
+        self, deliver: Deliver
+    ) -> None: ...  # on the app loop, the agent running
     async def stop(self) -> None: ...  # on the app loop, before the body exits
 
 

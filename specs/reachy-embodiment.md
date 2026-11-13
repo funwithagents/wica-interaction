@@ -159,13 +159,22 @@ The robot's own perception, delivered to the agent through `inputs()` ([embodime
 
 ```python
 class PeopleInput:  # an `Input` (embodiment.py)
-    def __init__(self, bridge: ReachyMiniBridge, *, clock: Callable[[], float] = time.monotonic) -> None: ...
+    def __init__(
+        self, bridge: ReachyMiniBridge, *, clock: Callable[[], float] = time.monotonic
+    ) -> None: ...
     @property
-    def entries(self) -> tuple[InputEntry, InputEntry]: ...  # person_event, people_in_view
-    async def start(self, deliver: Deliver) -> None: ...  # the start-up snapshot, then the watchers
+    def entries(
+        self,
+    ) -> tuple[InputEntry, InputEntry]: ...  # person_event, people_in_view
+    async def start(
+        self, deliver: Deliver
+    ) -> None: ...  # the start-up snapshot, then the watchers
     async def stop(self) -> None: ...  # cancels the watchers
 
-def people_prompt_section() -> str: ...  # "## People around you …", appended to the persona
+
+def people_prompt_section() -> (
+    str
+): ...  # "## People around you …", appended to the persona
 ```
 
 **Two entries.**

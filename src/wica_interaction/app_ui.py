@@ -10,8 +10,11 @@ the components and owns the timer keeping them live. What this module holds:
   panels: how a World entry reads to a *person* (`speech_input` → `🗣️ "…"`, a `say` execution →
   the spoken text). The person-facing counterpart of the ``speech_input`` ``serialize_fn`` in
   [system.py](system.py).
+- ``entry_display(system)`` — that hook with the embodiment's own entries in front of it: each
+  ``InputEntry`` an embodiment declares carries its ``display_fn``, so the body's wording reaches the
+  transcript without this module knowing the body.
 - ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
-  the agent's Events in their constructors, both given ``display_entry``), lays out the page (the
+  the agent's Events in their constructors, both given ``entry_display(system)``), lays out the page (the
   three contrib panels, the app's ASR panel, the typed-text hatch, a banner for anything missing,
   the debug toggle), and returns the page plus the transcript on an ``AppUi`` handle so the app can
   wire the transcript's sink (``wire`` in [system.py](system.py)). The UI wires nothing itself.
@@ -27,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -83,6 +87,22 @@ def display_entry(entry: WorldEntry) -> EntryDisplay | None:
         # The voice: title it by channel and show what the agent set out to say as the body.
         return EntryDisplay("🗣️ say", str(value.args.get("text", "")))
     return None
+
+
+def entry_display(system: AppSystem) -> Callable[[WorldEntry], EntryDisplay | None]:
+    """The hook both presenters get: an embodiment's own entry labelled by its ``display_fn``
+    (``system.input_displays``), any other by ``display_entry``. A ``None`` value — an entry cleared
+    by its TTL, still labelling a reaction whose prompt carried it — falls through to the default."""
+    displays = system.input_displays
+
+    def display(entry: WorldEntry) -> EntryDisplay | None:
+        label = displays.get(entry.key)
+        value = entry.current.value
+        if label is not None and value is not None:
+            return EntryDisplay(label(value))
+        return display_entry(entry)
+
+    return display
 
 
 @dataclass(frozen=True)
@@ -177,8 +197,9 @@ def build_ui(system: AppSystem) -> AppUi:
     # The presenters subscribe to the agent's Events in their constructors, so the Wica must already
     # exist (it does: build_system ran first). One hook for both, so transcript items and reaction
     # labels read alike.
-    transcript = TranscriptLog(wica, display_entry)
-    reactions = ReactionLog(wica, display_entry)
+    display = entry_display(system)
+    transcript = TranscriptLog(wica, display)
+    reactions = ReactionLog(wica, display)
 
     def on_send(user_text: str) -> str:
         system.submit_speech(user_text)  # empty/whitespace is ignored inside
