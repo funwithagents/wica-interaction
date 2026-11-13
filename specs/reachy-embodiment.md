@@ -158,10 +158,37 @@ class RobotCameraFeed:
 The robot's own perception, delivered to the agent through `inputs()` ([embodiment.md](embodiment.md), "`inputs()` is the mirror of `commands()`"): the **users in front of it**, read from the bridge's users present and head tracking (`reachy-mini-bridge/specs/vision/user_perception.md` "The users present", `specs/motion/head_tracking.md`). The word is the bridge's: a *user* is a person the bridge holds present. The bridge decides who that is — a face confirmed over 0.3 s, kept while a move of the robot's own looks away, dropped after 2 s missing where the camera looks or 20 s unseen — so this module only *words* it: it owns which changes wake the agent, what each says, and the standing picture of who is there.
 
 ```python
+Side = Literal["left", "front", "right"]
+
+
+@dataclass(frozen=True)
+class UserChange:  # one of user_event's: what just happened to a user
+    kind: Literal["arrived", "present", "left"]  # present: already in view at start
+    user: int
+    side: Side | None = None
+    distance_m: float | None = None
+
+
+@dataclass(frozen=True)
+class UserInView:  # one of users_in_view's
+    user: int
+    side: Side
+    distance_m: float | None
+    in_view: bool = True  # False: the camera is not framing where they were
+
+
 @dataclass(frozen=True)
 class PersonalSpace:  # personal_space's value while judged
     user: int | None  # the user inside; None: nobody
-    distance_m: float | None = None  # to 0.1 m, as worded
+    distance_m: float | None = None
+
+
+@dataclass(frozen=True)
+class TrackedUser:  # tracked_user's value
+    active: bool  # tracking on
+    user: int | None = None  # the user followed
+    pinned: int | None = None  # the user the agent chose; None: the automatic target
+    pinned_present: bool = False
 
 
 class UsersInput:  # an `Input` (embodiment.py)
@@ -189,14 +216,14 @@ def users_prompt_section() -> (
 ): ...  # "## The users around you …", appended to the persona
 ```
 
-**One entry per concept.**
+**One entry per concept, each holding what was perceived.** The World holds objects — `user_event` a tuple of `UserChange`, `users_in_view` a tuple of `UserInView`, `personal_space` a `PersonalSpace`, `tracked_user` a `TrackedUser` — and each entry's `serialize_fn` words them for the prompt, its `display_fn` for the transcript, as `speech_input` holds the transcript and its serializer says *heard*. So the World panel shows the objects, the prompt the words. Positions are kept as coarsely as they are said — a side, a distance to 0.1 m (0.5 m past a metre) — so a user swaying changes no value and writes nothing.
 
 | Entry | Kind | Wakes the agent | Rendered (examples) | In the transcript |
 |---|---|---|---|---|
-| `user_event` | transient: `ttl` `USER_EVENT_TTL` (2 s), `None` renders nothing — like `speech_input` | yes, every write | `A user came into view: user 3, about 0.7 m away, in front of you.` · `User 3 left your view.` · `A user is in view as you start: user 3, …` | `👤 <the event>` |
-| `users_in_view` | **standing**: no TTL | never | `In view: user 3 (about 0.7 m away, in front of you), user 5 (about 1.5 m away, to your left; out of your sight right now).` · `Nobody is in view.` · omitted while detection is not running | `👥 <who is present>` |
+| `user_event` | transient, `tuple[UserChange, ...]`: `ttl` `USER_EVENT_TTL` (2 s), `None` renders nothing — like `speech_input` | yes, every write | `A user came into view: user 3, about 0.7 m away, in front of you.` · `User 3 left your view.` · `A user is in view as you start: user 3, …` | `👤 <the event>` |
+| `users_in_view` | **standing**, `tuple[UserInView, ...]`: no TTL | never | `In view: user 3 (about 0.7 m away, in front of you), user 5 (about 1.5 m away, to your left; out of your sight right now).` · `Nobody is in view.` · omitted while detection is not running | `👥 <who is present>` |
 | `personal_space` | **state that wakes**: a `PersonalSpace`, judged only while the head follows someone (the bridge judges it for the followed user); omitted with tracking off | when **who is inside** changes (`personal_space_changed`): a user entering, stepping back out, another taking their place — not tracking starting or stopping, not the user inside moving | `User 3 is in your personal space, very close to you (about 0.3 m away).` · `Nobody is in your personal space.` | `📏 <the line>` |
-| `tracked_user` | **standing** | never | `Your head is following user 3, as you chose.` · `Your head is following user 3.` (the automatic target) · `Your head is turning to follow user 3, as you chose.` (between a pin and that user's next sighting: the bridge reports the pin from the call, the follow from the sighting) · `You chose to follow user 3, who is not in view; your head is waiting for them.` · `Your head will follow whoever comes in front of you; it follows nobody yet.` · `You are not following anyone with your head.` | `🎯 <the line>` |
+| `tracked_user` | **standing**, a `TrackedUser` | never | `Your head is following user 3, as you chose.` · `Your head is following user 3.` (the automatic target) · `Your head is turning to follow user 3, as you chose.` (between a pin and that user's next sighting: the bridge reports the pin from the call, the follow from the sighting) · `You chose to follow user 3, who is not in view; your head is waiting for them.` · `Your head will follow whoever comes in front of you; it follows nobody yet.` · `You are not following anyone with your head.` | `🎯 <the line>` |
 
 The standing entries — `users_in_view`, `tracked_user`, and `personal_space` between its changes — are the app's exception to "no mirrored embodiment state" ([app.md](app.md), "World, Commands, persona"): the agent holds the tracking Commands, and to follow user 3 it must know, in the step where it decides, that user 3 is present and whom it follows already.
 
@@ -211,9 +238,9 @@ The standing entries — `users_in_view`, `tracked_user`, and `personal_space` b
 | `bridge.head_tracking`: any change (tracking on or off, the followed user, the pin, the personal space) | nothing | re-rendered — `personal_space` wakes the agent by its own rule |
 
 - **Where a user is, in words.** The side from the face's `x` at its last sighting — `to your left` below −⅓, `to your right` above ⅓, `in front of you` between (the robot's camera is not mirrored: the image's right is the robot's right) — and the distance from its `distance_m`, `about 0.7 m away` (to 0.1 m below 1 m, to 0.5 m from there; left out when the bridge has none). Both are relative to where the head looked: good for "look at the user on your left" in the moment, not a map.
-- **The standing entries are kept current, cheaply.** They are re-rendered on every change above and once a second (`STANDING_REFRESH_S`), and each is written only when its value changed — the distance inside `PersonalSpace` rounded as worded — so a user moving a little rewrites nothing, and one stepping from one side to the other is seen within a second.
+- **The standing entries are kept current, cheaply.** They are re-rendered on every change above and once a second (`STANDING_REFRESH_S`), and each is written only when its value changed — so a user moving a little rewrites nothing, and one stepping from one side to the other is seen within a second.
 - **No cooldown on the personal space.** Entering and stepping out each wake the agent, as asked; the bridge's hysteresis (left only beyond `distance_m` plus a margin) keeps a user at the boundary from flickering it. The persona lets the agent stay silent.
-- **Events that land together are written together.** A `user_event` write within `EVENT_JOIN_S` (0.5 s) of the previous one appends its line to it rather than replacing it, so two arrivals on one coalescing window both reach the step they wake; later, a write starts afresh.
+- **Events that land together are written together.** A `user_event` write within `EVENT_JOIN_S` (0.5 s) of the previous one appends its changes to it rather than replacing them, so two arrivals on one coalescing window both reach the step they wake; later, a write starts afresh.
 - **The start-up snapshot.** The bridge's detection starts with the session, before the agent runs, and a subscription sees only what is published after it. So `start` reads who is already present first, in the same loop step as subscribing, delivers the standing entries, and — when someone is there — one `user_event`, `A user is in view as you start: …`, so the robot greets whoever stands in front of it at launch.
 - **What it never claims.** A number is a track, not an identity: the same person coming back after a break gets a new one, and the wording never says *the same person* or a name.
 - **A non-raising producer.** A watcher that fails is logged and ends; the robot keeps running, the entries stop changing. `stop` cancels both watchers and the refresher and waits for them.

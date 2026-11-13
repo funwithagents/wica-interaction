@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -29,8 +29,10 @@ from reachy_mini_bridge import (
     User,
     UsersReport,
 )
+from wica import TextPart
 
 from tests.reachy.fakes import ScriptedFaces, seeing_config
+from wica_interaction.embodiment import InputEntry
 from wica_interaction.reachy.users import (
     PERSONAL_SPACE,
     TRACKED_USER,
@@ -38,13 +40,19 @@ from wica_interaction.reachy.users import (
     USER_EVENT_TTL,
     USERS_IN_VIEW,
     PersonalSpace,
+    TrackedUser,
+    UserChange,
+    UserInView,
     UsersInput,
-    about,
+    events_text,
     personal_space,
     personal_space_changed,
     personal_space_line,
-    side,
-    tracked_text,
+    rounded,
+    side_of,
+    tracked_line,
+    tracked_user,
+    users_in_view,
     users_prompt_section,
     users_text,
 )
@@ -60,10 +68,13 @@ ARRIVED = re.compile(
 
 
 class World:
-    """What the producer delivered, in order — the test's stand-in for the World."""
+    """What the producer delivered, in order — the test's stand-in for the World. It keeps the
+    values (objects, as the World does) and reads them as the prompt does, through each entry's
+    `serialize_fn`."""
 
-    def __init__(self) -> None:
+    def __init__(self, entries: Sequence[InputEntry]) -> None:
         self.writes: list[tuple[str, Any]] = []
+        self._serialize = {e.key: e.serialize_fn for e in entries}
 
     def deliver(self, key: str, value: Any) -> None:
         self.writes.append((key, value))
@@ -75,12 +86,19 @@ class World:
         values = self.values(key)
         return values[-1] if values else None
 
+    def render(self, key: str, value: Any) -> str:
+        """*value* as the prompt words it ("" when the entry would be omitted)."""
+        return "".join(
+            part.text
+            for part in self._serialize[key](value, None)
+            if isinstance(part, TextPart)
+        )
+
     def text(self, key: str) -> str:
-        value = self.current(key)
-        return value if isinstance(value, str) else ""
+        return self.render(key, self.current(key))
 
     def events(self) -> list[str]:
-        return [v for v in self.values(USER_EVENT) if v is not None]
+        return [self.render(USER_EVENT, v) for v in self.values(USER_EVENT) if v]
 
 
 async def _until(predicate: Callable[[], bool], timeout: float = 6.0) -> bool:
@@ -103,7 +121,7 @@ async def _seeing(
     await bridge.start()
     users = UsersInput(bridge, refresh_s=refresh_s)
     try:
-        yield bridge, users, World()
+        yield bridge, users, World(users.entries)
     finally:
         await users.stop()
         await bridge.stop()
@@ -158,10 +176,10 @@ def test_a_user_arriving_is_an_event_and_listed_in_view() -> None:
         async with _seeing(faces) as (_, users, world):
             await users.start(world.deliver)
             assert await _until(
-                lambda: world.current(USERS_IN_VIEW) == "Nobody is in view."
+                lambda: world.text(USERS_IN_VIEW) == "Nobody is in view."
             ), world.writes
             assert (
-                world.current(TRACKED_USER)
+                world.text(TRACKED_USER)
                 == "You are not following anyone with your head."
             )
             assert world.events() == []  # nobody there: nothing happened
@@ -188,7 +206,7 @@ def test_a_user_leaving_is_an_event() -> None:
             assert await _until(
                 lambda: f"User {user} left your view." in world.events()
             ), world.writes
-            assert world.current(USERS_IN_VIEW) == "Nobody is in view."
+            assert world.text(USERS_IN_VIEW) == "Nobody is in view."
 
     run(scenario())
 
@@ -288,7 +306,7 @@ def test_the_tracked_user_says_whom_the_head_follows() -> None:
             await bridge.start_head_tracking(track_id=user)
             assert await _until(
                 lambda: (
-                    world.current(TRACKED_USER)
+                    world.text(TRACKED_USER)
                     == f"Your head is following user {user}, as you chose."
                 )
             ), world.writes
@@ -296,15 +314,14 @@ def test_the_tracked_user_says_whom_the_head_follows() -> None:
             await bridge.start_head_tracking()  # the automatic target, same user
             assert await _until(
                 lambda: (
-                    world.current(TRACKED_USER)
-                    == f"Your head is following user {user}."
+                    world.text(TRACKED_USER) == f"Your head is following user {user}."
                 )
             ), world.writes
 
             await bridge.stop_head_tracking()
             assert await _until(
                 lambda: (
-                    world.current(TRACKED_USER)
+                    world.text(TRACKED_USER)
                     == "You are not following anyone with your head."
                 )
             ), world.writes
@@ -442,56 +459,85 @@ def _tracking(**fields: Any) -> HeadTrackingReport:
     return HeadTrackingReport(**{**base, **fields})
 
 
-def test_a_distance_is_said_the_way_a_person_would() -> None:
-    assert about(0.66) == "about 0.7 m away"
-    assert about(0.04) == "about 0.1 m away"
-    assert about(1.3) == "about 1.5 m away"
-    assert about(2.1) == "about 2.0 m away"
-    assert about(None) is None
+def test_a_distance_is_kept_as_coarsely_as_it_is_said() -> None:
+    assert rounded(0.66) == 0.7
+    assert rounded(0.04) == 0.1
+    assert rounded(1.3) == 1.5
+    assert rounded(2.1) == 2.0
+    assert rounded(None) is None
 
 
 def test_the_side_is_the_robots() -> None:
-    assert side(_face(x=-0.8)) == "to your left"
-    assert side(_face(x=0.1)) == "in front of you"
-    assert side(_face(x=0.8)) == "to your right"
+    assert side_of(_face(x=-0.8)) == "left"
+    assert side_of(_face(x=0.1)) == "front"
+    assert side_of(_face(x=0.8)) == "right"
 
 
-def test_the_users_text_names_each_user_and_where() -> None:
-    text = users_text(_report(_user(3), _user(5, x=-0.8, in_view=False)))
-    assert text == (
+def test_the_world_holds_who_is_present_and_the_prompt_words_it() -> None:
+    present = users_in_view(_report(_user(3), _user(5, x=-0.8, in_view=False)))
+    assert present == (
+        UserInView(3, "front", 0.7),
+        UserInView(5, "left", 0.7, in_view=False),
+    )
+    assert present is not None
+    assert users_text(present) == (
         "In view: user 3 (about 0.7 m away, in front of you), "
         "user 5 (about 0.7 m away, to your left; out of your sight right now)."
     )
+    assert users_text(()) == "Nobody is in view."
+    # Not looking is not nobody: the entry is omitted.
+    assert users_in_view(_report(active=False)) is None
 
 
-def test_not_looking_is_not_nobody() -> None:
-    assert users_text(_report(active=False)) is None
+def test_the_events_are_worded_one_line_each() -> None:
+    events = (
+        UserChange("arrived", 3, "front", 0.7),
+        UserChange("present", 4, "right", 1.5),
+        UserChange("left", 5),
+    )
+    assert events_text(events) == (
+        "A user came into view: user 3, about 0.7 m away, in front of you.\n"
+        "A user is in view as you start: user 4, about 1.5 m away, to your right.\n"
+        "User 5 left your view."
+    )
 
 
-def test_the_tracked_text_for_each_state_of_the_head() -> None:
+def test_the_world_holds_whom_the_head_follows_and_the_prompt_words_it() -> None:
     present = frozenset({7})
-    assert tracked_text(_tracking(active=False), present) == (
-        "You are not following anyone with your head."
-    )
-    assert tracked_text(_tracking(track_id=7), present) == (
-        "Your head is following user 7."
-    )
-    assert tracked_text(_tracking(track_id=7, pinned_track_id=7), present) == (
-        "Your head is following user 7, as you chose."
-    )
-    # Between the pin and the pinned user's next sighting the head is turning to them…
-    assert tracked_text(
-        _tracking(attention="watching", pinned_track_id=7), present
-    ) == ("Your head is turning to follow user 7, as you chose.")
+    cases = [
+        (
+            _tracking(active=False),
+            TrackedUser(active=False),
+            "You are not following anyone with your head.",
+        ),
+        (
+            _tracking(track_id=7),
+            TrackedUser(True, user=7),
+            "Your head is following user 7.",
+        ),
+        (
+            _tracking(track_id=7, pinned_track_id=7),
+            TrackedUser(True, 7, 7, True),
+            "Your head is following user 7, as you chose.",
+        ),
+        # Between the pin and the pinned user's next sighting the head is turning to them…
+        (
+            _tracking(attention="watching", pinned_track_id=7),
+            TrackedUser(True, None, 7, True),
+            "Your head is turning to follow user 7, as you chose.",
+        ),
+    ]
+    for report, value, line in cases:
+        assert tracked_user(report, present) == value
+        assert tracked_line(value) == line
     # …and once they left, it waits.
-    assert tracked_text(
-        _tracking(attention="watching", pinned_track_id=7), frozenset()
-    ) == (
+    gone = tracked_user(_tracking(attention="watching", pinned_track_id=7), frozenset())
+    assert tracked_line(gone) == (
         "You chose to follow user 7, who is not in view; your head is waiting for them."
     )
-    assert tracked_text(_tracking(attention="watching"), present).startswith(
-        "Your head will follow whoever comes in front of you"
-    )
+    assert tracked_line(
+        tracked_user(_tracking(attention="watching"), present)
+    ).startswith("Your head will follow whoever comes in front of you")
 
 
 def test_the_personal_space_is_judged_only_while_the_head_follows() -> None:

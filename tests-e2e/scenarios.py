@@ -11,7 +11,6 @@ thresholds.
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from typing import Any
 
@@ -365,8 +364,16 @@ def never_heard_itself(e2e: E2E) -> None:
 # --- The users (the robot's; specs/e2e.md, scenarios 4 and 5) -------------------------------------
 
 
-def _text(value: Any) -> str:
-    return value if isinstance(value, str) else ""
+def _changes(value: Any, kind: str) -> list[int]:
+    """The users a `user_event` value says did *kind* (`arrived`, `left`)."""
+    if not isinstance(value, tuple):
+        return []
+    return [c.user for c in value if getattr(c, "kind", None) == kind]
+
+
+def _present(value: Any) -> list[int]:
+    """The users a `users_in_view` value lists."""
+    return [u.user for u in value] if isinstance(value, tuple) else []
 
 
 def _inside(value: Any) -> int | None:
@@ -382,17 +389,15 @@ def _user_arrives(e2e: E2E) -> int:
     e2e.person.arrive(PERSON_FAR)
     arrived = e2e.inputs.wait_for(
         "user_event",
-        lambda value: "came into view" in _text(value),
+        lambda value: bool(_changes(value, "arrived")),
         within=PERSON_WITHIN_S,
         after=t,
     )
     assert arrived is not None, e2e.inputs.delivered("user_event")
-    match = re.search(r"user (\d+)", _text(arrived.value))
-    assert match is not None, arrived.value
-    user = int(match.group(1))
+    user = _changes(arrived.value, "arrived")[0]
     listed = e2e.inputs.wait_for(
         "users_in_view",
-        lambda value: f"user {user} (" in _text(value),
+        lambda value: user in _present(value),
         within=PERSON_WITHIN_S,
         after=t,
     )
@@ -422,7 +427,7 @@ def users(e2e: E2E) -> None:
     user = _user_arrives(e2e)
 
     def following(value: Any) -> bool:
-        return "Your head is following user" in _text(value)
+        return getattr(value, "user", None) is not None
 
     if not any(
         following(d.value)
@@ -488,7 +493,7 @@ def users(e2e: E2E) -> None:
     e2e.person.leave()
     left = e2e.inputs.wait_for(
         "user_event",
-        lambda value: re.search(r"User \d+ left your view\.", _text(value)) is not None,
+        lambda value: bool(_changes(value, "left")),
         within=GONE_WITHIN_S,
         after=t,
     )
@@ -519,7 +524,7 @@ def a_move_keeps_the_user(e2e: E2E) -> None:
     gone = [
         d
         for d in e2e.inputs.delivered("user_event")
-        if d.t >= asked and "left your view" in _text(d.value)
+        if d.t >= asked and _changes(d.value, "left")
     ]
     assert not gone, f"the user was reported gone during an emotion: {gone}"
     assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (

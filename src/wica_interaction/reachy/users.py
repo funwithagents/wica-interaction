@@ -35,7 +35,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+from typing import Any, Literal
 
 from reachy_mini_bridge import (
     Face,
@@ -69,6 +69,36 @@ STANDING_REFRESH_S = 1.0
 # robot's camera is not mirrored, so the image's right is the robot's right.
 _SIDE_THRESHOLD = 1.0 / 3.0
 
+Side = Literal["left", "front", "right"]
+
+
+# --- The values the entries hold -------------------------------------------------------------------
+#
+# The World holds what was perceived, as objects: each serializer words it for the prompt, each
+# display_fn for the transcript. Positions are kept as coarsely as they are said — a side, a distance
+# to the 0.1 m (0.5 m past a metre) — so a user swaying changes no value and writes nothing.
+
+
+@dataclass(frozen=True)
+class UserChange:
+    """One thing that just happened to a user: ``arrived`` (came into view), ``present`` (already
+    in view when the input started), ``left`` (seen walking away)."""
+
+    kind: Literal["arrived", "present", "left"]
+    user: int
+    side: Side | None = None
+    distance_m: float | None = None
+
+
+@dataclass(frozen=True)
+class UserInView:
+    """A user present: where they were last seen, and whether the camera can see them now."""
+
+    user: int
+    side: Side
+    distance_m: float | None
+    in_view: bool = True
+
 
 @dataclass(frozen=True)
 class PersonalSpace:
@@ -79,82 +109,69 @@ class PersonalSpace:
     distance_m: float | None = None
 
 
-# --- The wordings --------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class TrackedUser:
+    """Whom the head follows: ``active`` (tracking on), the ``user`` followed, the ``pinned`` one the
+    agent chose (``None``: the bridge's automatic choice), and whether that pinned user is present."""
+
+    active: bool
+    user: int | None = None
+    pinned: int | None = None
+    pinned_present: bool = False
 
 
-def side(face: Face) -> str:
-    """Where *face* was, seen from the robot: ``to your left``, ``in front of you``, ``to your right``."""
+# --- From the bridge's reports -----------------------------------------------------------------------
+
+
+def side_of(face: Face) -> Side:
     if face.x < -_SIDE_THRESHOLD:
-        return "to your left"
+        return "left"
     if face.x > _SIDE_THRESHOLD:
-        return "to your right"
-    return "in front of you"
+        return "right"
+    return "front"
 
 
-def about(distance_m: float | None) -> str | None:
-    """A distance as a person would say it: to 0.1 m under a metre, to 0.5 m from there; ``None``
+def rounded(distance_m: float | None) -> float | None:
+    """A distance as coarsely as it is said: to 0.1 m under a metre, to 0.5 m from there; ``None``
     when the bridge has none (no camera model, a detector without a size)."""
     if distance_m is None or not math.isfinite(distance_m) or distance_m <= 0:
         return None
     if distance_m < 0.95:
-        return f"about {max(round(distance_m, 1), 0.1):.1f} m away"
-    return f"about {round(distance_m * 2) / 2:.1f} m away"
+        return max(round(distance_m, 1), 0.1)
+    return round(distance_m * 2) / 2
 
 
-def place(face: Face) -> str:
-    """How far and where: ``about 0.7 m away, in front of you``."""
-    distance = about(face.distance_m)
-    return f"{distance}, {side(face)}" if distance else side(face)
+def user_in_view(user: User) -> UserInView:
+    return UserInView(
+        user.track_id, side_of(user.face), rounded(user.face.distance_m), user.in_view
+    )
 
 
-def arrived_line(user: User) -> str:
-    return f"A user came into view: user {user.track_id}, {place(user.face)}."
+def change(kind: Literal["arrived", "present"], user: User) -> UserChange:
+    return UserChange(
+        kind, user.track_id, side_of(user.face), rounded(user.face.distance_m)
+    )
 
 
-def present_at_start_line(user: User) -> str:
-    return f"A user is in view as you start: user {user.track_id}, {place(user.face)}."
-
-
-def left_line(track_id: int) -> str:
-    return f"User {track_id} left your view."
-
-
-def users_text(users: UsersReport) -> str | None:
-    """``users_in_view``: who is present and where; ``None`` (the entry omitted) while detection is
-    not running — not knowing is not *nobody*."""
+def users_in_view(users: UsersReport) -> tuple[UserInView, ...] | None:
+    """``users_in_view``: who is present; ``None`` (the entry omitted) while detection is not
+    running — not knowing is not *nobody*."""
     if not users.active:
         return None
-    if not users.users:
-        return "Nobody is in view."
-    return f"In view: {', '.join(_user(u) for u in users.users)}."
+    return tuple(user_in_view(u) for u in users.users)
 
 
-def _user(user: User) -> str:
-    details = [place(user.face)]
-    if not user.in_view:
-        details.append("out of your sight right now")
-    return f"user {user.track_id} ({'; '.join(details)})"
-
-
-def tracked_text(tracking: HeadTrackingReport, present: frozenset[int]) -> str:
+def tracked_user(tracking: HeadTrackingReport, present: frozenset[int]) -> TrackedUser:
     """``tracked_user``: whom the head follows, or that it follows nobody."""
     if not tracking.active:
-        return "You are not following anyone with your head."
-    if tracking.track_id is not None:
-        if tracking.pinned_track_id == tracking.track_id:
-            return f"Your head is following user {tracking.track_id}, as you chose."
-        return f"Your head is following user {tracking.track_id}."
+        return TrackedUser(active=False)
     pinned = tracking.pinned_track_id
-    if pinned is not None:
-        # The bridge reports the pin from the call and the follow from the pinned user's next
-        # sighting: present means "about to", gone means the head waits on someone who left.
-        if pinned in present:
-            return f"Your head is turning to follow user {pinned}, as you chose."
-        return (
-            f"You chose to follow user {pinned}, who is not in view; "
-            "your head is waiting for them."
-        )
-    return "Your head will follow whoever comes in front of you; it follows nobody yet."
+    return TrackedUser(
+        active=True,
+        user=tracking.track_id,
+        pinned=pinned,
+        pinned_present=pinned is not None and pinned in present,
+    )
 
 
 def personal_space(
@@ -170,22 +187,7 @@ def personal_space(
         (u.face.distance_m for u in users.users if u.track_id == tracking.track_id),
         None,
     )
-    return PersonalSpace(tracking.track_id, _rounded(distance))
-
-
-def _rounded(distance_m: float | None) -> float | None:
-    """A distance to the 0.1 m the wording says, so a user swaying writes nothing."""
-    if distance_m is None or not math.isfinite(distance_m):
-        return None
-    return round(distance_m, 1)
-
-
-def personal_space_line(value: PersonalSpace) -> str:
-    if value.user is None:
-        return "Nobody is in your personal space."
-    distance = about(value.distance_m)
-    where = f" ({distance})" if distance else ""
-    return f"User {value.user} is in your personal space, very close to you{where}."
+    return PersonalSpace(tracking.track_id, rounded(distance))
 
 
 def personal_space_changed(old: Any, new: Any) -> bool:
@@ -198,17 +200,94 @@ def personal_space_changed(old: Any, new: Any) -> bool:
     return before != new.user
 
 
-def _text(value: Any, previous: Any) -> Content:
-    """The text entries hold their rendered line; ``None`` renders nothing (the entry omitted)."""
-    if value is None:
-        return []
-    return [TextPart(str(value))]
+# --- The wordings ------------------------------------------------------------------------------------
+
+_SIDES: dict[Side, str] = {
+    "left": "to your left",
+    "front": "in front of you",
+    "right": "to your right",
+}
 
 
-def _personal_space(value: Any, previous: Any) -> Content:
-    if not isinstance(value, PersonalSpace):
-        return []
-    return [TextPart(personal_space_line(value))]
+def about(distance_m: float | None) -> str | None:
+    """A (rounded) distance said: ``about 0.7 m away``; ``None`` without one."""
+    return None if distance_m is None else f"about {distance_m:.1f} m away"
+
+
+def place(side: Side | None, distance_m: float | None) -> str:
+    """How far and where: ``about 0.7 m away, in front of you``."""
+    parts = [p for p in (about(distance_m), _SIDES[side] if side else None) if p]
+    return ", ".join(parts)
+
+
+def change_line(event: UserChange) -> str:
+    if event.kind == "left":
+        return f"User {event.user} left your view."
+    where = place(event.side, event.distance_m)
+    lead = (
+        "A user came into view"
+        if event.kind == "arrived"
+        else "A user is in view as you start"
+    )
+    return f"{lead}: user {event.user}{', ' + where if where else ''}."
+
+
+def events_text(events: tuple[UserChange, ...]) -> str:
+    return "\n".join(change_line(e) for e in events)
+
+
+def users_text(users: tuple[UserInView, ...]) -> str:
+    if not users:
+        return "Nobody is in view."
+    return f"In view: {', '.join(_user_text(u) for u in users)}."
+
+
+def _user_text(user: UserInView) -> str:
+    details = [place(user.side, user.distance_m)]
+    if not user.in_view:
+        details.append("out of your sight right now")
+    return f"user {user.user} ({'; '.join(d for d in details if d)})"
+
+
+def tracked_line(tracked: TrackedUser) -> str:
+    if not tracked.active:
+        return "You are not following anyone with your head."
+    if tracked.user is not None:
+        if tracked.pinned == tracked.user:
+            return f"Your head is following user {tracked.user}, as you chose."
+        return f"Your head is following user {tracked.user}."
+    if tracked.pinned is not None:
+        # The bridge reports the pin from the call and the follow from the pinned user's next
+        # sighting: present means "about to", gone means the head waits on someone who left.
+        if tracked.pinned_present:
+            return (
+                f"Your head is turning to follow user {tracked.pinned}, as you chose."
+            )
+        return (
+            f"You chose to follow user {tracked.pinned}, who is not in view; "
+            "your head is waiting for them."
+        )
+    return "Your head will follow whoever comes in front of you; it follows nobody yet."
+
+
+def personal_space_line(value: PersonalSpace) -> str:
+    if value.user is None:
+        return "Nobody is in your personal space."
+    distance = about(value.distance_m)
+    where = f" ({distance})" if distance else ""
+    return f"User {value.user} is in your personal space, very close to you{where}."
+
+
+def _serializer(render: Callable[[Any], str]) -> Callable[[Any, Any], Content]:
+    """An entry's serialize_fn: *render* words the value; ``None`` renders nothing (the entry
+    omitted)."""
+
+    def serialize(value: Any, previous: Any) -> Content:
+        if value is None:
+            return []
+        return [TextPart(render(value))]
+
+    return serialize
 
 
 def users_prompt_section() -> str:
@@ -266,36 +345,36 @@ class UsersInput:
         self._deliver: Deliver | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self._written: dict[str, Any] = {}  # each standing entry's value last delivered
-        self._event: str | None = None  # the event text last delivered, and when
+        self._event: tuple[UserChange, ...] = ()  # the events last delivered, and when
         self._event_at = -math.inf
         self._entries = (
             InputEntry(
                 USER_EVENT,
-                str,
-                serialize_fn=_text,
+                tuple,
+                serialize_fn=_serializer(events_text),
                 triggers_llm_call=True,
                 ttl=USER_EVENT_TTL,
-                display_fn=lambda value: f"👤 {value}",
+                display_fn=lambda value: f"👤 {events_text(value)}",
             ),
             InputEntry(
                 USERS_IN_VIEW,
-                str,
-                serialize_fn=_text,
-                display_fn=lambda value: f"👥 {value}",
+                tuple,
+                serialize_fn=_serializer(users_text),
+                display_fn=lambda value: f"👥 {users_text(value)}",
             ),
             InputEntry(
                 PERSONAL_SPACE,
                 PersonalSpace,
-                serialize_fn=_personal_space,
+                serialize_fn=_serializer(personal_space_line),
                 triggers_llm_call=True,
                 trigger_condition_fn=personal_space_changed,
                 display_fn=lambda value: f"📏 {personal_space_line(value)}",
             ),
             InputEntry(
                 TRACKED_USER,
-                str,
-                serialize_fn=_text,
-                display_fn=lambda value: f"🎯 {value}",
+                TrackedUser,
+                serialize_fn=_serializer(tracked_line),
+                display_fn=lambda value: f"🎯 {tracked_line(value)}",
             ),
         )
 
@@ -344,7 +423,7 @@ class UsersInput:
         present = self._bridge.users.value
         self._refresh()
         if present.active and present.users:
-            self._event_lines([present_at_start_line(u) for u in present.users])
+            self._events(tuple(change("present", u) for u in present.users))
         async for report in self._bridge.users.changes(every=True):
             self._on_users(report)
 
@@ -359,23 +438,24 @@ class UsersInput:
 
     def _on_users(self, report: UsersReport) -> None:
         arrived = set(report.arrived)
-        lines = [arrived_line(u) for u in report.users if u.track_id in arrived]
+        events = [change("arrived", u) for u in report.users if u.track_id in arrived]
         # Only someone seen walking away is an event: "unseen" (not looked at for a while) and
         # "stopped" (detection stopped) say nothing about the user; the standing entries follow.
-        lines += [left_line(d.track_id) for d in report.left if d.reason == "left"]
-        if lines:
-            self._event_lines(lines)
+        events += [
+            UserChange("left", d.track_id) for d in report.left if d.reason == "left"
+        ]
+        if events:
+            self._events(tuple(events))
         self._refresh()
 
-    def _event_lines(self, lines: Sequence[str]) -> None:
-        """Write *lines* as the user event — appended to the previous one when it landed less than
-        ``EVENT_JOIN_S`` ago, so a step woken by both reads both."""
+    def _events(self, events: tuple[UserChange, ...]) -> None:
+        """Write *events* as the user event — appended to the previous ones when they landed less
+        than ``EVENT_JOIN_S`` ago, so a step woken by both reads both."""
         now = self._clock()
-        text = "\n".join(lines)
-        if self._event is not None and now - self._event_at < EVENT_JOIN_S:
-            text = f"{self._event}\n{text}"
-        self._event, self._event_at = text, now
-        self._write(USER_EVENT, text)
+        if self._event and now - self._event_at < EVENT_JOIN_S:
+            events = self._event + events
+        self._event, self._event_at = events, now
+        self._write(USER_EVENT, events)
 
     def _refresh(self) -> None:
         """Re-render the standing entries from the bridge's current reports; write each only when
@@ -383,9 +463,9 @@ class UsersInput:
         users = self._bridge.users.value
         tracking = self._bridge.head_tracking.value
         present = frozenset(u.track_id for u in users.users)
-        self._standing(USERS_IN_VIEW, users_text(users))
+        self._standing(USERS_IN_VIEW, users_in_view(users))
         self._standing(PERSONAL_SPACE, personal_space(users, tracking))
-        self._standing(TRACKED_USER, tracked_text(tracking, present))
+        self._standing(TRACKED_USER, tracked_user(tracking, present))
 
     def _standing(self, key: str, value: Any) -> None:
         if key in self._written and self._written[key] == value:
