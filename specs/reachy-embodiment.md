@@ -15,7 +15,7 @@ tests:
 
 # Reachy Mini embodiment
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
@@ -181,6 +181,9 @@ class UserInView:  # one of users_in_view's
 class PersonalSpace:  # personal_space's value while judged
     user: int | None  # the user inside; None: nobody
     distance_m: float | None = None
+    # what just happened, for SPACE_CHANGE_S: "came_in" (user entered) or "stepped_out" (`left` left)
+    change: Literal["came_in", "stepped_out"] | None = None
+    left: int | None = None
 
 
 @dataclass(frozen=True)
@@ -222,7 +225,7 @@ def users_prompt_section() -> (
 |---|---|---|---|---|
 | `user_event` | transient, `tuple[UserChange, ...]`: `ttl` `USER_EVENT_TTL` (2 s), `None` renders nothing — like `speech_input` | yes, every write | `A user came into view: user 3, about 0.7 m away, in front of you.` · `User 3 left your view.` · `A user is in view as you start: user 3, …` | `👤 <the event>` |
 | `users_in_view` | **standing**, `tuple[UserInView, ...]`: no TTL | never | `In view: user 3 (about 0.7 m away, in front of you), user 5 (about 1.5 m away, to your left; out of your sight right now).` · `Nobody is in view.` · omitted while detection is not running | `👥 <who is present>` |
-| `personal_space` | **state that wakes**: a `PersonalSpace`, judged only while the head follows someone (the bridge judges it for the followed user); omitted with tracking off | when **who is inside** changes (`personal_space_changed`): a user entering, stepping back out, another taking their place — not tracking starting or stopping, not the user inside moving | `User 3 is in your personal space, very close to you (about 0.3 m away).` · `Nobody is in your personal space.` | `📏 <the line>` |
+| `personal_space` | **state that wakes**: a `PersonalSpace`, judged only while the head follows someone (the bridge judges it for the followed user); omitted with tracking off | when **who is inside** changes (`personal_space_changed`): a user entering, stepping back out, another taking their place — not tracking starting or stopping, not the user inside moving | just changed: `User 3 just came into your personal space: they are very close to you (about 0.3 m away).` · `User 3 just stepped back out of your personal space; nobody is in it now.` — settled: `User 3 is in your personal space, very close to you (about 0.3 m away).` · `Nobody is in your personal space.` | `📏 <the line>` |
 | `tracked_user` | **standing**, a `TrackedUser` | never | `Your head is following user 3, as you chose.` · `Your head is following user 3.` (the automatic target) · `Your head is turning to follow user 3, as you chose.` (between a pin and that user's next sighting: the bridge reports the pin from the call, the follow from the sighting) · `You chose to follow user 3, who is not in view; your head is waiting for them.` · `Your head will follow whoever comes in front of you; it follows nobody yet.` · `You are not following anyone with your head.` | `🎯 <the line>` |
 
 The standing entries — `users_in_view`, `tracked_user`, and `personal_space` between its changes — are the app's exception to "no mirrored embodiment state" ([app.md](app.md), "World, Commands, persona"): the agent holds the tracking Commands, and to follow user 3 it must know, in the step where it decides, that user 3 is present and whom it follows already.
@@ -239,6 +242,7 @@ The standing entries — `users_in_view`, `tracked_user`, and `personal_space` b
 
 - **Where a user is, in words.** The side from the face's `x` at its last sighting — `to your left` below −⅓, `to your right` above ⅓, `in front of you` between (the robot's camera is not mirrored: the image's right is the robot's right) — and the distance from its `distance_m`, `about 0.7 m away` (to 0.1 m below 1 m, to 0.5 m from there; left out when the bridge has none). Both are relative to where the head looked: good for "look at the user on your left" in the moment, not a map.
 - **The standing entries are kept current, cheaply.** They are re-rendered on every change above and once a second (`STANDING_REFRESH_S`), and each is written only when its value changed — so a user moving a little rewrites nothing, and one stepping from one side to the other is seen within a second.
+- **The personal space says what just changed.** A state alone reads the same in the step it wakes as in every later one, so a woken agent would not know anything happened — stepping out reads as *nobody is there*, which it had been before. So a change is written with what happened (`change`: `came_in`, or `stepped_out` with the user who `left`) and rewritten settled `SPACE_CHANGE_S` (2 s) later — the transient-input idea, kept on a state: the rewrite wakes no one, since `personal_space_changed` compares only who is inside.
 - **No cooldown on the personal space.** Entering and stepping out each wake the agent, as asked; the bridge's hysteresis (left only beyond `distance_m` plus a margin) keeps a user at the boundary from flickering it. The persona lets the agent stay silent.
 - **Events that land together are written together.** A `user_event` write within `EVENT_JOIN_S` (0.5 s) of the previous one appends its changes to it rather than replacing them, so two arrivals on one coalescing window both reach the step they wake; later, a write starts afresh.
 - **The start-up snapshot.** The bridge's detection starts with the session, before the agent runs, and a subscription sees only what is published after it. So `start` reads who is already present first, in the same loop step as subscribing, delivers the standing entries, and — when someone is there — one `user_event`, `A user is in view as you start: …`, so the robot greets whoever stands in front of it at launch.
@@ -324,7 +328,7 @@ def main() -> None:
 2. **Order matters.** Dependent actions (enable → move; stop one thing → start the next; speak → then the emotion that goes with it) are issued in that order across turns.
 3. **Spoken feedback for every request.** Acting is not answering: when asked to start, stop, change or cancel something, do it, then `say` what was done once it is observed done — a request never ends in a silent action. This rides WICA's completion re-trigger.
 
-Like the computer persona, it says nothing about hands: the "Hand signs" section (with the `stop` rule) is appended at startup when vision is on ([gesture-input.md](gesture-input.md)). Nor does it describe the users it sees: `users_prompt_section()` is appended through `prompt_addendum` when the users input is up — what the four entries say; that a number is a label, never said aloud, and the same person may come back under another; that an arrival may be greeted, a departure seen off, someone in the personal space met with a light remark — or none of it, without breaking off a conversation for every coming and going; and how to attend: follow a user who comes into view when the head follows nobody, the one it talks with when several are there, stop when everyone has left — tracking going together with `say` in one turn, since it collides with nothing. These rules are persona text, verified by reading; the tests drive the scripted `fake` provider and never exercise the model's compliance.
+Like the computer persona, it says nothing about hands: the "Hand signs" section (with the `stop` rule) is appended at startup when vision is on ([gesture-input.md](gesture-input.md)). Nor does it describe the users it sees: `users_prompt_section()` is appended through `prompt_addendum` when the users input is up — what the four entries say; that a number is a label, never said aloud, and the same person may come back under another; that an arrival may be greeted and a departure seen off — or neither, without breaking off a conversation for every coming and going; that a user coming into the personal space, and stepping back out of it, is answered out loud, briefly and lightly (a first session showed the model meeting every change with `noop` while the section said *a light remark, or none*); and how to attend: follow a user who comes into view when the head follows nobody, the one it talks with when several are there, stop when everyone has left — tracking going together with `say` in one turn, since it collides with nothing. These rules are persona text, verified by reading; the tests drive the scripted `fake` provider and never exercise the model's compliance.
 
 ## Testing
 
