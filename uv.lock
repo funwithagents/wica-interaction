@@ -3549,7 +3549,7 @@ wheels = [
 [[package]]
 name = "reachy-mini-bridge"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main#dcb55def7d474f0274148e55e0ade82781ee1104" }
+source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main#d2516aa89933e4b524302593e61e302d44fc3de1" }
 dependencies = [
     { name = "numpy" },
     { name = "reachy-mini" },
