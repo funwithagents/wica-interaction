@@ -6,6 +6,8 @@ readme = "README.md"
 authors = [
     { name = "Thibault Hervier", email = "thibault@fr2g.io" }
 ]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
 # What every embodiment needs: the agent + its Gradio observability panels, speech in, the vision
 # plumbing, the page. `vision-modules` core is numpy only — the stream/pipeline runtime and the

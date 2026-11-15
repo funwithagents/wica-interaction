@@ -113,4 +113,4 @@ uv run pytest tests-e2e       # the live tier: what has its models or keys runs,
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Some voice extras pull in differently licensed packages or weights (`tts-piper` is GPL-3.0+); tts-engine's module pages say so.
+Apache-2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Some voice extras pull in differently licensed packages or weights (`tts-piper` is GPL-3.0+); tts-engine's module pages say so.
