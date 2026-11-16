@@ -40,11 +40,11 @@ def _composed() -> dict:
         "asr": {
             "engine": {
                 "module": {
-                    "type": "deepgram_v2",
+                    "type": "deepgram-v2",
                     "api_key_env": "DEEPGRAM_API_KEY",
                     "model": "nova-3",
                 },
-                "audio": {"device": None},
+                "audio_source": {"type": "input-device", "device": None},
             }
         },
     }
@@ -64,7 +64,7 @@ def test_happy_path_yields_the_shared_config_plus_this_bodys_sections(
     assert isinstance(cfg, ComputerConfig)
     # The shared sections live under `.app`, untouched by this loader.
     assert cfg.app.wica.agent.provider == "anthropic"
-    assert cfg.app.asr_engine.module.type == "deepgram_v2"
+    assert cfg.app.asr_engine.module.type == "deepgram-v2"
     assert cfg.app.vision is None
 
     assert isinstance(cfg.tts_engine, TTSEngineConfig)

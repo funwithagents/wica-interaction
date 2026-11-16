@@ -10,11 +10,11 @@
   "asr": {
     "engine": {
       "module": {
-        "type": "deepgram_v2",
+        "type": "deepgram-v2",
         "api_key_env": "DEEPGRAM_API_KEY",
         "model": "flux-general-en"
       },
-      "audio": { "device": null },
+      "audio_source": { "type": "custom" },
       "dictation_default_segmentation_mode": "trigger_word"
     }
   },

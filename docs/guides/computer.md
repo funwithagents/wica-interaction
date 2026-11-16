@@ -14,7 +14,7 @@ Three devices, each named in its own section of the config file:
 
 | Device | Field | Value |
 |---|---|---|
-| the microphone | `asr.engine.audio.device` ([reference](../reference/configuration.md#asr-speech-in)) | a device name, an index, or `null` for the system default |
+| the microphone | `asr.engine.audio_source.device` ([reference](../reference/configuration.md#asr-speech-in)) | a device name, an index, or `null` for the system default |
 | the speaker | `tts.engine.player.device` ([reference](../reference/configuration.md#tts-the-computers-voice)) | a device name, an index, or `null` for the system default |
 | the webcam | `camera.device` ([reference](../reference/configuration.md#camera-the-computers-webcam)) | an OpenCV index (`0` by default), or a path or URL |
 

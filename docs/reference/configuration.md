@@ -32,7 +32,7 @@ A WICA config, `{"agent": {...}}`, handed to `WicaConfig.from_dict`. The fields 
 
 | Field | What it does |
 |---|---|
-| `provider` | `anthropic`, `openai`, `google_genai`, `mistralai` or `huggingface-hub`; the matching `wica-*` extra must be installed ([install.md](install.md#extras)) |
+| `provider` | `anthropic`, `openai`, `gemini`, `mistral`, `huggingface-hub`, or `openai-chat-completions-compatible` (any server implementing OpenAI's Chat Completions API, a local model among them; it needs `base_url` and the `wica-openai-compatible` extra); the matching `wica-*` extra must be installed ([install.md](install.md#extras)). The old names `google_genai` and `mistralai` still load, with a deprecation warning |
 | `model` | the model id (the Hub `repo_id` for `huggingface-hub`, with `hf_provider` naming the backend that serves it) |
 | `api_key_env` | the environment variable holding the key, read when the agent is built; never a literal key in a committed file |
 | `system_prompt_file` | the persona, relative to the config file: `prompts/computer.md` or `prompts/reachy.md` ([guides/personas.md](../guides/personas.md)) |
@@ -46,9 +46,10 @@ Every field, the providers and their notes (Gemini thinks by default, Mistral's 
 ```json
 "asr": {
   "engine": {
-    "module": { "type": "deepgram_v2", "api_key_env": "DEEPGRAM_API_KEY", "model": "flux-general-en" },
-    "audio": { "device": null },
-    "dictation_default_segmentation_mode": "trigger_word"
+    "module": { "type": "deepgram-v2", "api_key_env": "DEEPGRAM_API_KEY", "model": "flux-general-en" },
+    "audio_source": { "type": "input-device", "device": null },
+    "dictation_default_segmentation_mode": "trigger_word",
+    "vad": { "type": "silero", "min_silence_duration_ms": 1500 }
   }
 }
 ```
@@ -57,12 +58,13 @@ The `engine` block is an asr-engine engine block, handed to `ASREngineConfig.fro
 
 | Field | What it does |
 |---|---|
-| `module.type` | the speech recognizer: `deepgram_v2` (Deepgram's Flux models, turn-based) or `deepgram_v1` (Nova models); the `asr-deepgram` extra. Other fields of `module` are the module's own: `api_key_env`, `model`, `language` |
-| `audio.device` | **the computer's microphone** (a name, an index, or `null` for the system default). The robot ignores it: the mic is the robot's |
+| `module.type` | the speech recognizer: `deepgram-v2` (Deepgram's Flux models, turn-based) or `deepgram-v1` (Nova models), the `asr-deepgram` extra; `mistral-realtime` (`asr-mistral`); `openai-realtime-compatible` and `openai-transcriptions-compatible` (`asr-openai-compatible`); `mlx-audio`, local on Apple silicon (`asr-mlx-audio`). Other fields of `module` are the module's own: `api_key_env`, `model`, `language`. The names written with an underscore (`deepgram_v2`) still load, with a deprecation warning |
+| `vad` | a voice-activity gate in front of the recognizer, on in both templates: `{"type": "silero"}`, with the `asr-silero` extra (its 2.3 MB model is downloaded on first use). Only speech reaches the recognizer, so a billed one is not sent the room's silence. `min_silence_duration_ms` is how long the gate keeps forwarding after the person stops (default `500`); the templates set `1500` so that `deepgram-v2` (Flux) still ends the turn itself. Optional: remove the block, or set it to `null`, to send the recognizer everything. **Required** by the batch recognizers (`mlx-audio`, `openai-transcriptions-compatible`), which have no other end-of-utterance signal |
+| `audio_source` | where the audio comes from. **On the computer**, `{"type": "input-device", "device": …}`: the microphone, a name, an index, or `null` for the system default. **On the robot**, `{"type": "custom"}`: the mic is the robot's, and the block takes no other field. The older `audio` block is refused at load, with a message naming this one |
 | `dictation_default_segmentation_mode` | how a dictated passage ends: `timeout` (a pause) or `trigger_word` (a word from `segmentation.trigger_words`, both templates) ([guides/dictation.md](../guides/dictation.md)) |
 | `segmentation.trigger_words`, `segmentation.end_of_speech_timeout_s`, `segmentation.initial_silence_timeout_s` | the words and the silences the two dictation modes use |
 
-The module must deliver **16 kHz mono linear16**, the default: that is the robot's mic rate and the echo canceller's working rate. `auto_start` and `auto_start_dictation` are not honored: the app starts the engine itself, in conversation mode. The complete schema, the modes and the default trigger words are in asr-engine's [configuration spec](https://github.com/funwithagents/asr-engine/blob/main/specs/configuration.md); the Kyutai local modules are not offered here ([install.md](install.md#extras)).
+The recognizer does not have to match the microphone: the robot's mic and the computer's echo canceller deliver 16 kHz, and asr-engine converts for a recognizer fed another rate (`openai-realtime-compatible`, 24 kHz). With `audio_processing` on, leave `audio_source.audio_format` unset: the echo canceller opens the device itself, at 16 kHz. `auto_start` and `auto_start_dictation` are not honored: the app starts the engine itself, in conversation mode. The complete schema, the modes and the default trigger words are in asr-engine's [configuration reference](https://github.com/funwithagents/asr-engine/blob/main/docs/configuration.md); the Kyutai local modules are not offered here ([install.md](install.md#extras)).
 
 ## `vision`: hand signs
 
@@ -154,7 +156,7 @@ Robot only. The section is a reachy-mini-bridge config, handed whole to `ReachyM
 | `face_detection` | the bridge's face detector (`yunet`, shipped; weights downloaded on first use), and its cost knobs `width` and `target_fps`. With a detector the robot sees people and tells the agent, and the app runs detection for the whole session whatever `enabled` says; without one it sees nobody ([guides/reachy-mini.md](../guides/reachy-mini.md#the-users-in-front-of-the-robot)) |
 | `motion` | the robot's aliveness between actions: `presence`, the `idle` move, `wobbling` with the voice, none of it agent-facing; and `tracking`, following a person with the head: an object whose `enabled` says whether a session starts following (the template: `false`, the agent starts it), the rest being the bridge's posture settings. Needs a detector |
 
-Absent, the section means the `real` backend with the bridge's defaults and no voice. The ASR section's `audio.device` is ignored on the robot: the app listens through the robot's echo-cancelled microphone, and the ASR module must deliver 16 kHz mono linear16 to match it.
+Absent, the section means the `real` backend with the bridge's defaults and no voice. The ASR section's `audio_source` is `{"type": "custom"}` on the robot: the app listens through the robot's echo-cancelled microphone, whatever rate the ASR module is fed.
 
 ## Keys stay in the environment
 

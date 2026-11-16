@@ -79,7 +79,8 @@ class CameraConfig:
 
     `device` is whatever `cv2.VideoCapture` takes — an index (default `0`) or a path/URL. Absent ⇒
     device `0`. The microphone needs no section here: it is the ASR config's own
-    `asr.engine.audio.device`, which the engine opens itself.
+    `asr.engine.audio_source.device`, opened by the engine itself, or by the audio processing when
+    it is on.
     """
 
     device: int | str = 0

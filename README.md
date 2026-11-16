@@ -34,7 +34,7 @@ Speech in is a live speech recognizer, speech out real audio, and the robot real
 | **Dictation** | The agent switches speech capture to one longer passage when asked, ended by a pause or a trigger word, and reverts on its own ([docs/guides/dictation.md](docs/guides/dictation.md)) |
 | **No echo** | The agent never hears its own voice: the robot's XVF3800 cancels it in hardware, the computer runs an opt-in WebRTC echo canceller fed with what the voice plays ([docs/guides/computer.md](docs/guides/computer.md#echo-cancellation)) |
 | **One JSON config** | The agent provider, the speech recognizer, the voice, the robot backend, the camera and the persona are one file; each engine section is that engine's own document, nested verbatim ([docs/reference/configuration.md](docs/reference/configuration.md)) |
-| **Provider choice** | Anthropic, OpenAI, Gemini, Mistral or the Hugging Face Hub for the agent; Deepgram for speech in; thirteen voices, hosted or local, for speech out, each an extra you install only if you use it ([docs/reference/install.md](docs/reference/install.md#extras)) |
+| **Provider choice** | Anthropic, OpenAI, Gemini, Mistral, the Hugging Face Hub or any OpenAI-compatible server for the agent; Deepgram, Mistral, an OpenAI-compatible server or a local mlx-audio model for speech in; thirteen voices, hosted or local, for speech out, each an extra you install only if you use it ([docs/reference/install.md](docs/reference/install.md#extras)) |
 | **Watch it work** | A Gradio page: the conversation with every Command's execution state live, the live speech recognition and the Vision line, a typed-text box, and WICA's World and reaction panels behind a debug toggle |
 | **Opens even when degraded** | A missing key, an absent extra, a robot that cannot be reached: each lands as one banner line, and what still works keeps working, typed text driving the agent at the least ([docs/guides/troubleshooting.md](docs/guides/troubleshooting.md#the-banner)) |
 
@@ -46,10 +46,10 @@ Python 3.12+ and [`uv`](https://docs.astral.sh/uv/), from a checkout. Pick a bod
 git clone https://github.com/funwithagents/wica-interaction.git && cd wica-interaction
 
 # the computer, as the template configures it
-uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --extra tts-elevenlabs --extra audio-processing --extra vision
+uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --extra asr-silero --extra tts-elevenlabs --extra audio-processing --extra vision
 
 # the Reachy Mini, as the template configures it: in the simulator (drop reachy-sim for a real robot)
-uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-deepgram --extra tts-pocket --extra vision
+uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-deepgram --extra asr-silero --extra tts-pocket --extra vision
 
 # the development environment: both bodies, every agent provider, the simulator, the tooling
 uv sync --dev

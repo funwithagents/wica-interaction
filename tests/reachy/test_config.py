@@ -29,11 +29,11 @@ def _composed() -> dict:
         "asr": {
             "engine": {
                 "module": {
-                    "type": "deepgram_v2",
+                    "type": "deepgram-v2",
                     "api_key_env": "DEEPGRAM_API_KEY",
                     "model": "nova-3",
                 },
-                "audio": {"device": None},
+                "audio_source": {"type": "custom"},
             }
         },
         "reachy": {
@@ -59,7 +59,7 @@ def test_happy_path_yields_the_shared_config_and_a_bridge_config(
     assert isinstance(cfg, ReachyConfig)
     # The shared sections live under `.app`, untouched by this loader.
     assert cfg.app.wica.agent.provider == "anthropic"
-    assert cfg.app.asr_engine.module.type == "deepgram_v2"
+    assert cfg.app.asr_engine.module.type == "deepgram-v2"
 
     # The `reachy` section is a verbatim bridge config, delegated to ReachyMiniConfig.from_dict.
     assert isinstance(cfg.reachy, ReachyMiniConfig)

@@ -25,6 +25,7 @@ from typing import Any, cast
 import gradio as gr
 import numpy as np
 import pytest
+from asr_engine.audio import AudioFormat
 from asr_engine.config import ASREngineConfig
 from asr_engine.segmenter import SpeechSegment
 from vision_modules.hand import DetectedHand
@@ -82,7 +83,7 @@ def _config(
 
 def _asr_config() -> ASREngineConfig:
     return ASREngineConfig.from_dict(
-        {"module": {"type": "deepgram_v2", "api_key_env": "WICA_TEST_UNSET_ASR_KEY"}}
+        {"module": {"type": "deepgram-v2", "api_key_env": "WICA_TEST_UNSET_ASR_KEY"}}
     )
 
 
@@ -527,11 +528,80 @@ def test_no_body_means_no_prompt_addendum() -> None:
         _shutdown(system)
 
 
+class _Mic16k:
+    """A body's mic as the engine sees it: a source declaring 16 kHz, like both embodiments'."""
+
+    audio_format = AudioFormat(sample_rate=16000, channels=1, encoding="linear16")
+
+    def start(self) -> asyncio.Queue[bytes]:
+        return asyncio.Queue()
+
+    def stop(self) -> None:
+        pass
+
+
+def _converting_asr_config(audio_source: dict[str, Any] | None) -> ASREngineConfig:
+    """A real engine config whose module is fed 24 kHz, a rate neither body's mic produces."""
+    engine: dict[str, Any] = {
+        "module": {"type": "fake", "audio_format": {"sample_rate": 24000}}
+    }
+    if audio_source is not None:
+        engine["audio_source"] = audio_source
+    return ASREngineConfig.from_dict(engine)
+
+
+@pytest.mark.parametrize(
+    "audio_source",
+    [
+        None,
+        {"type": "input-device", "device": "Built-in Microphone"},
+        {"type": "custom"},
+    ],
+)
+def test_the_engine_is_built_over_the_bodys_mic_and_converts_it(
+    audio_source: dict[str, Any] | None,
+) -> None:
+    """A mic the body supplies is the engine's source whether the file names an input device (the
+    computer, whose echo canceller opened it), nothing, or `custom` (the robot) — and its 16 kHz is
+    converted for a module fed another rate, not refused."""
+    engine = system_module._build_asr_engine(
+        _converting_asr_config(audio_source), _Mic16k()
+    )
+
+    assert engine.audio_format.sample_rate == 16000
+    assert engine.module_audio_format.sample_rate == 24000
+
+
+def test_without_a_body_mic_the_engine_opens_the_configured_device() -> None:
+    """No mic supplied (the computer without audio processing): the config reaches the engine as
+    written, and the device is opened at what the module is fed."""
+    config = _converting_asr_config(
+        {"type": "input-device", "device": "Built-in Microphone"}
+    )
+
+    assert system_module.asr_config_for(config, None) is config
+    engine = system_module._build_asr_engine(config, None)
+    assert engine.audio_format.sample_rate == 24000
+
+
+def test_a_file_source_next_to_a_body_mic_is_refused_not_overridden(
+    tmp_path: Path,
+) -> None:
+    """Only an input device gives way to the body's mic. A config asking for a file while the body
+    supplies a mic is the engine's own error (an `ASR:` banner line), not a silent choice."""
+    config = _converting_asr_config(
+        {"type": "file", "audio_file": str(tmp_path / "speech.wav")}
+    )
+
+    with pytest.raises(ValueError, match="custom"):
+        system_module._build_asr_engine(config, _Mic16k())
+
+
 def _asr_degrade_config() -> AppConfig:
     """A real ASR config referencing an unset env var (so `ASREngine` construction raises), with a
     fake WICA agent — the ASR side alone should degrade."""
     asr = ASREngineConfig.from_dict(
-        {"module": {"type": "deepgram_v2", "api_key_env": "WICA_TEST_UNSET_ASR_KEY"}}
+        {"module": {"type": "deepgram-v2", "api_key_env": "WICA_TEST_UNSET_ASR_KEY"}}
     )
     return AppConfig(wica=scripted_wica_config([], persona="double"), asr_engine=asr)
 

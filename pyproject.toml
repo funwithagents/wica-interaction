@@ -42,12 +42,25 @@ vision = ["vision-modules[hand,opencv]"]
 wica-anthropic = ["wica[anthropic]"]
 wica-huggingface-hub = ["wica[huggingface-hub]"]
 wica-openai = ["wica[openai]"]
-wica-google-genai = ["wica[google-genai]"]
-wica-mistralai = ["wica[mistralai]"]
-# The speech-in provider. asr-engine's other two, `kyutai-mlx` and `kyutai-torch`, are not
-# mirrored: their `moshi-mlx` / `moshi` pin numpy<2.3, which the base's vision-modules
-# (numpy>=2.5.3) rules out, so declaring either makes the lock unsolvable.
+wica-gemini = ["wica[gemini]"]
+wica-mistral = ["wica[mistral]"]
+# Every WICA provider speaking an OpenAI protocol (today `openai-chat-completions-compatible`:
+# llama-server, mlx_lm.server, Ollama, vLLM, ...); the vendor extra `wica-openai` stays apart.
+wica-openai-compatible = ["wica[openai-compatible]"]
+# The speech-in providers, one extra per asr-engine provider extra: Deepgram (`deepgram-v1`,
+# `deepgram-v2`), Mistral (`mistral-realtime`), every OpenAI-protocol module
+# (`openai-realtime-compatible`, `openai-transcriptions-compatible`), and the local mlx-audio
+# runner (Apple silicon only, gated by asr-engine's own marker). asr-engine's `kyutai-mlx` and
+# `kyutai-torch` are not mirrored: their `moshi-mlx` / `moshi` pin numpy<2.3, which the base's
+# vision-modules (numpy>=2.5.3) rules out, so declaring either makes the lock unsolvable.
 asr-deepgram = ["asr-engine[deepgram]"]
+asr-mistral = ["asr-engine[mistral]"]
+asr-openai-compatible = ["asr-engine[openai-compatible]"]
+asr-mlx-audio = ["asr-engine[mlx-audio]"]
+# Not a provider: the Silero voice-activity gate (`asr.engine.vad.type: "silero"`), which keeps
+# silence from a billed recognizer and is what ends an utterance for the batch modules
+# (`mlx-audio`, `openai-transcriptions-compatible`).
+asr-silero = ["asr-engine[silero]"]
 # The voices, for *both* embodiments (the bridge builds the robot's voice from the same
 # tts-engine): one extra per tts-engine provider extra, so the engine's "install
 # tts-engine[<name>]" hint always has a `tts-<name>` here. Hosted providers first, then the
@@ -68,8 +81,8 @@ tts-kokoro = ["tts-engine[kokoro]"]
 tts-piper = ["tts-engine[piper]"]
 all = [
     "wica-interaction[computer,audio-processing,reachy,reachy-sim,vision]",
-    "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,wica-mistralai]",
-    "wica-interaction[asr-deepgram]",
+    "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-gemini,wica-mistral,wica-openai-compatible]",
+    "wica-interaction[asr-deepgram,asr-mistral,asr-openai-compatible,asr-mlx-audio,asr-silero]",
     "wica-interaction[tts-elevenlabs,tts-gradium,tts-mistral,tts-deepgram,tts-gemini,tts-cartesia,tts-openai,tts-openai-compatible]",
     "wica-interaction[tts-pocket,tts-phonon,tts-qwen3,tts-kokoro,tts-piper]",
 ]
@@ -91,8 +104,8 @@ dev = [
     # features, every (light) agent provider, and the speech providers the example configs select.
     # The other speech providers are resolved by `uv lock` all the same, just not installed.
     "wica-interaction[computer,audio-processing,reachy,vision]",
-    "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-google-genai,wica-mistralai]",
-    "wica-interaction[asr-deepgram,tts-elevenlabs,tts-gradium,tts-pocket,tts-phonon]",
+    "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-gemini,wica-mistral,wica-openai-compatible]",
+    "wica-interaction[asr-deepgram,asr-silero,tts-elevenlabs,tts-gradium,tts-pocket,tts-phonon]",
     # The simulator, what the reachy template targets, for manual/e2e testing against a simulated
     # robot.
     "wica-interaction[reachy-sim]",

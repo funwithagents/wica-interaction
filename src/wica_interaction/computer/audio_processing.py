@@ -37,12 +37,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
-from asr_engine.audio import (
-    DEFAULT_AUDIO_FORMAT,
-    AudioCapture,
-    AudioFormat,
-    AudioSource,
-)
+from asr_engine.audio import AudioCapture, AudioFormat, AudioSource
 from tts_engine.audio import AudioSink
 
 if TYPE_CHECKING:
@@ -53,6 +48,9 @@ logger = logging.getLogger(__name__)
 NEAR_RATE = 16000  # the ASR/processing working rate; the WebRTC APM runs here
 FRAME_SAMPLES = 160  # one 10 ms frame at 16 kHz
 FRAME_BYTES = FRAME_SAMPLES * 2  # s16 mono
+# What the processor captures and hands the ASR engine, which converts it for a module fed another
+# format (asr-engine's specs/format-conversion.md).
+NEAR_FORMAT = AudioFormat(sample_rate=NEAR_RATE, channels=1, encoding="linear16")
 
 # Cap the far-end reference backlog (samples @16 kHz) so a stalled mic pump can't grow it without
 # bound. Reached only pathologically — feed is real-time-paced by blocking playback — so on overflow
@@ -283,6 +281,12 @@ class _ProcessingSource:
     def __init__(self, coordinator: AudioProcessingCoordinator) -> None:
         self._c = coordinator
 
+    @property
+    def audio_format(self) -> AudioFormat:
+        """What the queue carries: the processor's working format. The engine reads it at its
+        construction and converts for an ASR module fed another one."""
+        return self._c._near_format
+
     def start(self) -> asyncio.Queue[bytes]:
         return self._c._source_start()
 
@@ -298,8 +302,9 @@ class AudioProcessingCoordinator:
     ``bind_far_rate(tts_engine.sample_rate)`` (the sink's ``ContinuousPlayer`` and the reference
     resampler are built there, once the TTS module's rate is known — the two-step in
     specs/audio-processing.md). Noise-suppression-only setups skip the sink and ``bind_far_rate``: the
-    source still runs, cancelling against silence. ``.source`` requires a 16 kHz mono ``near_format``
-    (the working rate); the caller guards that before building the coordinator.
+    source still runs, cancelling against silence. ``.source`` captures and delivers the 16 kHz mono
+    ``near_format`` (the working rate) and declares it, so the engine converts it for an ASR module
+    fed another format.
     """
 
     def __init__(
@@ -308,7 +313,7 @@ class AudioProcessingCoordinator:
         *,
         asr_device: str | None,
         tts_device: str | int | None,
-        near_format: AudioFormat = DEFAULT_AUDIO_FORMAT,
+        near_format: AudioFormat = NEAR_FORMAT,
         resampler_factory: ResamplerFactory = _default_resampler,
         player_factory: PlayerFactory = _default_player,
         capture_factory: CaptureFactory = _default_capture,
@@ -449,22 +454,31 @@ def build_coordinator(config: ComputerConfig) -> AudioProcessingCoordinator:
     The one caught build point, called from ``ComputerEmbodiment.enter()`` through its
     ``coordinator_factory`` seam. Raises ``ImportError`` if an optional dependency is absent — the
     WebRTC backend, or (when echo cancellation is on) the resampler the far-end tap needs — and
-    ``RuntimeError`` if the ASR audio format is not the 16 kHz mono linear16 the processor needs.
+    ``RuntimeError`` if the config's ASR audio source is not an input device left at its default
+    format: the processor opens that device itself, at its own 16 kHz mono linear16.
     Either is caught by the caller and reported in ``missing`` so the embodiment degrades to
     no-processing rather than failing. Validating the resampler here, not lazily in
     ``bind_far_rate``, keeps a partial install (backend present, resampler absent) on the
     graceful-degrade path.
     """
     ap = config.audio_processing
-    audio = config.app.asr_engine.audio
-    if (audio.sample_rate, audio.channels, audio.encoding) != (
-        NEAR_RATE,
-        1,
-        "linear16",
+    audio = config.app.asr_engine.audio_source
+    if audio.type != "input-device":
+        raise RuntimeError(
+            f"audio processing needs asr.engine.audio_source.type 'input-device' (the "
+            f"microphone it opens and cleans), got '{audio.type}'"
+        )
+    # The processor captures at its working format, whatever the module is fed (the engine
+    # converts). A format asked for the device is one it cannot honour: say so, not ignore it.
+    wanted = audio.audio_format
+    if (
+        wanted.sample_rate not in (None, NEAR_FORMAT.sample_rate)
+        or wanted.channels not in (None, NEAR_FORMAT.channels)
+        or wanted.encoding not in (None, NEAR_FORMAT.encoding)
     ):
         raise RuntimeError(
-            f"audio processing needs 16 kHz mono linear16 ASR audio, got "
-            f"{audio.sample_rate} Hz / {audio.channels}ch / {audio.encoding}"
+            "audio processing captures at 16 kHz mono linear16: remove "
+            "asr.engine.audio_source.audio_format, or turn audio processing off"
         )
     processor = WebRtcAudioProcessor(
         echo_cancellation=ap.echo_cancellation.enabled,
@@ -481,9 +495,4 @@ def build_coordinator(config: ComputerConfig) -> AudioProcessingCoordinator:
         processor,
         asr_device=audio.device,
         tts_device=config.tts_engine.player.device,
-        near_format=AudioFormat(
-            sample_rate=audio.sample_rate,
-            channels=audio.channels,
-            encoding=audio.encoding,
-        ),
     )

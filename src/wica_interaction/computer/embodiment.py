@@ -277,7 +277,7 @@ class ComputerEmbodiment:
     @property
     def mic(self) -> AudioSource | None:
         """The processed mic when a coordinator was built, else ``None``: the ASR engine then opens
-        its own capture on the ASR config's ``audio.device``."""
+        its own capture on the ASR config's ``audio_source.device``."""
         return self._coordinator.source if self._coordinator is not None else None
 
     @property

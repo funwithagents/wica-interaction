@@ -68,4 +68,4 @@ Presence, breathing and wobbling are the bridge's own aliveness between actions,
 uv run wica-interaction-reachy --config config.reachy.example.json
 ```
 
-The template needs `WICA_HF_TOKEN` for the agent and `DEEPGRAM_API_KEY` for the speech recognizer; the `pocket` voice needs no key ([keys](../reference/configuration.md#keys-stay-in-the-environment)). The page is titled `WICA Interaction — Reachy Mini` and laid out as the computer's ([computer.md](computer.md#running-it)); the speech recognizer's `audio.device` is ignored here, since the microphone is the robot's.
+The template needs `WICA_HF_TOKEN` for the agent and `DEEPGRAM_API_KEY` for the speech recognizer; the `pocket` voice needs no key ([keys](../reference/configuration.md#keys-stay-in-the-environment)). The page is titled `WICA Interaction — Reachy Mini` and laid out as the computer's ([computer.md](computer.md#running-it)); the speech recognizer's `audio_source` is `{"type": "custom"}` here, since the microphone is the robot's.
