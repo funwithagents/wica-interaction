@@ -76,6 +76,9 @@ class FakeReachyMiniBridge:
         self._running = False
         self.emotion_fetches = 0
         self.motors = "disabled"
+        self.mic_sample_rate = (
+            16000  # what `audio_input()` yields, as the bridge reports it
+        )
         self.synthesizer_error: str | None = None
         # The perception slice: the camera feed the gesture input samples, exists from construction
         # like the bridge's (a bright synthetic frame a scripted detector reads as "a hand").

@@ -56,7 +56,7 @@ from datetime import timedelta
 from typing import Any
 
 from asr_engine.audio import AudioSource
-from asr_engine.config import ASREngineConfig
+from asr_engine.config import ASREngineConfig, AudioSourceConfig
 from asr_engine.engine import ASREngine
 from wica import Content, TextPart, Wica
 from wica.config import (
@@ -90,7 +90,24 @@ AsrEngineFactory = Callable[[ASREngineConfig, AudioSource | None], ASREngine]
 def _build_asr_engine(
     config: ASREngineConfig, audio_source: AudioSource | None
 ) -> ASREngine:
-    return ASREngine(config, audio_source=audio_source)
+    return ASREngine(asr_config_for(config, audio_source), audio_source=audio_source)
+
+
+def asr_config_for(
+    config: ASREngineConfig, audio_source: AudioSource | None
+) -> ASREngineConfig:
+    """The engine config for the mic the body supplies (specs/asr-bridge.md, "The mic is the embodiment's").
+
+    The engine checks ``audio_source.type`` against how it is built: a source handed to it needs
+    ``"custom"``. An ``"input-device"`` block names a device, and whether the engine opens it
+    itself or the body opens it and hands over what it made of it (the computer's echo canceller)
+    is the body's decision, taken at ``enter()`` — so with a mic supplied, that block becomes
+    ``"custom"`` here. Any other type is left as written: ``"custom"`` already fits, and a
+    ``"file"`` next to a supplied mic is the engine's own error, not silently overridden.
+    """
+    if audio_source is None or config.audio_source.type != "input-device":
+        return config
+    return replace(config, audio_source=AudioSourceConfig(type="custom"))
 
 
 # The inputs are transient (specs/app.md, "Inputs are transient"): each perception is a one-shot

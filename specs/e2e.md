@@ -43,7 +43,7 @@ It is a part of the live tier of [testing.md](testing.md): it lives in `tests-e2
 One fixed set, chosen so that only the LLM and the ASR cost anything per run:
 
 - **The LLM: Claude Haiku 5.5** — `provider: "anthropic"`, `model: "claude-haiku-5-5"`, the key in `WICA_ANTHROPIC_API_KEY`. It is fast and cheap, and its provider extra is already in the dev group.
-- **The ASR: Deepgram Flux** — `deepgram_v2`, `flux-general-en`, the key in `DEEPGRAM_API_KEY`. This is the production ASR. asr-engine's local `kyutai` module is ruled out: its backends pin `numpy<2.3` against vision-modules' `numpy>=2.5.3`, so declaring it makes the lock unsolvable ([project.md](project.md)).
+- **The ASR: Deepgram Flux** — `deepgram-v2`, `flux-general-en`, the key in `DEEPGRAM_API_KEY`. This is the production ASR. asr-engine's local `kyutai` module is ruled out: its backends pin `numpy<2.3` against vision-modules' `numpy>=2.5.3`, so declaring it makes the lock unsolvable ([project.md](project.md)).
 - **The voices: phonon**, for both the app and the person. It is tts-engine's lightest local model: no PyTorch, no key, and a public English checkpoint of about 160 MB that runs many times faster than real time on a CPU. The dev group gains the `tts-phonon` extra. The app speaks as `Micah` and the person as `Harper`, so a transcript always tells them apart.
 - **Everything is in English.** phonon's public checkpoint is English-only. Other languages are left to manual runs.
 
@@ -95,7 +95,7 @@ So the computer's echo is on whenever the run gives it a virtual speaker: always
 
 | Device | Replacement | Set through |
 |---|---|---|
-| Mic | the cable | `asr.engine.audio.device` = `WICA_E2E_MIC_DEVICE` |
+| Mic | the cable | `asr.engine.audio_source.device` = `WICA_E2E_MIC_DEVICE` |
 | Speakers | `WICA_E2E_SPEAKER_DEVICE` | `tts.engine.player.device` |
 | The speaker-to-mic echo | the room, when there is an echo device | `audio_processing.echo_cancellation.enabled` = whether there is |
 | Webcam | one image file, rewritten to change what the camera sees | `camera.device` = the file's path |

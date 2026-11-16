@@ -27,7 +27,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from asr_engine.audio import AudioSource
+from asr_engine.audio import AudioFormat, AudioSource
 from reachy_mini_bridge import CameraFrame, ReachyMiniBridge
 from wica import Command
 
@@ -63,8 +63,9 @@ class RobotMicSource:
     — see asr-engine specs/audio-source.md): the engine calls ``start()`` (not awaited) from inside its
     start coroutine to obtain the queue it drains, and ``stop()`` on teardown. ``bridge.audio_input()`` is
     one subscriber of the bridge's mic feed — every chunk, in order, never split with another consumer
-    — and already yields int16 LE mono PCM at ``bridge.mic_sample_rate`` (16 kHz) — the streaming-ASR contract —
-    so the pump just iterates and enqueues each chunk; no resampling or reformatting. The queue is
+    — and already yields int16 LE mono PCM at ``bridge.mic_sample_rate`` (16 kHz), which the source
+    declares as its ``audio_format``: the engine converts it when the selected ASR module is fed
+    another rate. So the pump just iterates and enqueues each chunk; no resampling or reformatting. The queue is
     bounded and drops its oldest chunk when full (see ``_MIC_QUEUE_MAXSIZE``). If the stream raises or
     ends on its own, the pump logs it and records why in ``capture_error`` — so a dead mic is visible in
     the ASR status rather than passing for silence. The source shares the one ``ReachyMiniBridge`` the
@@ -76,6 +77,11 @@ class RobotMicSource:
     ) -> None:
         self._bridge = bridge
         self._maxsize = maxsize
+        # What `audio_input()` yields, read by the engine at its construction (the source is built
+        # once the bridge runs, so the media session's rate is known).
+        self.audio_format = AudioFormat(
+            sample_rate=bridge.mic_sample_rate, channels=1, encoding="linear16"
+        )
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=maxsize)
         self._task: asyncio.Task[None] | None = None
         self._error: str | None = None

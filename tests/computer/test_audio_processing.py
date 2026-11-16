@@ -19,10 +19,11 @@ import json
 import threading
 from collections.abc import Coroutine
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
+from asr_engine.audio import AudioFormat
 
 from wica_interaction.computer.audio_processing import (
     FRAME_SAMPLES,
@@ -276,6 +277,16 @@ def test_feed_before_bind_is_dropped_not_raised() -> None:
     )  # returns quietly, nothing to assert but no exception
 
 
+def test_source_declares_the_processors_working_format() -> None:
+    """The cleaned mic is 16 kHz mono linear16 whatever the ASR module is fed: the source says so,
+    and the ASR engine converts."""
+    coordinator, _processor, _player, _capture = _make_coordinator()
+
+    assert cast(Any, coordinator.source).audio_format == AudioFormat(
+        sample_rate=16000, channels=1, encoding="linear16"
+    )
+
+
 def test_source_reframes_chunk_into_160_sample_frames_paired_with_reference() -> None:
     """A 1600-sample mic chunk becomes ten 160-sample frames, each paired with the buffered reference
     (real reference while it lasts, silence once exhausted); output preserves chunk length."""
@@ -442,7 +453,7 @@ def _load_with(tmp_path: Path, section: object | None) -> ComputerConfig:
                 "system_prompt": "a voice assistant",
             }
         },
-        "asr": {"engine": {"module": {"type": "deepgram_v2"}}},
+        "asr": {"engine": {"module": {"type": "deepgram-v2"}}},
         "tts": {"engine": {"module": {"type": "elevenlabs"}}},
     }
     if section is not None:

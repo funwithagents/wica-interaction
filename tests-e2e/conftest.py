@@ -211,7 +211,7 @@ def _computer(devices: Devices, out: Path, scenario: str) -> Iterator[E2E]:
     config_path = _fill(
         "computer.json",
         {
-            "asr.engine.audio.device": devices.mic,
+            "asr.engine.audio_source.device": devices.mic,
             "tts.engine.player.device": devices.speaker,
             "audio_processing.echo_cancellation.enabled": devices.echo is not None,
             "camera.device": str(camera.path),

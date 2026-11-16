@@ -44,12 +44,15 @@ def run[T](coro: Coroutine[Any, Any, T]) -> T:
 def _config(
     *, aec: bool = False, ns: bool = False, camera: int | str = 0
 ) -> ComputerConfig:
-    """A ComputerConfig whose ASR section is the 16 kHz mono linear16 the processor needs."""
+    """A ComputerConfig whose ASR section reads an input device, the one the processor opens."""
     return ComputerConfig(
         app=AppConfig(
             wica=cast(Any, None),
             asr_engine=ASREngineConfig.from_dict(
-                {"module": {"type": "deepgram_v2"}, "audio": {"device": None}}
+                {
+                    "module": {"type": "deepgram-v2"},
+                    "audio_source": {"type": "input-device", "device": None},
+                }
             ),
         ),
         tts_engine=TTSEngineConfig.from_dict({"module": {"type": "elevenlabs"}}),
@@ -175,12 +178,19 @@ def test_a_failing_coordinator_degrades_to_direct_wiring() -> None:
     assert run(embodiment.say("hello")) == "OK"
 
 
-def test_a_wrong_asr_format_degrades_the_processing_not_the_body() -> None:
-    """The real `build_coordinator` rejects an ASR format the processor cannot work at; that
-    `RuntimeError` is a `missing` line, not a failed body."""
+def test_a_device_format_the_processor_cannot_capture_degrades_the_processing() -> None:
+    """The processor opens the microphone itself, at its own 16 kHz. A format asked for the device
+    is one the real `build_coordinator` refuses rather than ignores; that `RuntimeError` is a
+    `missing` line, not a failed body, and the engine then opens the device as configured."""
     config = _config(aec=True)
     config.app.asr_engine = ASREngineConfig.from_dict(
-        {"module": {"type": "deepgram_v2"}, "audio": {"sample_rate": 48000}}
+        {
+            "module": {"type": "deepgram-v2"},
+            "audio_source": {
+                "type": "input-device",
+                "audio_format": {"sample_rate": 48000},
+            },
+        }
     )
     embodiment = _entered(config)  # the default factory: the real build_coordinator
 
@@ -190,6 +200,25 @@ def test_a_wrong_asr_format_degrades_the_processing_not_the_body() -> None:
     )
     assert embodiment.mic is None
     assert embodiment.voice is not None
+
+
+def test_a_source_that_is_not_a_device_degrades_the_processing() -> None:
+    """Audio processing cleans a microphone it opens. With a file as the ASR's source there is
+    none: the processing is reported missing and the engine plays the file, not silently a mic."""
+    config = _config(aec=True)
+    config.app.asr_engine = ASREngineConfig.from_dict(
+        {
+            "module": {"type": "deepgram-v2"},
+            "audio_source": {"type": "file", "audio_file": "speech.wav"},
+        }
+    )
+    embodiment = _entered(config)
+
+    assert any(
+        m.startswith("Audio processing:") and "'input-device'" in m and "'file'" in m
+        for m in embodiment.missing
+    )
+    assert embodiment.mic is None
 
 
 @pytest.mark.parametrize(

@@ -41,11 +41,11 @@ def _composed(system_prompt_file: str = "prompts/reachy.md") -> dict:
         "asr": {
             "engine": {
                 "module": {
-                    "type": "deepgram_v2",
+                    "type": "deepgram-v2",
                     "api_key_env": "DEEPGRAM_API_KEY",
                     "model": "nova-3",
                 },
-                "audio": {"device": None},
+                "audio_source": {"type": "input-device", "device": None},
                 "dictation_default_segmentation_mode": "timeout",
                 "segmentation": {"end_of_speech_timeout_s": 2.0},
             }
@@ -77,7 +77,7 @@ def test_happy_path_builds_both_engine_configs(tmp_path: Path) -> None:
     assert cfg.wica.agent.model == "claude-sonnet-5"
 
     assert isinstance(cfg.asr_engine, ASREngineConfig)
-    assert cfg.asr_engine.module.type == "deepgram_v2"
+    assert cfg.asr_engine.module.type == "deepgram-v2"
     assert cfg.asr_engine.dictation_default_segmentation_mode == "timeout"
 
 

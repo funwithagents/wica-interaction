@@ -14,6 +14,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any, cast
 
 import pytest
+from asr_engine.audio import AudioFormat
 from reachy_mini_bridge import ReachyMiniBridge
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica import Command
@@ -307,6 +308,7 @@ class FakeMicBridge:
         raise_after: str | None = None,
     ) -> None:
         self._chunks = chunks
+        self.mic_sample_rate = 16000
         self._hold_open = hold_open
         self._raise_after = raise_after
         self.started = 0
@@ -340,6 +342,19 @@ async def _eventually(predicate: Callable[[], bool], timeout: float = 1.0) -> bo
             return False
         await asyncio.sleep(0.005)
     return True
+
+
+def test_mic_source_declares_the_robots_capture_format() -> None:
+    """The source says what it produces — mono linear16 at the rate the bridge reports — so the ASR
+    engine converts it for a module fed another rate instead of assuming it matches."""
+    bridge = FakeMicBridge([])
+    bridge.mic_sample_rate = 22050  # not a rate the source could have assumed
+
+    source = RobotMicSource(cast(ReachyMiniBridge, bridge))
+
+    assert source.audio_format == AudioFormat(
+        sample_rate=22050, channels=1, encoding="linear16"
+    )
 
 
 def test_mic_source_streams_chunks_in_order() -> None:

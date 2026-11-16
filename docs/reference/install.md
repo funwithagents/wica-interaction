@@ -13,16 +13,16 @@ What every embodiment needs is a base dependency; what only one body, one provid
 
 ```
 # the computer: Anthropic, Deepgram, an ElevenLabs voice, echo cancellation and hand signs (the computer template)
-uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --extra tts-elevenlabs --extra audio-processing --extra vision
+uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --extra asr-silero --extra tts-elevenlabs --extra audio-processing --extra vision
 
 # the computer, minimal: one provider each, no echo cancellation, no camera
-uv sync --no-dev --extra computer --extra wica-openai --extra asr-deepgram --extra tts-elevenlabs
+uv sync --no-dev --extra computer --extra wica-openai --extra asr-deepgram --extra asr-silero --extra tts-elevenlabs
 
 # the Reachy Mini in the simulator: the Hub, Deepgram, the local pocket voice, hand signs (the reachy template)
-uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-deepgram --extra tts-pocket --extra vision
+uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-deepgram --extra asr-silero --extra tts-pocket --extra vision
 
 # the same on a real Reachy Mini: no simulator
-uv sync --no-dev --extra reachy --extra wica-huggingface-hub --extra asr-deepgram --extra tts-pocket --extra vision
+uv sync --no-dev --extra reachy --extra wica-huggingface-hub --extra asr-deepgram --extra asr-silero --extra tts-pocket --extra vision
 
 # everything, one command
 uv sync --no-dev --extra all
@@ -47,10 +47,15 @@ One extra per body, per optional feature, per provider, named after the sibling'
 | `vision` | `vision-modules[hand,opencv]` | the hand-sign input, either body: MediaPipe, the torch classifier, OpenCV for the webcam and the snapshots |
 | `wica-anthropic` | `wica[anthropic]` | the Anthropic agent provider |
 | `wica-openai` | `wica[openai]` | the OpenAI agent provider |
-| `wica-google-genai` | `wica[google-genai]` | the Gemini agent provider (Gemini Developer API) |
-| `wica-mistralai` | `wica[mistralai]` | the Mistral agent provider (La Plateforme) |
+| `wica-gemini` | `wica[gemini]` | the Gemini agent provider (Gemini Developer API) |
+| `wica-mistral` | `wica[mistral]` | the Mistral agent provider (La Plateforme) |
 | `wica-huggingface-hub` | `wica[huggingface-hub]` | the Hugging Face Hub agent provider (Inference Providers) |
-| `asr-deepgram` | `asr-engine[deepgram]` | the Deepgram speech recognizer, the one the templates select |
+| `wica-openai-compatible` | `wica[openai-compatible]` | the `openai-chat-completions-compatible` agent provider: any server implementing OpenAI's Chat Completions API, a local or self-hosted model among them (llama-server, Ollama, vLLM) |
+| `asr-deepgram` | `asr-engine[deepgram]` | the Deepgram speech recognizers (`deepgram-v2`, `deepgram-v1`), the ones the templates select |
+| `asr-mistral` | `asr-engine[mistral]` | the Mistral Voxtral realtime speech recognizer (`mistral-realtime`) |
+| `asr-openai-compatible` | `asr-engine[openai-compatible]` | the OpenAI-protocol speech recognizers (`openai-realtime-compatible`, `openai-transcriptions-compatible`): OpenAI's own API or any compatible server |
+| `asr-mlx-audio` | `asr-engine[mlx-audio]` | the local speech recognizer on the mlx-audio runner (`mlx-audio`: Parakeet, Whisper, Qwen3-ASR), Apple silicon only |
+| `asr-silero` | `asr-engine[silero]` | the Silero voice-activity gate (`asr.engine.vad`), on in both templates: keeps silence from a billed recognizer, and required by the batch recognizers (`mlx-audio`, `openai-transcriptions-compatible`) |
 | `tts-elevenlabs` | `tts-engine[elevenlabs]` | the ElevenLabs hosted voice |
 | `tts-gradium` | `tts-engine[gradium]` | the Gradium hosted voice |
 | `tts-mistral` | `tts-engine[mistral]` | the Mistral hosted voice |
@@ -58,7 +63,7 @@ One extra per body, per optional feature, per provider, named after the sibling'
 | `tts-gemini` | `tts-engine[gemini]` | the Gemini hosted voice |
 | `tts-cartesia` | `tts-engine[cartesia]` | the Cartesia hosted voice |
 | `tts-openai` | `tts-engine[openai]` | the OpenAI Realtime API voice |
-| `tts-openai-compatible` | `tts-engine[openai-compatible]` | OpenAI's speech endpoint, or any OpenAI-compatible server |
+| `tts-openai-compatible` | `tts-engine[openai-compatible]` | the `openai-speech-compatible` voice: OpenAI's speech endpoint, or any OpenAI-compatible server |
 | `tts-pocket` | `tts-engine[pocket]` | the local pocket-tts voice (torch, weights downloaded on first run), the reachy template's choice |
 | `tts-phonon` | `tts-engine[phonon]` | the local Phonon voice |
 | `tts-qwen3` | `tts-engine[qwen3]` | the local Qwen3-TTS voice, Apple silicon only |
@@ -66,7 +71,7 @@ One extra per body, per optional feature, per provider, named after the sibling'
 | `tts-piper` | `tts-engine[piper]` | the local Piper voice (GPL-3.0+) |
 | `all` | every extra above | everything in one install |
 
-Not offered: asr-engine's Kyutai local recognizers, whose numpy pin conflicts with `vision-modules`; the siblings' MCP extras, a transport this app never runs. What each voice needs, a key, a platform, a model download, is on tts-engine's [module pages](https://github.com/funwithagents/tts-engine/blob/main/docs/modules/index.md); the agent providers' notes are in WICA's [configuration reference](https://github.com/funwithagents/wica-framework/blob/main/docs/reference/configuration.md). The rationale for the shape is [specs/project.md](../../specs/project.md).
+Not offered: asr-engine's Kyutai local recognizers, whose numpy pin conflicts with `vision-modules`; the siblings' MCP extras, a transport this app never runs. The extras that changed name on 2026-11-16 have no alias: `wica-google-genai` is now `wica-gemini`, `wica-mistralai` is `wica-mistral`. What each voice needs, a key, a platform, a model download, is on tts-engine's [module pages](https://github.com/funwithagents/tts-engine/blob/main/docs/modules/index.md); the agent providers' notes are in WICA's [configuration reference](https://github.com/funwithagents/wica-framework/blob/main/docs/reference/configuration.md). The rationale for the shape is [specs/project.md](../../specs/project.md).
 
 ## Platforms
 

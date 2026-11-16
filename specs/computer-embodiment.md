@@ -57,7 +57,7 @@ class ComputerConfig:
 - **`tts` (required)** — a tts-engine document; its `engine` block goes verbatim to `TTSEngineConfig.from_dict`, so the provider (`module.type`: `elevenlabs`, `gradium`, `pocket`, …), its key reference and voice, and the `player.device` (the speaker) are the engine's own schema. The provider named must have its extra installed (`tts-<name>`, one per tts-engine provider: `tts-elevenlabs`, `tts-gradium`, `tts-pocket`, … — [project.md](project.md), "Extras").
 - **`audio_processing` (optional)** — absent ⇒ every feature off; the schema and semantics are in [audio-processing.md](audio-processing.md).
 - **`camera` (optional)** — the webcam `GestureInput` reads when `vision.enabled`; `device` is what `cv2.VideoCapture` takes (an index, default `0`, or a path/URL). Absent ⇒ device `0`. A non-object section, an unknown key, or a `device` that is neither an int nor a string raises `ValueError` from `load_config`, naming the file and the field.
-- The microphone is the ASR config's own `asr.engine.audio.device` (the engine opens it), so it needs no section here.
+- The microphone is the ASR config's own `asr.engine.audio_source.device` (opened by the engine, or by the audio processing when it is on), so it needs no section here.
 - Any top-level key outside `wica`/`asr`/`vision`/`tts`/`audio_processing`/`camera` is rejected — a `reachy` section in a computer config is a `ValueError`, not silently ignored ([configuration.md](configuration.md), "Each embodiment loads its own file").
 
 ## `ComputerEmbodiment`
@@ -77,13 +77,13 @@ class ComputerEmbodiment:
 
 Construction does no I/O and opens no device; everything happens in `enter()`, on the app loop:
 
-1. **Audio processing.** When `config.audio_processing.any_enabled`, build the `AudioProcessingCoordinator` through `coordinator_factory` (the module's `build_coordinator`, [audio-processing.md](audio-processing.md), "Building the coordinator"). `ImportError` (the WebRTC binding or the resampler absent), `RuntimeError` (the ASR audio format is not 16 kHz mono linear16) and `ValueError` are caught into `missing` as `Audio processing: …`, and the embodiment carries on with no coordinator — the mic goes straight to ASR, the speakers straight to the player.
+1. **Audio processing.** When `config.audio_processing.any_enabled`, build the `AudioProcessingCoordinator` through `coordinator_factory` (the module's `build_coordinator`, [audio-processing.md](audio-processing.md), "Building the coordinator"). `ImportError` (the WebRTC binding or the resampler absent), `RuntimeError` (the ASR audio source is not an input device at the processor's 16 kHz mono linear16) and `ValueError` are caught into `missing` as `Audio processing: …`, and the embodiment carries on with no coordinator — the mic goes straight to ASR, the speakers straight to the player.
 2. **The voice.** `TTSEngine(config.tts_engine, sink=coordinator.sink)` when echo cancellation is on (the far-end tap), plain `TTSEngine(config.tts_engine)` otherwise; then, with a sink, `coordinator.bind_far_rate(engine.sample_rate)` — the two-step the coordinator needs (the player and the resampler are built once the module's rate is known). The engine is wrapped once in `TTSTools(engine)`. **Any** exception from that build — tts-engine's `ConfigError` (a key unset, a misconfigured module), `ImportError` (the provider's extra not installed — the SDK import is lazy inside the module), or whatever else a provider's constructor raises (a local model that fails to load) — is caught into `missing` as `TTS: …` and kept as the reason `say` reports; the body stays up, mic and camera included ([embodiment.md](embodiment.md), "Degradation is per component").
 
 The members:
 
 - **`voice`** — the bound `say` below, **always**: with no engine it stays wired and answers with the TTS error, the same contract as the robot's ([embodiment.md](embodiment.md), "A voice that failed to build stays wired").
-- **`mic`** — `coordinator.source` when a coordinator was built (the processed mic, whatever features are on), else `None`: the ASR engine opens its default `AudioCapture` on `asr.engine.audio.device`.
+- **`mic`** — `coordinator.source` when a coordinator was built (the processed mic, whatever features are on), else `None`: the ASR engine opens its default `AudioCapture` on `asr.engine.audio_source.device`.
 - **`mic_error`** — always `None`; a local capture that dies raises inside the engine, which reports it its own way.
 - **`camera(fps=…)`** — a `StreamFeed(WebcamSource(config.camera.device, fps=fps))`: the paced webcam source below, behind the gesture module's own `StreamProvider` adapter ([gesture-input.md](gesture-input.md), "`StreamFeed`"), so the hand stage samples a latest-value slot here as it does on the robot. `open()` starts the provider (which opens the webcam), `close()` stops it; `capture_error` is the source's.
 - **`commands()`** — `()`; the computer has nothing to act with.
