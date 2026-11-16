@@ -11,7 +11,7 @@ The documentation of WICA Interaction, by what you want to do. The [README](../R
 | understand or change a field of the config file | [reference/configuration.md](reference/configuration.md): the whole file section by section, the templates, what a loader rejects |
 | choose the LLM, the speech recognizer or the voice | [reference/configuration.md](reference/configuration.md): each section names its providers and links to the engine's own pages |
 | run it on my computer: devices, echo, noise, the webcam | [guides/computer.md](guides/computer.md) |
-| run it on a Reachy Mini: the simulator, a Lite over USB, the voice, face tracking | [guides/reachy-mini.md](guides/reachy-mini.md) |
+| run it on a Reachy Mini: the simulator, a Lite over USB, the voice, the people it sees and follows | [guides/reachy-mini.md](guides/reachy-mini.md) |
 | show the agent hand signs | [guides/hand-signs.md](guides/hand-signs.md): the vocabulary, the hold, the Vision line, the snapshots |
 | dictate a longer passage | [guides/dictation.md](guides/dictation.md): the two modes, how a passage ends, the stop button |
 | change what the agent is, says or does | [guides/personas.md](guides/personas.md): the prompt files, what is appended at startup, the robot's action rules |

@@ -4,7 +4,8 @@ app listens on, and a hand shown to its camera.
 The voice is a tts-engine phonon engine in the room, a process of its own (`room.py`) playing into
 the cable's playback end, which also plays the app's echo back when the run has an echo device.
 What the camera sees is a *stage*: on the computer, the image file the webcam reads; on the robot,
-the props of the sim's scene.
+the props of the sim's scene — a hand photo, and a person: a portrait of the bridge's pool, which the
+robot's people input sees (specs/e2e.md, "The Reachy Mini embodiment").
 """
 
 from __future__ import annotations
@@ -39,6 +40,13 @@ class Stage(Protocol):
     def hide(self) -> None: ...
 
 
+# Where the robot's person stands (x ahead, y left, z up; metres from the robot's base): far is
+# about 0.65 m from the camera, well outside the personal space (0.40 m); near, about 0.25 m, well
+# inside it. The bridge's live tests found its default 0.45 m to sit on the boundary.
+PERSON_FAR = (0.70, 0.0, 0.20)
+PERSON_NEAR = (0.30, 0.0, 0.20)
+
+
 class FileCamera:
     """The computer's camera as one image file: `camera.device` names it, and the webcam source
     reads it again at every poll (an image file is a one-frame stream it reopens). Changing what the
@@ -63,22 +71,41 @@ class FileCamera:
 
 class SceneStage:
     """The robot's camera stage: the hand props of the sim's scene (`hand_1` … in `HAND_PHOTOS`'
-    order, declared by the conftest), one spawned straight ahead of the head to show a hand, the
-    scene cleared to take it away."""
+    order, declared by the conftest), one spawned straight ahead of the head to show a hand and
+    hidden to take it away; and a person, the first portrait of the pool the harness puts in every
+    scene (`face_1`, a frontal face), spawned, moved and hidden on its own — showing a hand never
+    takes the person away."""
 
     # 0.45 m ahead at head height: the middle of the band where the spike read every sign.
     HAND_POS = (0.45, 0.0, 0.20)
+    PERSON = "face_1"
 
     def __init__(self, scene: Any) -> None:
         self._scene = scene
         self._names = {photo: f"hand_{n}" for n, photo in enumerate(HAND_PHOTOS, 1)}
+        self._hand: str | None = None
 
     def show(self, photo: str) -> None:
-        self._scene.clear()
-        self._scene.spawn(self.HAND_POS, name=self._names[photo])
+        self.hide()
+        name = self._names[photo]
+        self._scene.spawn(self.HAND_POS, name=name)
+        self._hand = name
 
     def hide(self) -> None:
-        self._scene.clear()
+        if self._hand is not None:
+            self._scene.despawn(self._hand)
+            self._hand = None
+
+    def arrive(self, pos: tuple[float, float, float]) -> None:
+        self._scene.spawn(pos, name=self.PERSON)
+
+    def step_to(self, pos: tuple[float, float, float], duration: float) -> None:
+        """Walk the person to *pos* over *duration* seconds; returns once they stand there."""
+        self._scene.place(self.PERSON, pos, duration=duration)
+        self._scene.wait_still(self.PERSON, timeout=duration + 10.0)
+
+    def leave(self) -> None:
+        self._scene.despawn(self.PERSON)
 
 
 class Person:
@@ -142,6 +169,23 @@ class Person:
     def hide(self) -> None:
         """Take the hand away."""
         self._stage.hide()
+
+    def _scene(self) -> SceneStage:
+        if not isinstance(self._stage, SceneStage):
+            raise TypeError("a person stands only in the robot's sim scene")
+        return self._stage
+
+    def arrive(self, pos: tuple[float, float, float] = PERSON_FAR) -> None:
+        """Step in front of the robot, at *pos*."""
+        self._scene().arrive(pos)
+
+    def step_to(self, pos: tuple[float, float, float], duration: float = 2.0) -> None:
+        """Walk to *pos*, slowly enough that the robot keeps seeing the same person."""
+        self._scene().step_to(pos, duration)
+
+    def leave(self) -> None:
+        """Walk away: the portrait hidden."""
+        self._scene().leave()
 
     def close(self) -> None:
         if self._voice is None:

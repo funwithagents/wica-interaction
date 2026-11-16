@@ -16,6 +16,7 @@ application callables; the sink and the output Command are set afterwards):
   the embodiment on it, folds the embodiment's ``prompt_addendum`` (and, with vision on, the
   hand-signs section) into the persona (an inline-prompt variant of the WICA config — see
   ``_seeded_wica_config``), ``Wica.init``s the agent and registers the ``speech_input`` entry,
+  registers the embodiment's own inputs (``embodiment.inputs()``, each with a guarded ``deliver``),
   builds the ASR bridge over ``embodiment.mic`` and the gesture input over ``embodiment.camera``.
   Its ``asr_engine_factory=`` / ``gesture_models=`` kwargs are test seams for injecting fakes.
 - ``build_ui(system)`` — the Gradio page (in [app_ui.py](app_ui.py)); it owns the contrib presenters
@@ -49,8 +50,8 @@ import argparse
 import asyncio
 import logging
 import threading
-from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Coroutine, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 
@@ -69,7 +70,7 @@ from wica.contrib.gradio import TranscriptLog
 from wica_interaction.app_ui import build_ui
 from wica_interaction.asr_bridge import AsrBridge, DictatedPassage
 from wica_interaction.config import AppConfig
-from wica_interaction.embodiment import Embodiment
+from wica_interaction.embodiment import Deliver, Embodiment, Input
 from wica_interaction.gesture_input import (
     GestureInput,
     GestureModels,
@@ -174,6 +175,14 @@ class AppSystem:
     # both flow through the identical reason → say → sink path), but ignores empty/whitespace input —
     # a guard ASR finals deliberately bypass. Built in build_system.
     submit_speech: Callable[[str], None]
+    # The body's own perceptions (`embodiment.inputs()`), each with the guarded `deliver` built for
+    # it: registered at build, started by `_start` once the agent runs, stopped by `_shutdown` right
+    # after it. Empty without a body or an agent. See specs/embodiment.md, "`inputs()` is the mirror
+    # of `commands()`".
+    inputs: tuple[tuple[Input, Deliver], ...] = ()
+    # How the transcript labels the body's entries: key → the entry's `display_fn` (app_ui's
+    # `entry_display` tries these before the app's own `display_entry`).
+    input_displays: Mapping[str, Callable[[Any], str]] = field(default_factory=dict)
 
 
 def build_system(
@@ -288,6 +297,23 @@ def build_system(
         if text:
             _deliver_speech(text)
 
+    # --- The body's own inputs (specs/embodiment.md, "`inputs()` is the mirror of `commands()`"):
+    # each input's entries registered as it declares them, and a `deliver` of its own that writes
+    # only those keys, guarded on a running agent like the funnel above. Only with a body and an
+    # agent; nothing is started here (`_start` does, once the agent runs). ----------------------
+    inputs: list[tuple[Input, Deliver]] = []
+    input_displays: dict[str, Callable[[Any], str]] = {}
+    if body is not None and wica is not None:
+        for body_input in body.inputs():
+            registered = _register_input(wica, body_input)
+            if isinstance(registered, str):
+                missing.append(f"{body.display_name}: {registered}")
+                continue
+            inputs.append((body_input, registered))
+            for entry in body_input.entries:
+                if entry.display_fn is not None:
+                    input_displays[entry.key] = entry.display_fn
+
     # --- Speech in: the ASR bridge, or None with a captured reason. Built after the agent, so its
     # on_final_segment callback (_deliver_speech) resolves forward with no placeholder. The engine
     # reads the embodiment's mic (None there means it opens its own default device), so speech-in
@@ -361,7 +387,51 @@ def build_system(
         gesture=gesture,
         missing=missing,
         submit_speech=submit_speech,
+        inputs=tuple(inputs),
+        input_displays=input_displays,
     )
+
+
+def _register_input(wica: Wica, body_input: Input) -> Deliver | str:
+    """Register *body_input*'s entries in *wica*'s World and build its ``deliver``; or, when the
+    World refuses one of them (a key already held, an invalid key), unregister the ones this input
+    already registered and return why, for the banner — the input is then dropped, the rest of the
+    app up.
+
+    ``deliver(key, value)`` writes ``world.update(key, value)`` for the input's own keys only (any
+    other is logged and dropped: an input writes what it declared) and only while the agent runs
+    (``world.update`` raises while stopped; a perception before start or after teardown is
+    dropped, as speech and signs are)."""
+    world = wica.world
+    entries = tuple(body_input.entries)
+    done: list[str] = []
+    try:
+        for entry in entries:
+            world.register(
+                entry.key,
+                entry.type,
+                serialize_fn=entry.serialize_fn,
+                triggers_llm_call=entry.triggers_llm_call,
+                trigger_condition_fn=entry.trigger_condition_fn,
+                ttl=entry.ttl,
+            )
+            done.append(entry.key)
+    except ValueError as exc:
+        for key in done:
+            world.unregister(key)
+        return str(exc)
+    keys = frozenset(done)
+
+    def deliver(key: str, value: Any) -> None:
+        if key not in keys:
+            logger.warning(
+                "an input delivered %r, which it did not declare; dropped", key
+            )
+            return
+        if wica.is_running:
+            world.update(key, value)
+
+    return deliver
 
 
 def _seeded_wica_config(config: WicaConfig, addenda: Sequence[str]) -> WicaConfig:
@@ -407,7 +477,8 @@ def wire(system: AppSystem, transcript: TranscriptLog) -> None:
 
 
 def _start(system: AppSystem) -> None:
-    """Start the agent (if built), then the ASR bridge (only if the agent is up to consume speech)."""
+    """Start the agent (if built), then — only with it, there being nothing else to consume them —
+    the ASR bridge, the gesture input and the body's own inputs."""
     if system.wica is not None:
         system.wica.start()
         if system.bridge is not None and system.loop is not None:
@@ -417,6 +488,16 @@ def _start(system: AppSystem) -> None:
         if system.gesture is not None:
             # Threads, not a coroutine: the camera source hops to the loop itself per poll.
             system.gesture.start()
+        if system.loop is not None:
+            for body_input, deliver in system.inputs:
+                # After the agent: a producer may deliver at once (what it already perceives). One
+                # that fails to start is logged and stays silent; the app, and the next input, go on.
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        body_input.start(deliver), system.loop
+                    ).result()
+                except Exception:
+                    logger.exception("an embodiment input failed to start")
 
 
 def _degraded_system(message: str) -> AppSystem:
@@ -454,8 +535,8 @@ def _run_on_loop(
 
 
 def _shutdown(system: AppSystem) -> None:
-    """Tear the system down in dependency order: the agent, then vision, then ASR capture, then the
-    embodiment, then the loop. Vision and the bridge are stopped *before* the embodiment exits so the
+    """Tear the system down in dependency order: the agent, then the body's inputs, then vision, then
+    ASR capture, then the embodiment, then the loop. Vision and the bridge are stopped *before* the embodiment exits so the
     camera poll is joined and the mic pump cancelled while the body is still live, rather than
     polling a closed session.
 
@@ -469,6 +550,11 @@ def _shutdown(system: AppSystem) -> None:
             system.wica.close()
         except Exception:  # one teardown step must not abort the rest
             logger.exception("teardown step 'wica.close' failed")
+    # The body's inputs right after the agent, before anything the body owns stops: a producer reads
+    # from the body (the robot's users and head tracking), which its exit resets.
+    if loop is not None:
+        for body_input, _deliver in system.inputs:
+            _run_on_loop(loop, body_input.stop(), step="input.stop")
     # Vision before the embodiment exits: its camera source may poll the body on the loop, so it
     # must be joined while that session is still open (the same reason the bridge precedes it).
     # A synchronous join, not a loop hop — the pipeline is threads.

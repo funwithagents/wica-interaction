@@ -35,14 +35,15 @@ from wica.contrib.gradio import ReactionLog, TranscriptLog
 from tests.fakes import (
     FakeASREngine,
     FakeEmbodiment,
+    ScriptedInput,
     asr_factory,
     scripted_wica_config,
 )
 from wica_interaction import system as system_module
-from wica_interaction.app_ui import display_entry
+from wica_interaction.app_ui import display_entry, entry_display
 from wica_interaction.asr_bridge import DictatedPassage
 from wica_interaction.config import AppConfig, VisionConfig
-from wica_interaction.embodiment import Embodiment
+from wica_interaction.embodiment import Embodiment, InputEntry
 from wica_interaction.gesture_input import GestureModels
 from wica_interaction.system import (
     HAND_GESTURE_TTL,
@@ -1014,3 +1015,187 @@ def test_shutdown_stops_vision_before_the_body_exits() -> None:
     assert (
         _camera_frames(embodiment) == frames_then
     )  # the released camera publishes nothing
+
+
+# --- The body's own inputs (specs/embodiment.md, "`inputs()` is the mirror of `commands()`") -------
+
+
+def _input_steps(reactions: ReactionLog) -> int:
+    """How many reasoning steps the scripted input's triggering entry woke, read off the reaction
+    labels — each labelled through the entry's own `display_fn` (`👀 <value>`)."""
+    return sum("👀" in label for label, _ in reactions.snapshot().choices)
+
+
+def _noop_script() -> list[dict]:
+    return [{"tool_calls": [{"name": "noop", "args": {}}]}]
+
+
+def test_a_body_input_is_registered_delivered_and_wakes_the_agent() -> None:
+    """The body describes its entries and plays the producer; the lifecycle registers them as
+    declared, starts the producer on the app loop once the agent runs, and what it delivers reaches
+    the prompt — the triggering entry waking a step labelled by the body's own wording, the standing
+    one waking none and still rendered."""
+    body_input = ScriptedInput()
+    embodiment = FakeEmbodiment(inputs=(body_input,))
+    system = _build(embodiment, script=_say_once("a cat, how nice"))
+    try:
+        assert system.wica is not None
+        world = system.wica.world
+        assert world.is_registered("seen") and world.is_registered("around")
+        assert world.get_config("seen").triggers_llm_call
+        assert not world.get_config("around").triggers_llm_call
+        assert body_input.started == 0  # nothing runs before the agent does
+        display = entry_display(system)
+        transcript = TranscriptLog(system.wica, display)
+        reactions = ReactionLog(system.wica, display)
+        wire(system, transcript)
+        _start(system)
+        assert body_input.started == 1 and body_input.loop is system.loop
+        assert body_input.deliver is not None
+
+        body_input.deliver("around", "a table")  # standing: no step
+        time.sleep(0.4)  # past the coalescing window a trigger would have opened
+        assert not _reaction_captured(reactions)
+
+        body_input.deliver("seen", "a cat")
+        assert _wait_until(lambda: embodiment.said == ["a cat, how nice"])
+        prompt = reactions.prompt_text(0)
+        assert prompt is not None
+        assert "Seen: a cat" in prompt and "Seen: a table" in prompt
+        assert _input_steps(reactions) == 1
+        assert "👀 a cat" in _user_items(transcript)
+    finally:
+        _shutdown(system)
+
+
+def test_an_input_writes_only_its_own_keys() -> None:
+    """`deliver` takes the keys the input declared: another — the app's own `speech_input` — is
+    dropped, never written, and wakes nothing."""
+    body_input = ScriptedInput()
+    system = _build(FakeEmbodiment(inputs=(body_input,)), script=_noop_script())
+    try:
+        _, reactions = _wire(system)
+        _start(system)
+        assert body_input.deliver is not None and system.wica is not None
+        body_input.deliver("speech_input", "pretending to be heard")
+        time.sleep(0.4)
+        assert system.wica.world.get("speech_input") is None
+        assert not _reaction_captured(reactions)
+    finally:
+        _shutdown(system)
+
+
+def test_a_delivery_outside_the_running_agent_is_dropped() -> None:
+    """Before the agent starts and after teardown, a delivery is dropped, not raised — as speech and
+    signs are."""
+    body_input = ScriptedInput()
+    system = _build(FakeEmbodiment(inputs=(body_input,)), script=_noop_script())
+    ((built_input, deliver),) = system.inputs
+    assert built_input is body_input
+    try:
+        deliver("seen", "too early")  # the World is not running yet
+        _wire(system)
+        _start(system)
+    finally:
+        _shutdown(system)
+    deliver("seen", "too late")  # the World is stopped: dropped, no raise
+    assert system.wica is not None and system.wica.world.get("seen") is None
+
+
+def test_an_entry_the_world_refuses_drops_that_input_with_a_banner_line() -> None:
+    """An input declaring a key the World already holds (here the app's `speech_input`) is dropped
+    whole — its other entry unregistered — with a line naming the body; another input is unaffected
+    and the agent runs."""
+    clashing = ScriptedInput(
+        entries=(
+            InputEntry("fine_so_far", str, serialize_fn=lambda v, p: []),
+            InputEntry("speech_input", str, serialize_fn=lambda v, p: []),
+        )
+    )
+    fine = ScriptedInput()
+    system = _build(
+        FakeEmbodiment(inputs=(clashing, fine)), script=_say_once("still here")
+    )
+    try:
+        assert system.wica is not None
+        assert any(
+            m.startswith("fake body:") and "speech_input" in m for m in system.missing
+        )
+        assert not system.wica.world.is_registered("fine_so_far")
+        assert [i for i, _ in system.inputs] == [fine]
+        _wire(system)
+        _start(system)
+        assert clashing.started == 0 and fine.started == 1
+    finally:
+        _shutdown(system)
+
+
+def test_an_input_that_fails_to_start_leaves_the_app_running() -> None:
+    """A producer whose `start` raises is logged and stays silent; the next input still starts and
+    typed text still drives the agent."""
+    failing = ScriptedInput(
+        entries=(InputEntry("broken", str, serialize_fn=lambda v, p: []),),
+        raise_on_start="no camera",
+    )
+    fine = ScriptedInput()
+    embodiment = FakeEmbodiment(inputs=(failing, fine))
+    system = _build(embodiment, script=_say_once("hello"))
+    try:
+        _wire(system)
+        _start(system)
+        assert failing.started == 1 and fine.started == 1
+        system.submit_speech("hi")
+        assert _wait_until(lambda: embodiment.said == ["hello"])
+    finally:
+        _shutdown(system)
+
+
+def test_no_inputs_without_a_body_or_without_an_agent(tmp_path: Path) -> None:
+    """A body that failed to enter is not asked for its inputs; a body with no agent to deliver to
+    has them neither registered nor started."""
+    no_body = FakeEmbodiment(raise_on_enter="unplugged", inputs=(ScriptedInput(),))
+    system = _build(no_body, script=_noop_script())
+    try:
+        assert system.inputs == () and no_body.inputs_asked == 0
+    finally:
+        _shutdown(system)
+
+    body_input = ScriptedInput()
+    wica = WicaConfig.from_dict(
+        {
+            "agent": {
+                "provider": "fake",
+                "model": "scripted",
+                "system_prompt_file": str(tmp_path / "no-such-prompt.md"),
+            }
+        }
+    )
+    embodiment = FakeEmbodiment(inputs=(body_input,))
+    system = build_system(
+        AppConfig(wica=wica, asr_engine=_asr_config()),
+        embodiment,
+        asr_engine_factory=asr_factory(FakeASREngine()),
+    )
+    try:
+        assert system.wica is None and system.inputs == ()
+        _start(system)
+        assert body_input.started == 0
+    finally:
+        _shutdown(system)
+    assert body_input.stopped == 0
+
+
+def test_shutdown_stops_the_inputs_right_after_the_agent() -> None:
+    """Teardown stops each input before anything the body owns: the agent first, then the inputs,
+    then the ASR bridge, then the body — the order specs/app.md lists."""
+    log: list[str] = []
+    body_input = ScriptedInput(log=log)
+    embodiment = FakeEmbodiment(log=log, inputs=(body_input,))
+    system = _build(embodiment, script=_noop_script(), asr=FakeASREngine(log=log))
+    _wire(system)
+    _start(system)
+
+    _shutdown(system)
+
+    assert body_input.stopped == 1
+    assert log == ["input.stop", "asr.stop", "embodiment.exit"]

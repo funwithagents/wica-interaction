@@ -18,7 +18,7 @@ from reachy_mini_bridge import ReachyMiniBridge
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica import Command
 
-from tests.reachy.fakes import FakeReachyMiniBridge
+from tests.reachy.fakes import FakeReachyMiniBridge, ScriptedFaces, seeing_config
 from tests.test_gesture_input import ScriptedClassifier, ScriptedDetector, _scores
 from wica_interaction.config import AppConfig
 from wica_interaction.gesture_input import GestureInput, GestureModels
@@ -28,6 +28,7 @@ from wica_interaction.reachy.embodiment import (
     RobotCameraFeed,
     RobotMicSource,
 )
+from wica_interaction.reachy.users import UsersInput
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -65,6 +66,8 @@ def test_enter_brings_the_robot_up_and_wires_every_member() -> None:
     assert embodiment.mic_error is None
     assert isinstance(embodiment.camera(fps=5.0), RobotCameraFeed)
     assert embodiment.missing == []
+    # No face detector configured: the robot sees no users, so no input and no tracking.
+    assert embodiment.inputs() == ()
 
 
 def test_construction_does_no_io() -> None:
@@ -103,6 +106,52 @@ def test_prompt_addendum_names_every_emotion_and_the_command() -> None:
     assert "play_emotion" in addendum
     for name in bridge.emotions:
         assert name in addendum
+
+
+def test_a_robot_with_a_detector_sees_users_and_may_follow_them() -> None:
+    """With a face detector configured, `enter()` runs detection for the session even when the
+    config left it off (the users the agent is told about exist only while it runs), and the body
+    brings the users input, the tracking pair among its Commands, and the users section in its
+    addendum after the emotions."""
+
+    async def scenario() -> None:
+        config = ReachyConfig(
+            app=cast(AppConfig, None),
+            reachy=seeing_config(ScriptedFaces(), enabled=False),
+        )
+        embodiment = ReachyEmbodiment(config)
+        await embodiment.enter()
+        try:
+            bridge = embodiment._bridge  # the bridge it built, to read back
+            assert bridge is not None
+            assert bridge.face_detection  # turned on despite the config
+            for _ in range(200):  # the detector builds, then reports its first frame
+                if bridge.users.value.active:
+                    break
+                await asyncio.sleep(0.02)
+            assert bridge.users.value.active
+
+            (users,) = embodiment.inputs()
+            assert isinstance(users, UsersInput)
+            names = [
+                c.tool.name if isinstance(c, Command) else c.__name__
+                for c in embodiment.commands()
+            ]
+            assert names == [
+                "play_emotion",
+                "get_motors_state",
+                "set_motors_state",
+                "start_tracking",
+                "stop_tracking",
+            ]
+            addendum = embodiment.prompt_addendum
+            assert addendum.index("## Your emotions") < addendum.index(
+                "## The users around you"
+            )
+        finally:
+            await embodiment.exit()
+
+    run(scenario())
 
 
 def test_enter_failure_propagates_as_no_embodiment() -> None:

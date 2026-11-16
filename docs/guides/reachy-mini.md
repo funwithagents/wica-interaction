@@ -36,25 +36,31 @@ The robot's voice is the `reachy.tts` block, a tts-engine engine block the bridg
 
 Without a `tts` block the robot comes up with no voice: the banner shows `TTS: no reachy.tts block configured (say is unavailable)`, and a voice that failed to build (its extra missing, its key unset) shows `TTS:` with the cause. Either way `say` stays wired, so the model learns why nothing was heard from the command's reply, `TTS error: …`, and everything else about the body works ([troubleshooting.md](troubleshooting.md#no-voice-or-a-quiet-one)).
 
-## Face detection and tracking
+## The users in front of the robot
 
-The template names the bridge's shipped detector, `face_detection.detector: "yunet"`, turns detection on, and turns head tracking on with it (`motion.tracking.enabled`): the robot then follows the person in front of it. The detector's weights are downloaded on the first detection. Tracking needs a detector; `enabled: true` with no `detector` is rejected at load. `motion.tracking` is an object: besides `enabled`, it holds the posture the bridge gives the head while it follows someone (mirroring their head roll, leaning toward them, stepping back from someone too close), each with the bridge's defaults. For a robot that does not turn its head, set `enabled` to `false` and drop the `face_detection` block.
+The template names the bridge's shipped detector, `face_detection.detector: "yunet"`, and turns detection on; its weights are downloaded on the first detection. With a detector, the robot **sees its users and tells the agent**: who comes into view and who leaves, who is in view right now, who is inside its personal space, and whom its head follows, each user under a number while they stay in view ([agent.md](../reference/agent.md#the-world)). A user is the bridge's word for a person it holds present. The bridge decides who is present: a face counts once it has been seen for a third of a second, a person the robot's own emotion turned the head away from is still there, and someone is gone once missing for two seconds where the camera looks. With a detector configured, the app keeps detection running for the whole session even if `face_detection.enabled` says `false` (a log line says so), since the users exist only while it runs.
+
+**Following a user is the agent's.** The template starts with head tracking off (`motion.tracking.enabled: false`); the agent starts it with `start_tracking`, on whoever is in front of it or on one user by number, and stops it with `stop_tracking`. Its persona asks it to follow someone who comes into view, the user it talks with when several are there, and to stop when everyone has left. `motion.tracking` keeps the posture the bridge gives the head while it follows someone (mirroring their head roll, leaning toward them, stepping back from someone too close), each with the bridge's defaults: the config says how the head follows, the agent whether and whom. The personal space is judged for the user the head follows, so with tracking off it is not known at all; while tracking runs, someone coming in and stepping back out each wake the agent, the entry saying for a moment what just changed, and the persona asks for a brief spoken reaction to each. `motion.tracking.enabled: true` still works: the session then starts following the bridge's automatic choice, until the agent says otherwise.
+
+Without a `face_detection` block the robot sees nobody: no users in the World, no tracking commands, no "The users around you" section in the persona; the head does not follow anyone. Tracking needs a detector; `enabled: true` with no `detector` is rejected at load.
 
 The detector's cost knobs are `width`, the width each frame is subsampled to before detection (the template's `640`; the bridge's default `320`), and `target_fps`, a ceiling on detections per second (`null` runs once per camera frame). Hand signs are read from the same camera feed the detector samples: the bridge reads the robot's camera once and every consumer samples it ([hand-signs.md](hand-signs.md)). The bridge's [perception guide](https://github.com/funwithagents/reachy-mini-bridge/blob/main/docs/guides/perception-and-tracking.md) has the rest: what the head does while it follows someone, and what the report says.
 
 ## What the agent can do with the body
 
-Beyond `say`, the robot registers three commands ([agent.md](../reference/agent.md)):
+Beyond `say`, the robot registers three commands, and two more when it sees people ([agent.md](../reference/agent.md)):
 
 | Command | What it does |
 |---|---|
 | `play_emotion(name)` | plays a short recorded motion. The names are fetched from the robot once at startup and seeded into the persona and into the command's description, so the model never has to ask |
 | `set_motors_state(state)` | `enabled`, `disabled`, or `gravity_compensation`, a gentle rest that still holds the head up |
 | `get_motors_state()` | reads the state back |
+| `start_tracking(user=None)` | with a detector: follow a user with the head, the one given by number, or whoever is in front of the robot; a user no longer in view is answered, not raised |
+| `stop_tracking()` | with a detector: stop following; the head goes back to its idle movement |
 
 The motors are assumed enabled: the model is told to just move, and to call `set_motors_state("enabled")` only after a move comes back saying the motors are off, then play it again. Because the robot has one body and one speaker, the persona forbids issuing colliding commands in one turn, `say` together with `play_emotion` among them, and asks for a spoken confirmation after every action ([the action rules](personas.md#the-action-rules)).
 
-Head tracking, presence, breathing and wobbling are the bridge's own aliveness between actions, driven by the `motion` block; none of it is agent-facing, and the persona does not mention it. If the emotion library cannot be read at startup, the banner shows `Robot: emotions unavailable:` with the cause, the persona carries no emotion names, and `play_emotion` keeps its plain description.
+Presence, breathing and wobbling are the bridge's own aliveness between actions, driven by the `motion` block; none of it is agent-facing, and the persona does not mention it. Following a person is the one exception, framed for the model as whom it pays attention to. If the emotion library cannot be read at startup, the banner shows `Robot: emotions unavailable:` with the cause, the persona carries no emotion names, and `play_emotion` keeps its plain description.
 
 ## Running it
 

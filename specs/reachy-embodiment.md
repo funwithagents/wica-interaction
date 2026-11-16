@@ -2,12 +2,14 @@
 code:
   - src/wica_interaction/reachy/embodiment.py
   - src/wica_interaction/reachy/robot_control.py
+  - src/wica_interaction/reachy/users.py
   - src/wica_interaction/reachy/config.py
   - src/wica_interaction/reachy/app.py
   - prompts/reachy.md
 tests:
   - tests/reachy/test_embodiment.py
   - tests/reachy/test_robot_control.py
+  - tests/reachy/test_users.py
   - tests/reachy/test_config.py
 ---
 
@@ -17,7 +19,7 @@ tests:
 
 ## Purpose
 
-The agent embodied in a **[Reachy Mini](https://github.com/pollen-robotics/reachy_mini)**: it speaks out of the robot's speaker, listens through the robot's echo-cancelled microphone, sees through the robot's camera, and acts — plays emotions, manages its motors — through `reachy-mini-bridge`'s `ReachyMiniBridge`. One implementation of the [Embodiment](embodiment.md) protocol, gathering what used to be spread over `tts_output.py`, `robot_control.py`, the `RobotMicSource` in `asr_bridge.py` and the `RobotCameraSource` in `gesture_input.py`. Its persona is the robot, [prompts/reachy.md](../prompts/reachy.md). It runs as `wica-interaction-reachy --config <file>`.
+The agent embodied in a **[Reachy Mini](https://github.com/pollen-robotics/reachy_mini)**: it speaks out of the robot's speaker, listens through the robot's echo-cancelled microphone, sees through the robot's camera, and acts — plays emotions, manages its motors, follows a person with its head — through `reachy-mini-bridge`'s `ReachyMiniBridge`. With a face detector configured it also **perceives the users in front of it** — who arrives, who leaves, who is present, who is inside its personal space, whom it follows — and tells the agent through an input of its own ("Users: `UsersInput`"). One implementation of the [Embodiment](embodiment.md) protocol, gathering what used to be spread over `tts_output.py`, `robot_control.py`, the `RobotMicSource` in `asr_bridge.py` and the `RobotCameraSource` in `gesture_input.py`. Its persona is the robot, [prompts/reachy.md](../prompts/reachy.md). It runs as `wica-interaction-reachy --config <file>`.
 
 ## Why the robot owns audio
 
@@ -37,8 +39,8 @@ The file carries the shared sections (`wica`, `asr`, optional `vision` — [conf
     "daemon": { "spawn": "auto", "headless": false, "camera": { "source": "webcam", "device": null } },
     "tts": { "module": { "type": "pocket", "voice": "george", "device": "auto" } },
     "audio": { "xvf3800": null },
-    "face_detection": { "detector": "yunet", "enabled": true, "width": 320, "target_fps": null },
-    "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": { "enabled": true } }
+    "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "target_fps": null },
+    "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": { "enabled": false } }
   },
   "vision": { "enabled": true, "threshold": 0.55, "fps": 5, "max_hands": 2, "hold_s": 0.5, "device": null }
 }
@@ -58,8 +60,8 @@ class ReachyConfig:
 - `daemon` — how the bridge brings up the daemon it talks to (`spawn`, `headless`, `scene`, `camera`, `preload_datasets`, `startup_timeout`). Only `fake` has no daemon, so `spawn` other than `"never"` is rejected there.
 - `tts` — **the voice**: a tts-engine `engine` block whose `module.type` names the provider; the bridge builds the synthesizer itself from it. The provider's extra must be installed — the same `tts-<name>` extras the computer embodiment uses (`tts-elevenlabs`, `tts-gradium`, `tts-pocket`, …) ([project.md](project.md), "Extras"). The committed default is `pocket` (the local model, voice `george`): no key, no network at synthesis time, weights downloaded on first run. Absent ⇒ no voice (`say` unavailable, everything else unaffected).
 - `audio.xvf3800` — the tuned XVF3800 profile; `null`/absent keeps the firmware defaults.
-- `face_detection` — the bridge's **opt-in face detection** (`reachy-mini-bridge/specs/vision/user_perception.md`): `detector` names what finds the faces in the camera feed's frames — `null` (the default: nothing is detected, no model is loaded), `"yunet"` (the bridge's shipped detector, upstream's own model; nothing to install, its weights a Hugging Face download on first use) or `"custom"` (a detector registered from code; not used here) — `enabled` (default `false`) whether the detection loop runs from session entry for the caller's sake (`bridge.faces`, the observable face report), and the detector's cost knobs: `width` (default `320`, the width the shipped detector subsamples each frame to; `null` = the full frame) and `target_fps` (default `null` = once per new camera frame; a ceiling on detections per second — the wireless robot's lever). Detection needs no motors.
-- `motion` — presence, the idle mode (`"breathing"` by default, else `"hold"` / `"custom"`), wobbling and tracking: the bridge's own aliveness, none of it agent-facing (below). `presence` and `wobbling` default `true`; **`tracking` is an object, off by default (`enabled: false`), and needs a detector** — its other fields are the bridge's tracking posture (mirroring, approach, personal space, frame delay), left at the bridge's defaults — the bridge's own head tracker is a client of the detection loop, so `tracking.enabled: true` with `face_detection.detector` `null` is a bridge `ConfigError`, as is a `tracking` written as a boolean (surfacing as `ValueError` from `load_config`, the file named). The committed template turns tracking on with `yunet`, so the robot follows the person in front of it; a deployment that wants a still-headed robot sets `tracking.enabled` to `false` and can drop `face_detection` altogether.
+- `face_detection` — the bridge's **opt-in face detection** (`reachy-mini-bridge/specs/vision/user_perception.md`): `detector` names what finds the faces in the camera feed's frames — `null` (the default: nothing is detected, no model is loaded), `"yunet"` (the bridge's shipped detector, upstream's own model; nothing to install, its weights a Hugging Face download on first use) or `"custom"` (a detector registered from code; not used here) — `enabled` (default `false`) whether the detection loop runs from session entry for the caller's sake (`bridge.faces`, the observable face report), and the detector's cost knobs: `width` (default `320`, the width the shipped detector subsamples each frame to; `null` = the full frame) and `target_fps` (default `null` = once per new camera frame; a ceiling on detections per second — the wireless robot's lever). Detection needs no motors. **With a detector configured, this embodiment runs detection for the whole session whatever `enabled` says** (`enter()` step 5): the users the agent is told about are the bridge's users present (`bridge.users`), which exist only while detection runs, and tracking alone would not keep it running — `stop_head_tracking()` with detection off stops the loop and every user leaves.
+- `motion` — presence, the idle mode (`"breathing"` by default, else `"hold"` / `"custom"`), wobbling — the bridge's own aliveness, none of it agent-facing — and tracking, whose switch and target are the agent's (below). `presence` and `wobbling` default `true`; **`tracking` is an object, off by default (`enabled: false`), and needs a detector** — its other fields are the bridge's tracking posture (mirroring, approach, personal space, frame delay), left at the bridge's defaults — the bridge's own head tracker is a client of the detection loop, so `tracking.enabled: true` with `face_detection.detector` `null` is a bridge `ConfigError`, as is a `tracking` written as a boolean (surfacing as `ValueError` from `load_config`, the file named). **Tracking is the agent's, so the committed template starts it off** (`tracking.enabled: false`) with `yunet` configured: the agent starts and stops it through `start_tracking` / `stop_tracking` (below), choosing whom to follow. `tracking`'s other fields — the posture — stay the config's: the agent says *whether* and *whom*, the config *how*. A config with `tracking.enabled: true` still loads and starts the session tracking the bridge's automatic choice, until the agent says otherwise. A deployment with no `face_detection.detector` has neither the users input nor the tracking Commands.
 
 Absent `reachy` section ⇒ `ReachyMiniConfig()` (the `real` backend, upstream defaults, no voice). Its validation errors are the bridge's `ConfigError`, a `ValueError` subclass, so `load_config`'s one error type holds. The section is the one place that imports `reachy_mini` at load (lazily, to validate `robot` keys against upstream's signature). The ASR config's `audio.device` is irrelevant here (no local device is opened); the ASR module must be configured for **16 kHz mono linear16** to match `bridge.mic_sample_rate`. Any top-level key outside `wica`/`asr`/`vision`/`reachy` — a `tts`, `audio_processing` or `camera` section — is rejected.
 
@@ -83,14 +85,16 @@ Construction does nothing but keep the config (and the injected fake, if any). `
 2. **The voice's health.** After a successful enter (and only when no `bridge` was injected — a fake carries its own `say`): no `reachy.tts` block ⇒ `missing` gets `TTS: no reachy.tts block configured (say is unavailable)`; else `bridge.synthesizer_error` set ⇒ `TTS: <error>`. The robot is up either way; `voice` is still the `say` below, which then returns `"TTS error: …"` when called (the bridge's `say` raises `BridgeError` without a synthesizer).
 3. **The emotion names.** `await bridge.list_emotions()` once — a snapshot the session keeps (the bridge loads its library once per connection, so nothing changes mid-session). A failure (on the real backend, the library is a HuggingFace dataset read) degrades to `missing` `Robot: emotions unavailable: …` and no names: the prompt then carries no emotion section and `play_emotion` keeps its plain docstring.
 4. **The mic.** `RobotMicSource(bridge)`, below. Nothing to start for either feed: `bridge.mic` and `bridge.camera` are the session's own, started with the media session and alive until exit — a consumer subscribes to them, never starts or stops them.
+5. **The users**, only with `reachy.face_detection.detector` set: detection on (`await bridge.set_face_detection(True)` when the config left it off — logged at `INFO`, since it overrides the file), then `UsersInput(bridge)` built, not started (the lifecycle starts it once the agent runs). A failure here — the detector's build failing — degrades to `missing` `Users: …` with no users input and no tracking Commands; the rest of the robot is up.
 
 The members:
 
 - **`voice`** — the bound `say` below, always (the robot came up).
 - **`mic`** — the `RobotMicSource`; **`mic_error`** — its `capture_error`.
 - **`camera(fps=…)`** — `RobotCameraFeed(bridge)`, below; `fps` is ignored (the feed runs at the daemon's rate, the gesture stages pace themselves).
-- **`commands()`** — `RobotControl(bridge, emotions=names).commands()`, below.
-- **`prompt_addendum`** — `emotions_prompt_section(names)` when names were fetched, else `""`.
+- **`commands()`** — `RobotControl(bridge, emotions=names, tracking=<users up>).commands()`, below.
+- **`inputs()`** — `(UsersInput,)` when step 5 built it, else `()`.
+- **`prompt_addendum`** — `emotions_prompt_section(names)` when names were fetched, then `users_prompt_section()` when the users input is up; `""` with neither.
 - **`exit()`** — `await bridge.stop()`: stops the motion loop, the camera feed (its `latest()` reads `None` from then on), the mic feed (ending every `audio_input()` subscriber), the media session and the robot connection (and the managed daemon); a no-op on a bridge that never started. The lifecycle runs it after ASR and vision are stopped, so the mic pump is cancelled and the hand stage joined while the media session and the feed are still live ([app.md](app.md), "Wiring and lifecycle").
 
 ### `say`
@@ -149,6 +153,102 @@ class RobotCameraFeed:
 - **`capture_error` is always `None`.** The feed has no failure of its own to report — a read that keeps failing is logged by the bridge and the last frame stays published; "no frame" is simply `latest()` not advancing. The gesture module's stall detection covers that (`no camera frame for 3 s` on the Vision line — the headless sim's absent camera, a daemon with no camera, the macOS camera draw the bridge's launcher works around), so a dead camera is visible without the adapter inventing an error.
 - No mirroring: the robot's view is not a selfie. The frame is shared and read-only by the feed's rule; the hand stage only reads it (the crop it publishes is a copy, the library's rule too).
 
+## Users: `UsersInput`
+
+The robot's own perception, delivered to the agent through `inputs()` ([embodiment.md](embodiment.md), "`inputs()` is the mirror of `commands()`"): the **users in front of it**, read from the bridge's users present and head tracking (`reachy-mini-bridge/specs/vision/user_perception.md` "The users present", `specs/motion/head_tracking.md`). The word is the bridge's: a *user* is a person the bridge holds present. The bridge decides who that is — a face confirmed over 0.3 s, kept while a move of the robot's own looks away, dropped after 2 s missing where the camera looks or 20 s unseen — so this module only *words* it: it owns which changes wake the agent, what each says, and the standing picture of who is there.
+
+```python
+Side = Literal["left", "front", "right"]
+
+
+@dataclass(frozen=True)
+class UserChange:  # one of user_event's: what just happened to a user
+    kind: Literal["arrived", "present", "left"]  # present: already in view at start
+    user: int
+    side: Side | None = None
+    distance_m: float | None = None
+
+
+@dataclass(frozen=True)
+class UserInView:  # one of users_in_view's
+    user: int
+    side: Side
+    distance_m: float | None
+    in_view: bool = True  # False: the camera is not framing where they were
+
+
+@dataclass(frozen=True)
+class PersonalSpace:  # personal_space's value while judged
+    user: int | None  # the user inside; None: nobody
+    distance_m: float | None = None
+    # what just happened, for SPACE_CHANGE_S: "came_in" (user entered) or "stepped_out" (`left` left)
+    change: Literal["came_in", "stepped_out"] | None = None
+    left: int | None = None
+
+
+@dataclass(frozen=True)
+class TrackedUser:  # tracked_user's value
+    active: bool  # tracking on
+    user: int | None = None  # the user followed
+    pinned: int | None = None  # the user the agent chose; None: the automatic target
+    pinned_present: bool = False
+
+
+class UsersInput:  # an `Input` (embodiment.py)
+    def __init__(
+        self,
+        bridge: ReachyMiniBridge,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        refresh_s: float = STANDING_REFRESH_S,
+    ) -> None: ...
+    @property
+    def entries(
+        self,
+    ) -> Sequence[
+        InputEntry
+    ]: ...  # user_event, users_in_view, personal_space, tracked_user
+    async def start(
+        self, deliver: Deliver
+    ) -> None: ...  # the start-up snapshot, then the watchers
+    async def stop(self) -> None: ...  # cancels the watchers
+
+
+def users_prompt_section() -> (
+    str
+): ...  # "## The users around you …", appended to the persona
+```
+
+**One entry per concept, each holding what was perceived.** The World holds objects — `user_event` a tuple of `UserChange`, `users_in_view` a tuple of `UserInView`, `personal_space` a `PersonalSpace`, `tracked_user` a `TrackedUser` — and each entry's `serialize_fn` words them for the prompt, its `display_fn` for the transcript, as `speech_input` holds the transcript and its serializer says *heard*. So the World panel shows the objects, the prompt the words. Positions are kept as coarsely as they are said — a side, a distance to 0.1 m (0.5 m past a metre) — so a user swaying changes no value and writes nothing.
+
+| Entry | Kind | Wakes the agent | Rendered (examples) | In the transcript |
+|---|---|---|---|---|
+| `user_event` | transient, `tuple[UserChange, ...]`: `ttl` `USER_EVENT_TTL` (2 s), `None` renders nothing — like `speech_input` | yes, every write | `A user came into view: user 3, about 0.7 m away, in front of you.` · `User 3 left your view.` · `A user is in view as you start: user 3, …` | `👤 <the event>` |
+| `users_in_view` | **standing**, `tuple[UserInView, ...]`: no TTL | never | `In view: user 3 (about 0.7 m away, in front of you), user 5 (about 1.5 m away, to your left; out of your sight right now).` · `Nobody is in view.` · omitted while detection is not running | `👥 <who is present>` |
+| `personal_space` | **state that wakes**: a `PersonalSpace`, judged only while the head follows someone (the bridge judges it for the followed user); omitted with tracking off | when **who is inside** changes (`personal_space_changed`): a user entering, stepping back out, another taking their place — not tracking starting or stopping, not the user inside moving | just changed: `User 3 just came into your personal space: they are very close to you (about 0.3 m away).` · `User 3 just stepped back out of your personal space; nobody is in it now.` — settled: `User 3 is in your personal space, very close to you (about 0.3 m away).` · `Nobody is in your personal space.` | `📏 <the line>` |
+| `tracked_user` | **standing**, a `TrackedUser` | never | `Your head is following user 3, as you chose.` · `Your head is following user 3.` (the automatic target) · `Your head is turning to follow user 3, as you chose.` (between a pin and that user's next sighting: the bridge reports the pin from the call, the follow from the sighting) · `You chose to follow user 3, who is not in view; your head is waiting for them.` · `Your head will follow whoever comes in front of you; it follows nobody yet.` · `You are not following anyone with your head.` | `🎯 <the line>` |
+
+The standing entries — `users_in_view`, `tracked_user`, and `personal_space` between its changes — are the app's exception to "no mirrored embodiment state" ([app.md](app.md), "World, Commands, persona"): the agent holds the tracking Commands, and to follow user 3 it must know, in the step where it decides, that user 3 is present and whom it follows already.
+
+**What each bridge change becomes.** Two watchers on the app loop, each reading every published report in order (`changes(every=True)`, so a busy loop misses no arrival):
+
+| Bridge change | `user_event` | The standing entries |
+|---|---|---|
+| `bridge.users`: `arrived` | one line per user: `A user came into view: user <n>, <where>.` | re-rendered |
+| `bridge.users`: `left`, reason `"left"` (missing where the camera looked) | `User <n> left your view.` | re-rendered |
+| `bridge.users`: `left`, reason `"unseen"` (the 20 s net) or `"stopped"` (detection stopped) | nothing: nobody was seen walking away | re-rendered |
+| `bridge.users`: `recognised`, `active` | nothing (no recognising detector yet) | re-rendered |
+| `bridge.head_tracking`: any change (tracking on or off, the followed user, the pin, the personal space) | nothing | re-rendered — `personal_space` wakes the agent by its own rule |
+
+- **Where a user is, in words.** The side from the face's `x` at its last sighting — `to your left` below −⅓, `to your right` above ⅓, `in front of you` between (the robot's camera is not mirrored: the image's right is the robot's right) — and the distance from its `distance_m`, `about 0.7 m away` (to 0.1 m below 1 m, to 0.5 m from there; left out when the bridge has none). Both are relative to where the head looked: good for "look at the user on your left" in the moment, not a map.
+- **The standing entries are kept current, cheaply.** They are re-rendered on every change above and once a second (`STANDING_REFRESH_S`), and each is written only when its value changed — so a user moving a little rewrites nothing, and one stepping from one side to the other is seen within a second.
+- **The personal space says what just changed.** A state alone reads the same in the step it wakes as in every later one, so a woken agent would not know anything happened — stepping out reads as *nobody is there*, which it had been before. So a change is written with what happened (`change`: `came_in`, or `stepped_out` with the user who `left`) and rewritten settled `SPACE_CHANGE_S` (2 s) later — the transient-input idea, kept on a state: the rewrite wakes no one, since `personal_space_changed` compares only who is inside.
+- **No cooldown on the personal space.** Entering and stepping out each wake the agent, as asked; the bridge's hysteresis (left only beyond `distance_m` plus a margin) keeps a user at the boundary from flickering it. The persona lets the agent stay silent.
+- **Events that land together are written together.** A `user_event` write within `EVENT_JOIN_S` (0.5 s) of the previous one appends its changes to it rather than replacing them, so two arrivals on one coalescing window both reach the step they wake; later, a write starts afresh.
+- **The start-up snapshot.** The bridge's detection starts with the session, before the agent runs, and a subscription sees only what is published after it. So `start` reads who is already present first, in the same loop step as subscribing, delivers the standing entries, and — when someone is there — one `user_event`, `A user is in view as you start: …`, so the robot greets whoever stands in front of it at launch.
+- **What it never claims.** A number is a track, not an identity: the same person coming back after a break gets a new one, and the wording never says *the same person* or a name.
+- **A non-raising producer.** A watcher that fails is logged and ends; the robot keeps running, the entries stop changing. `stop` cancels both watchers and the refresher and waits for them.
+
 ## `RobotControl` — the action commands
 
 The agent does not just talk, it *acts through the robot*: a small set of WICA **Commands** wrapping `ReachyMiniBridge` verbs, the same first-class, observable, cancellable mechanism `say` uses. The bridge holds all robot state and orchestration; this is a thin, **non-raising** adapter.
@@ -161,12 +261,16 @@ def emotions_prompt_section(
 
 class RobotControl:
     def __init__(
-        self, bridge: ReachyMiniBridge, *, emotions: Sequence[str] | None = None
+        self,
+        bridge: ReachyMiniBridge,
+        *,
+        emotions: Sequence[str] | None = None,
+        tracking: bool = False,
     ) -> None: ...
 
     def commands(self) -> tuple[Command | Callable[..., Any], ...]:
         """play_emotion (a Command whose description names the valid emotions, when known),
-        get_motors_state, set_motors_state."""
+        get_motors_state, set_motors_state, and — with `tracking` — start_tracking, stop_tracking."""
 
     async def play_emotion(self, name: str) -> str:
         """Play a physical emotion on the robot — a short recorded motion, e.g. "happy" or
@@ -182,13 +286,22 @@ class RobotControl:
         """Set the motors: "enabled" (ready to move), "disabled" (limp), or "gravity_compensation"
         (a gentle rest — the head holds position). They are enabled by default, so call this only
         to recover after a move reported them off, or to rest them."""
+
+    async def start_tracking(self, user: int | None = None) -> str:
+        """Follow a user with your head, to show whom you are paying attention to. Give their
+        number from the users in view to follow that user only; leave it out to follow whoever is
+        in front of you. Your head keeps following until you call stop_tracking."""
+
+    async def stop_tracking(self) -> str:
+        """Stop following users with your head; it goes back to its idle movement."""
 ```
 
 - **Registered as Commands** by `wire`, through `commands()`: a bound method's name/signature/docstring is what the model sees, except `play_emotion`, which — when the names are known — is wrapped as `Command(play_emotion, description=…)` listing the valid names right where the model picks the tool. With no names the docstring is used unchanged.
 - **Non-raising, like every Command.** `play_emotion` **moves the robot**, so the bridge raises `MotorsNotEnabledError` when the motors are not `"enabled"`: caught and returned as `"Can't do that: the motors are off. Call set_motors_state('enabled') first."` — the agent decides to enable and retry; the app never silently auto-enables (the bridge's fail-fast stance). An unknown emotion name or motor state (`ValueError`), or any other `BridgeError`/connection error, returns `"<verb> failed: <message>"` — for emotions followed by `Valid names: …` when known. Success returns a short confirmation or the state read back.
 - **The motors are assumed enabled; their state is checked only on failure.** Enabled is the normal state of a running robot, and a state check before every move costs a turn (and, under the no-collision rule below, a whole extra step) to learn what is almost always already true. So every description — the two motor docstrings, `play_emotion`'s, and the persona's "How you move" — tells the model to just move, and to reach for `set_motors_state("enabled")` **only** after a move has come back with the motor-precondition message, then retry. `get_motors_state` stays registered, as the read-back for that recovery (and for an unexpected move), not as a pre-flight check. This is prompt/description guidance, not a guard: the bridge's precondition is unchanged and still the thing that reports the truth.
 - **No `list_emotions` command.** The names are known at startup and given to the model up front (the prompt section through `prompt_addendum`, the tool description through `commands()`), both in the model's cached prefix; a round-trip command would spend a turn on information that never changes during a session.
-- **Head tracking, presence, breathing, wobbling are not agent-facing.** Observed behaviour showed the model treating idle aliveness as its responsibility when tracking was exposed; it is not — the bridge's motion loop keeps the robot alive between verbs, driven by the `motion` config, and the persona stays silent about all of it.
+- **Tracking is the agent's: whom it attends to.** `start_tracking(user)` is `bridge.start_head_tracking(track_id=user)` — that user alone, pinned (`user` left out: the bridge's automatic choice, the biggest face in view) — and `stop_tracking()` is `bridge.stop_head_tracking()`. Registered only with the users input up (a detector configured), since the numbers come from `users_in_view`. Non-raising: a user no longer present (the bridge's `ValueError`) answers `"Can't follow user <n>: they are not in view."`, any other failure `"<verb> failed: <message>"`, success `"OK — your head now follows user <n>."` / `"… whoever is in front of you."` / `"OK — your head no longer follows anyone."`. A pinned user who leaves leaves the head waiting on them (the bridge keeps the pin): the agent hears the departure and pins someone else, returns to automatic or stops. Tracking moves the head through the motion loop's gaze layer, not as a primary — an emotion plays over it and the gaze blends back — so it collides with neither `say` nor `play_emotion`.
+- **Presence, breathing, wobbling are not agent-facing.** Observed behaviour showed the model treating idle aliveness as its responsibility when tracking was exposed as a switch (plan 202609161700 removed it); it is not — the bridge's motion loop keeps the robot alive between verbs, driven by the `motion` config, and the persona stays silent about all of it. Tracking came back as *whom to attend to*, worded so in the descriptions and the persona, with the users to choose from in front of the model.
 - **Not independent of `say`.** `play_emotion` plays a sidecar sound and moves the head, so it collides with a `say` in flight; WICA runs a response's Commands concurrently, so the persona's action rules (below) sequence them across steps. No lock in v1 (open question 1).
 
 ## Entry point
@@ -205,17 +318,17 @@ def main() -> None:
     run_app(description="Talk to a WICA-driven Reachy Mini.", load=_load)
 ```
 
-`run_app` ([app.md](app.md)) requires `--config`: the committed `config.reachy.example.json` is a template (a daemon the bridge spawns itself, `pocket` voice, the shipped `yunet` face detector with detection and head tracking on, vision on) to copy and point at what you drive — `"real"` for the physical robot, `"sim"` for the MuJoCo simulator, `"fake"` (with no `daemon` block) for offline development.
+`run_app` ([app.md](app.md)) requires `--config`: the committed `config.reachy.example.json` is a template (a daemon the bridge spawns itself, `pocket` voice, the shipped `yunet` face detector with detection on and head tracking off — the agent's to start —, vision on) to copy and point at what you drive — `"real"` for the physical robot, `"sim"` for the MuJoCo simulator, `"fake"` (with no `daemon` block) for offline development.
 
 ## Persona
 
-[prompts/reachy.md](../prompts/reachy.md): the voice and mind of a Reachy Mini in a spoken, physical interaction. Beyond the shared voice/dictation rules (how a dictated passage ends comes from `start_dictation`'s reply, not from the file — [asr-bridge.md](asr-bridge.md); an empty passage means nothing came through), it tells the model how it moves — `play_emotion` with the names listed "further down" (the seeded section), the motors assumed on with `set_motors_state("enabled")` kept for recovering from a move that reported them off, resting in `gravity_compensation` — and never to narrate movements; it says nothing about tracking/presence/breathing. It carries the three **action rules** WICA's generic primer cannot know, because these Commands share one body and one speaker:
+[prompts/reachy.md](../prompts/reachy.md): the voice and mind of a Reachy Mini in a spoken, physical interaction. Beyond the shared voice/dictation rules (how a dictated passage ends comes from `start_dictation`'s reply, not from the file — [asr-bridge.md](asr-bridge.md); an empty passage means nothing came through), it tells the model how it moves — `play_emotion` with the names listed "further down" (the seeded section), the motors assumed on with `set_motors_state("enabled")` kept for recovering from a move that reported them off, resting in `gravity_compensation` — and never to narrate movements; it says nothing about presence/breathing/wobbling, and says that following people with its head is its own to start and stop, described further down (the "The users around you" section, when there is one). It carries the three **action rules** WICA's generic primer cannot know, because these Commands share one body and one speaker:
 
 1. **No colliding Commands in one turn.** `say` with `play_emotion` (the emotion's sidecar sound plays over the speech and its motion fights the talking head), two emotions, a move with a motor-state change, a `cancel_command` with the action replacing what it cancels: issue the first, then the next in a later step once the first is observed complete. Commands touching different things may go together. A prompt rule, not a guard.
 2. **Order matters.** Dependent actions (enable → move; stop one thing → start the next; speak → then the emotion that goes with it) are issued in that order across turns.
 3. **Spoken feedback for every request.** Acting is not answering: when asked to start, stop, change or cancel something, do it, then `say` what was done once it is observed done — a request never ends in a silent action. This rides WICA's completion re-trigger.
 
-Like the computer persona, it says nothing about hands: the "Hand signs" section (with the `stop` rule) is appended at startup when vision is on ([gesture-input.md](gesture-input.md)). These rules are persona text, verified by reading; the tests drive the scripted `fake` provider and never exercise the model's compliance.
+Like the computer persona, it says nothing about hands: the "Hand signs" section (with the `stop` rule) is appended at startup when vision is on ([gesture-input.md](gesture-input.md)). Nor does it describe the users it sees: `users_prompt_section()` is appended through `prompt_addendum` when the users input is up — what the four entries say; that a number is a label, never said aloud, and the same person may come back under another; that an arrival may be greeted and a departure seen off — or neither, without breaking off a conversation for every coming and going; that a user coming into the personal space, and stepping back out of it, is answered out loud, briefly and lightly (a first session showed the model meeting every change with `noop` while the section said *a light remark, or none*); and how to attend: follow a user who comes into view when the head follows nobody, the one it talks with when several are there, stop when everyone has left — tracking going together with `say` in one turn, since it collides with nothing. These rules are persona text, verified by reading; the tests drive the scripted `fake` provider and never exercise the model's compliance.
 
 ## Testing
 
@@ -226,7 +339,9 @@ Like the computer persona, it says nothing about hands: the "Hand signs" section
 - **`say`:** `"hello"` reaches `bridge.say` once and returns `"OK"`; `""` returns the empty-text error without calling it; an exception maps to `"TTS error: …"`.
 - **`RobotMicSource`:** `start()` returns a queue receiving the bridge's chunks in order; `stop()` cancels the pump; a raising or ending stream sets `capture_error`, a restart clears it; undrained, only the newest `maxsize` chunks are kept; a second `start()` without `stop()` leaves one stream open.
 - **`RobotCameraFeed`:** over a fake bridge carrying a fake `camera` (a settable frame published under an advancing `frame_id`, `start`/`stop` calls recorded): `latest()` is the bridge's frame object itself and `published_count` its count; `open()` / `close()` call neither `start()` nor `stop()` on the bridge's feed; `capture_error` is `None`; `camera(fps=…)` on an entered embodiment returns one over its bridge. Through `GestureInput` with the scripted detector/classifier, a sign on the fake feed's frame is delivered — the robot path end to end, no `StreamProvider` involved.
-- **`RobotControl`:** `play_emotion(<known>)` records the move; `<unknown>` returns a non-raising failure naming the valid names; with motors disabled the motor-precondition message (pinned on the `fake`, which honours it — the sim daemon ignores motor-state changes); `get_motors_state()` reflects `set_motors_state(...)`; `commands()` yields no `list_emotions`.
+- **`UsersInput`:** over a real `ReachyMiniBridge` on the `fake` backend, its detector a scripted `FaceDetector` registered through `face_detection.face_detector` (`custom`) — faces shown and hidden as `PixelFace` boxes on the fake's frames, so the bridge's own confirmation, tracks, departures, pin and personal space run unmodified: the four entries and which wake; a face shown → one `user_event` naming its number, side and distance, and `users_in_view` listing it; the face hidden → `left your view` once the bridge drops it; a user replacing another → a departure and an arrival; a face at start-up → the start-up event; two faces at once → one write carrying both lines; detection stopping → no event, `users_in_view` omitted; `tracked_user` through the pin, the automatic target and tracking off; `personal_space` omitted with tracking off, nobody once tracking starts, the followed user inside when their face fills the frame and nobody again when it shrinks — the World waking the agent on exactly those two changes; no write for a face that merely moves; `stop` ending the watchers. The wordings, `personal_space` and its trigger rule on their own, as pure functions.
+- **Enter with a detector:** detection turned on when the config left it off; `inputs()` the users input and `commands()` the five actions with tracking; `prompt_addendum` carrying the users section; with no detector, none of the three.
+- **`RobotControl`:** `play_emotion(<known>)` records the move; `<unknown>` returns a non-raising failure naming the valid names; with motors disabled the motor-precondition message (pinned on the `fake`, which honours it — the sim daemon ignores motor-state changes); `get_motors_state()` reflects `set_motors_state(...)`; `commands()` yields no `list_emotions`, and the tracking pair only with `tracking=True`; over the `fake` bridge with a scripted face, `start_tracking(<present>)` pins it (the head tracking report's `pinned_track_id`), `start_tracking()` returns to the automatic target, `start_tracking(<gone>)` answers the not-in-view reply without raising, `stop_tracking()` turns tracking off.
 
 A live test (the `sim` or a real robot actually moving and speaking) belongs in `tests-e2e/`.
 
@@ -236,4 +351,7 @@ A live test (the `sim` or a real robot actually moving and speaking) belongs in 
 2. **Compact-intent → emotion resolution.** The bridge keeps `play_emotion(name)` literal; friendlier intent mapping ("be happy" → a curated move) stays out.
 3. **Motors: agent-facing or lifecycle.** `set_motors_state`/`get_motors_state` stay exposed, with the agent told to assume them enabled and check only on failure; whether real hardware honours motor-state changes, and whether the *lifecycle* should enable them at `enter()` (making the assumption true by construction rather than by convention), is deferred to hardware validation.
 4. **Robot state in the UI.** Connection / motor state on a panel of the embodiment's own ([embodiment.md](embodiment.md), open question 1).
-5. **Faces as an agent input.** The bridge now reports who is in front of the robot — `bridge.faces`, an `Observable[FaceReport]` waking a subscriber when the number of faces changes, and `bridge.attention` (`"engaged"` / `"watching"` / `None`) — which is a ready-made World input: a `people_in_view` count entry fed from `faces.changes()` on the app loop, triggering when someone appears, and an attention line on the UI. Deferred to its own spec section once the camera-feed catch-up is in; the persona already says the robot follows faces, so nothing in the prompt is waiting on it.
+5. ~~**Faces as an agent input.**~~ Answered on 2026-11-13 by "Users: `UsersInput`", over the bridge's users present (`bridge.users`), which its count-based face report could not be: a person replacing another was invisible to it, and a move of the robot's own read as a departure. The study is in `analysis/` (local).
+6. **A busy room.** Every arrival and departure wakes the agent, a model call each; in a café or at a demo stand the robot would talk constantly. A distance gate on arrivals (the face's `distance_m`) or a per-person cooldown, if observed.
+7. **People on the page.** Who is present, followed and very close, as a line on the ASR + Vision panel, needs the per-embodiment UI member ([embodiment.md](embodiment.md), open question 1). Deferred: the World panel already shows both entries.
+8. **Recognition.** With a recognising detector, the bridge's `User.identity` and `UsersReport.recognised` would let the agent greet someone by name and keep them across a broken track; the wording then may say who, where today it only says *a person*.

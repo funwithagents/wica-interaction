@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
-from person import HAND_PHOTOS
+from person import HAND_PHOTOS, PERSON_FAR, PERSON_NEAR
 from support import (
     E2E,
     READY_TIMEOUT_S,
@@ -37,6 +38,12 @@ SPOKEN_WITHIN_S = 60.0
 SIGN_WITHIN_S = 15.0
 # How long an empty camera must deliver nothing.
 QUIET_S = 3.0
+# A person: the sim's render, the face detector, the bridge confirming them (0.3 s).
+PERSON_WITHIN_S = 15.0
+# A person gone: the bridge drops them once missing 2 s where the camera looks.
+GONE_WITHIN_S = 15.0
+# How long after an emotion a departure it caused would have shown.
+AFTER_A_MOVE_S = 5.0
 
 
 def wait_ready(e2e: E2E) -> None:
@@ -352,3 +359,175 @@ def never_heard_itself(e2e: E2E) -> None:
         e2e.run.report_issue(
             "major", "the app heard its own voice through the canceller", repr(heard)
         )
+
+
+# --- The users (the robot's; specs/e2e.md, scenarios 4 and 5) -------------------------------------
+
+
+def _changes(value: Any, kind: str) -> list[int]:
+    """The users a `user_event` value says did *kind* (`arrived`, `left`)."""
+    if not isinstance(value, tuple):
+        return []
+    return [c.user for c in value if getattr(c, "kind", None) == kind]
+
+
+def _present(value: Any) -> list[int]:
+    """The users a `users_in_view` value lists."""
+    return [u.user for u in value] if isinstance(value, tuple) else []
+
+
+def _inside(value: Any) -> int | None:
+    """The user a `personal_space` value has inside, if any."""
+    return getattr(value, "user", None)
+
+
+def _user_arrives(e2e: E2E) -> int:
+    """Put a person in front of the robot: the arrival is delivered, `users_in_view` lists them,
+    and the agent reacts to the arrival. Their user number."""
+    reacted = reactions_to(e2e.run, "user_event")
+    t = time.monotonic()
+    e2e.person.arrive(PERSON_FAR)
+    arrived = e2e.inputs.wait_for(
+        "user_event",
+        lambda value: bool(_changes(value, "arrived")),
+        within=PERSON_WITHIN_S,
+        after=t,
+    )
+    assert arrived is not None, e2e.inputs.delivered("user_event")
+    user = _changes(arrived.value, "arrived")[0]
+    listed = e2e.inputs.wait_for(
+        "users_in_view",
+        lambda value: user in _present(value),
+        within=PERSON_WITHIN_S,
+        after=t,
+    )
+    assert listed is not None, e2e.inputs.delivered("users_in_view")
+    assert wait_until(
+        lambda: reactions_to(e2e.run, "user_event") > reacted, REPLY_WITHIN_S
+    ), "the agent never reacted to the user arriving"
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+    return user
+
+
+def users(e2e: E2E) -> None:
+    """Scenario 4: nobody is announced while nobody is there; a user arriving is delivered, listed
+    and reacted to; the agent follows them (asked out loud when it did not on its own); coming into
+    the personal space and stepping back out are each delivered and reacted to; leaving is delivered
+    and reacted to."""
+    since = begin(e2e, "users")
+
+    t = time.monotonic()
+    time.sleep(QUIET_S)
+    announced = [d for d in e2e.inputs.delivered("user_event") if d.t >= t and d.value]
+    assert not announced, f"a user announced with nobody there: {announced}"
+
+    arrived_at = time.monotonic()
+    user = _user_arrives(e2e)
+
+    def following(value: Any) -> bool:
+        return getattr(value, "user", None) is not None
+
+    if not any(
+        following(d.value)
+        for d in e2e.inputs.delivered("tracked_user")
+        if d.t >= arrived_at
+    ):
+        e2e.run.report_issue(
+            "minor",
+            "the agent did not follow the user who came into view on its own",
+            repr([d.value for d in e2e.inputs.delivered("tracked_user")]),
+        )
+        e2e.person.say("Please look at me while we talk.")
+    tracked = e2e.inputs.wait_for(
+        "tracked_user", following, within=SPOKEN_WITHIN_S, after=arrived_at
+    )
+    assert tracked is not None, (
+        e2e.inputs.delivered("tracked_user"),
+        [e.name for e in e2e.run.timeline() if e.kind == "command_issued"],
+    )
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+
+    reacted = reactions_to(e2e.run, "personal_space")
+    t = time.monotonic()
+    e2e.person.step_to(PERSON_NEAR)
+    inside = e2e.inputs.wait_for(
+        "personal_space",
+        lambda value: _inside(value) is not None,
+        within=PERSON_WITHIN_S,
+        after=t,
+    )
+    assert inside is not None, (
+        e2e.inputs.delivered("personal_space"),
+        e2e.inputs.delivered("tracked_user")[-3:],
+    )
+    assert wait_until(
+        lambda: reactions_to(e2e.run, "personal_space") > reacted, REPLY_WITHIN_S
+    ), "the agent never reacted to the user coming into its personal space"
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+
+    reacted = reactions_to(e2e.run, "personal_space")
+    t = time.monotonic()
+    e2e.person.step_to(PERSON_FAR)
+    out = e2e.inputs.wait_for(
+        "personal_space",
+        lambda value: value is not None and _inside(value) is None,
+        within=PERSON_WITHIN_S,
+        after=t,
+    )
+    assert out is not None, e2e.inputs.delivered("personal_space")
+    assert wait_until(
+        lambda: reactions_to(e2e.run, "personal_space") > reacted, REPLY_WITHIN_S
+    ), "the agent never reacted to the user stepping back out of its personal space"
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+
+    reacted = reactions_to(e2e.run, "user_event")
+    t = time.monotonic()
+    e2e.person.leave()
+    left = e2e.inputs.wait_for(
+        "user_event",
+        lambda value: bool(_changes(value, "left")),
+        within=GONE_WITHIN_S,
+        after=t,
+    )
+    assert left is not None, e2e.inputs.delivered("user_event")
+    assert wait_until(
+        lambda: reactions_to(e2e.run, "user_event") > reacted, REPLY_WITHIN_S
+    ), "the agent never reacted to the user leaving"
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+    e2e.run.note(f"the person was user {user}")
+    assert_checks(e2e, since=since)
+
+
+def a_move_keeps_the_user(e2e: E2E) -> None:
+    """Scenario 5: with a user in front of it, the robot plays an emotion — its head turned away for
+    part of it — and the user is not reported gone."""
+    since = begin(e2e, "a move keeps the user")
+    _user_arrives(e2e)
+
+    asked = time.monotonic()
+    e2e.person.say("Can you show me that you are happy?")
+    done = e2e.run.expect_action(
+        "play_emotion", state="complete", within=SPOKEN_WITHIN_S
+    )
+    assert done.ok, done.detail
+    time.sleep(AFTER_A_MOVE_S)
+    gone = [
+        d
+        for d in e2e.inputs.delivered("user_event")
+        if d.t >= asked and _changes(d.value, "left")
+    ]
+    assert not gone, f"the user was reported gone during an emotion: {gone}"
+    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
+        "the agent never settled"
+    )
+    assert_checks(e2e, since=since)

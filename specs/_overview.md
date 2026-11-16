@@ -68,8 +68,8 @@ Each embodiment is stood up from a single JSON file: the shared sections `wica`,
 
 - **One app, several bodies.** The agent's persona, actions and senses follow the embodiment; the framework side is written once ([embodiment.md](embodiment.md)).
 - **Echo handling: yes; barge-in: no.** Each embodiment keeps the mic from hearing the agent's own voice; *talking over* the agent still isn't supported — WICA is one reasoning call at a time, and inputs arriving mid-step are dropped.
-- **It sees hand signs, nothing else.** A small per-hand vocabulary; the frame itself is not shown to the agent, and only `stop` comes with an instruction.
-- **No manual movement/gaze on the robot in v1.** The bridge drives head tracking, presence and breathing automatically; they are not agent-facing.
+- **It sees hand signs, and on the robot people.** A small per-hand vocabulary, and the people in front of the robot as numbered, located arrivals and departures; the frame itself is not shown to the agent, and only `stop` comes with an instruction.
+- **The robot sees people; its gaze is the agent's choice of whom, never a pose.** With a face detector, the robot tells the agent which users arrive and leave, who is present, who is in its personal space and whom its head follows, and the agent starts and stops following a user ([reachy-embodiment.md](reachy-embodiment.md), "Users: `UsersInput`"). No manual movement or gaze pose: the bridge drives presence and breathing, and aims the head itself.
 - **No streamed speech, no persistence** — `say` plays a complete utterance; the World starts empty each run.
 
 ## Where to start reading

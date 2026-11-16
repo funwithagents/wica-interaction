@@ -2,7 +2,8 @@
 
 The app is one program that can be embodied in different things — the computer it runs on, a Reachy
 Mini, later a Nao. Everything WICA-side is the same whatever the body; what varies is only **where
-audio comes in and goes out, what the agent can act with, and what it sees through**. This module
+audio comes in and goes out, what the agent can act with, what it sees through, and what the body
+itself perceives** (``inputs()``, the mirror of ``commands()``). This module
 names that variation, and nothing else: it imports no robot SDK and no audio engine.
 
 A ``typing.Protocol``, not a base class, so each real embodiment is checked structurally by pyright
@@ -14,10 +15,12 @@ imports neither. See specs/embodiment.md for who calls each member and when.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Protocol
 
 from asr_engine.audio import AudioSource
-from wica import Command
+from wica import Command, Content
 
 from wica_interaction.gesture_input import CameraFeed
 
@@ -25,6 +28,41 @@ from wica_interaction.gesture_input import CameraFeed
 # playback so the Command stays `running` for the duration of the speech. Registered directly, so
 # its name, signature and docstring are what the model reads as the voice's description.
 Voice = Callable[[str], Awaitable[str]]
+
+# How an input's producer writes one of its own World entries: `deliver(key, value)`. The lifecycle
+# builds it (system.py): it accepts the input's declared keys only and drops a write while the agent
+# is not running, as every input of the app does.
+Deliver = Callable[[str, Any], None]
+
+
+@dataclass(frozen=True)
+class InputEntry:
+    """One World entry an embodiment's input writes: what ``world.register`` takes, and how the
+    transcript names it. The wording is the perceiving body's, so it is declared here, with it.
+
+    ``display_fn`` turns a value into the transcript's label (``None``: the contrib's default)."""
+
+    key: str
+    type: type
+    serialize_fn: Callable[[Any, Any], Content]
+    triggers_llm_call: bool = False
+    trigger_condition_fn: Callable[[Any, Any], bool] | None = None
+    ttl: timedelta | None = None
+    display_fn: Callable[[Any], str] | None = None
+
+
+class Input(Protocol):
+    """A body's own perception — the mirror of a Command: the body *describes* what it delivers
+    (``entries``), the lifecycle registers the entries and runs the producer (specs/embodiment.md,
+    "``inputs()`` is the mirror of ``commands()``"). Both coroutines run on the app loop: ``start``
+    once the agent runs (so it may deliver at once), ``stop`` before the body exits."""
+
+    @property
+    def entries(self) -> Sequence[InputEntry]: ...
+
+    async def start(self, deliver: Deliver) -> None: ...
+
+    async def stop(self) -> None: ...
 
 
 class Embodiment(Protocol):
@@ -72,6 +110,12 @@ class Embodiment(Protocol):
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:
         """The action Commands to register with the agent (empty when there is nothing to act with)."""
+        ...
+
+    def inputs(self) -> Sequence[Input]:
+        """The body's own perceptions, each with the World entries it writes (empty when it
+        perceives nothing of its own) — registered and run by the lifecycle, never written by the
+        body itself."""
         ...
 
     @property

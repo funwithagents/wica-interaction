@@ -15,9 +15,10 @@ from typing import Any
 import numpy as np
 from asr_engine.audio import AudioSource
 from vision_modules import Frame
-from wica import Command
+from wica import Command, Content, TextPart
 from wica.config import WicaConfig
 
+from wica_interaction.embodiment import Deliver, Input, InputEntry
 from wica_interaction.gesture_input import CameraFeed
 
 
@@ -206,11 +207,72 @@ class ScriptedCameraSource:
         return 1.0 / self._interval
 
 
+def _rendered(value: Any, previous: Any) -> Content:
+    """A scripted entry's prompt line: what it holds, prefixed so a test finds it; nothing for None."""
+    return [] if value is None else [TextPart(f"Seen: {value}")]
+
+
+class ScriptedInput:
+    """An embodiment's `Input` a test drives by hand (specs/embodiment.md, "Testing").
+
+    It declares *entries* (by default `seen`, a triggering one-shot string labelled `👀 <value>` in
+    the transcript, and `around`, a standing one that never triggers), records `start` / `stop` in
+    `log` (shared with the other fakes, to pin the order) and keeps the `deliver` the lifecycle
+    handed it, so the test plays the producer: `deliver("seen", "a cat")`. `raise_on_start` makes
+    `start` raise.
+    """
+
+    def __init__(
+        self,
+        entries: Sequence[InputEntry] | None = None,
+        *,
+        log: list[str] | None = None,
+        raise_on_start: str | None = None,
+    ) -> None:
+        self._entries = (
+            tuple(entries)
+            if entries is not None
+            else (
+                InputEntry(
+                    "seen",
+                    str,
+                    serialize_fn=_rendered,
+                    triggers_llm_call=True,
+                    display_fn=lambda value: f"👀 {value}",
+                ),
+                InputEntry("around", str, serialize_fn=_rendered),
+            )
+        )
+        self.deliver: Deliver | None = None
+        self.started = 0
+        self.stopped = 0
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self._log = log
+        self._raise_on_start = raise_on_start
+
+    @property
+    def entries(self) -> Sequence[InputEntry]:
+        return self._entries
+
+    async def start(self, deliver: Deliver) -> None:
+        self.started += 1
+        if self._raise_on_start is not None:
+            raise RuntimeError(self._raise_on_start)
+        self.loop = asyncio.get_running_loop()
+        self.deliver = deliver
+
+    async def stop(self) -> None:
+        self.stopped += 1
+        if self._log is not None:
+            self._log.append("input.stop")
+
+
 class FakeEmbodiment:
     """The whole `Embodiment` protocol, recording what the lifecycle asked of it.
 
     Stands in for any body in `tests/test_system.py` (specs/embodiment.md, "Testing"): it imports no
     robot SDK and no audio engine, so the lifecycle is tested once, over a body that only records.
+    `inputs` are the body's own perceptions (a `ScriptedInput`, played by the test);
     `raise_on_enter` makes `enter()` raise (the "no embodiment" degrade); `missing` are the
     per-component degrade lines a real `enter()` would have gathered; `log` (shared with
     `FakeASREngine`) records teardown steps in order.
@@ -226,6 +288,7 @@ class FakeEmbodiment:
         mic_error: str | None = None,
         frames: np.ndarray | None = None,
         commands: Sequence[Command | Callable[..., Any]] | None = None,
+        inputs: Sequence[Input] = (),
         prompt_addendum: str = "",
         missing: Sequence[str] = (),
         raise_on_enter: str | None = None,
@@ -247,6 +310,8 @@ class FakeEmbodiment:
         self._commands: Sequence[Command | Callable[..., Any]] = (
             commands if commands is not None else (self.wave,)
         )
+        self._inputs = tuple(inputs)
+        self.inputs_asked = 0
         self._prompt_addendum = prompt_addendum
         self._missing = tuple(missing)
         self._raise_on_enter = raise_on_enter
@@ -293,6 +358,10 @@ class FakeEmbodiment:
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:
         return self._commands
+
+    def inputs(self) -> Sequence[Input]:
+        self.inputs_asked += 1
+        return self._inputs
 
     @property
     def prompt_addendum(self) -> str:
