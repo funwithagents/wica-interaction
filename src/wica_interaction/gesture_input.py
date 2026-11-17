@@ -3,7 +3,7 @@
 The vision half of the app's perception, over whatever camera the embodiment looks through (the
 robot's own, a webcam on the computer — specs/embodiment.md): ``GestureInput`` takes a
 ``CameraFeed`` — a latest-value frame slot with a lifecycle and a health line: the bridge's own
-``api.camera`` behind the robot embodiment's adapter, or a ``StreamFeed`` (below) over a webcam
+``bridge.camera`` behind the robot embodiment's adapter, or a ``StreamFeed`` (below) over a webcam
 ``FrameSource`` — it never builds one, and never reads a camera itself. It runs the library's
 hand stage + HaGRID gesture classifier over it (up to ``max_hands`` hands per frame) and reduces
 **each hand** to one value of the app's own sign vocabulary — ``SIGNS`` maps the classifier's labels
@@ -135,7 +135,7 @@ class CameraFeed(Protocol):
     joined. A feed the embodiment owns end to end (the robot's, alive for the whole session) makes
     both no-ops; a feed built for this module (a webcam's provider) starts and stops its capture
     thread there. The vocabulary is deliberately ``open``/``close``, not ``start``/``stop``: the
-    bridge's own ``api.camera`` must never be stopped by this module (it would blind the bridge's
+    bridge's own ``bridge.camera`` must never be stopped by this module (it would blind the bridge's
     face detection), and not matching its surface keeps an adapter in between.
     """
 
