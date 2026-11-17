@@ -126,7 +126,9 @@ Absent ⇒ all defaults ⇒ disabled. **Strict, like every other app-owned secti
 
 ## Teardown
 
-`ASREngine.stop()` stops the injected source (capture + pump), and `ComputerEmbodiment.exit()` calls `coordinator.close()`, which stops and closes the player's stream — so stopping the ASR bridge and exiting the body at app teardown ([app.md](app.md), "Wiring and lifecycle") is what releases the audio devices. ## Dependencies
+`ASREngine.stop()` stops the injected source (capture + pump), and `ComputerEmbodiment.exit()` calls `coordinator.close()`, which stops and closes the player's stream — so stopping the ASR bridge and exiting the body at app teardown ([app.md](app.md), "Wiring and lifecycle") is what releases the audio devices.
+
+## Dependencies
 
 `aec-audio-processing` (WebRTC APM, BSD; builds from sdist — needs a C++ toolchain, hence optional + lazy) and `samplerate` (MIT, prebuilt wheels, numpy-only) form the **`audio-processing` extra** ([project.md](project.md)), pulled into the `dev` group so the default `uv sync` / `uv run pytest` loop exercises them. `pyaec` is the documented fallback backend; the `FrameProcessor` interface makes that swap local.
 
