@@ -178,7 +178,8 @@ def _running(
     try:
         assert not system.missing, system.missing
         assert system.wica is not None
-        wire(system, TranscriptLog(system.wica, entry_display(system)))
+        TranscriptLog(system.wica, entry_display(system))
+        wire(system)
         run = TestRun(system.wica, scenario=scenario)
         world = system.wica.world
         inputs = InputLog(world, [k for k in INPUT_KEYS if world.is_registered(k)])

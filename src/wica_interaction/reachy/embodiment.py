@@ -266,11 +266,7 @@ class ReachyEmbodiment:
         return self.say
 
     async def say(self, text: str) -> str:
-        """Speak `text` aloud to the person, out of the robot's speaker.
-
-        This is your voice: whatever you want the person to hear, say it here.
-        Returns "OK" when the utterance finished playing.
-        """
+        """Your voice: spoken aloud to the person, out of the robot's speaker."""
         assert self._bridge is not None
         if not text.strip():
             # Guard before touching the robot: an empty utterance is nothing to say. Mirrors the

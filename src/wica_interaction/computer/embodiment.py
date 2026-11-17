@@ -263,16 +263,12 @@ class ComputerEmbodiment:
     @property
     def voice(self) -> Voice | None:
         """The ``say`` below, always — the same contract as the robot's: with no engine it stays
-        wired and reports the TTS error itself, so the persona's "speak through `say`" still names a
-        real Command and the model can see why nothing was heard."""
+        wired and reports the TTS error itself, so the persona's `<say>` tag still reaches a real
+        output Command and the model can see why nothing was heard."""
         return self.say
 
     async def say(self, text: str) -> str:
-        """Speak `text` aloud to the user through the machine's speakers.
-
-        This is your voice: whatever you want the user to hear, say it here.
-        Returns "OK" when the utterance finished playing.
-        """
+        """Your voice: spoken aloud to the user through the machine's speakers."""
         if self._tools is None:
             return f"TTS error: {self._voice_error or 'no voice was built'}"
         return await self._tools.say(text)

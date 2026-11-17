@@ -29,17 +29,18 @@ History keeps what was observed, as each step's own snapshot, so the model still
 
 ## The Commands
 
-Every Command is non-raising: it returns a readable string, success or failure, so the model always learns what happened. The output Command, `say`, is the body's voice: with it set, the model's free text becomes private reasoning and everything the person hears goes through `say`.
+Every Command is non-raising: it returns a readable string, success or failure, so the model always learns what happened.
+
+The body's voice, `say`, is WICA's **output Command**, and the model does not call it: it writes what it wants heard inside a `<say>…</say>` tag in its response, and WICA hands the tag's text to the voice once the tag closes. Text outside the tag is private reasoning, never heard. A response with no tag at all is spoken whole. Each tag is tracked like a Command (`running` while it plays), and a response that speaks cuts off speech still playing from an earlier one. The end of the speech does not wake the agent unless the model left a `<next>` note in the same response. To do nothing, the model writes `<noop/>`.
 
 **Both bodies:**
 
 | Command | What the model reads | Replies |
 |---|---|---|
-| `say(text)` | computer: *"Speak `text` aloud to the user through the machine's speakers. This is your voice: whatever you want the user to hear, say it here. Returns "OK" when the utterance finished playing."* Robot: *"Speak `text` aloud to the person, out of the robot's speaker. …"* | `"OK"` once the utterance has finished playing, so the Command stays `running` for the real duration of the speech; `"TTS error: text must not be empty"` for an empty string; `"TTS error: <why>"` when the voice failed to build or to synthesize |
+| `<say>…</say>` (the output Command) | computer: *"Your voice: spoken aloud to the user through the machine's speakers."* Robot: *"Your voice: spoken aloud to the person, out of the robot's speaker."*, in WICA's primer, which teaches the tag | `"OK"` once the utterance has finished playing, so the output stays `running` for the real duration of the speech; `"TTS error: text must not be empty"` for an empty tag; `"TTS error: <why>"` when the voice failed to build or to synthesize |
 | `start_dictation(segmentation_mode=None)` | *"Switch speech capture to dictation mode for one longer passage. … The reply tells you what ends the passage (a pause, or a word the user says). Dictation ends automatically after that one passage."* | `"Dictation started (<mode> mode): <how it ends>"`, naming the config's trigger words in `trigger_word` mode; `"Could not start dictation: <why>"` when the engine refuses (not running, already dictating, unknown mode). Only registered when the speech recognizer built ([../guides/dictation.md](../guides/dictation.md)) |
 | `stop_dictation()` | revert to conversation without waiting for the passage to close | a readable string either way; the page's **Stop dictation** button calls the same thing |
-| `noop()` | WICA's own: do not react this step | |
-| `cancel_command(call_id)` | WICA's own: cancel a running Command by the id of its World entry | a cancelled `say` stops the speech; a cancelled move stops being commanded |
+| `cancel_command(call_id)` | WICA's own: cancel a running Command or speech by the id of its World entry | a cancelled `say` stops the speech; a cancelled move stops being commanded. Its own completion wakes the agent, which is where the confirmation after a stop is spoken |
 
 **The robot adds** ([specs/reachy-embodiment.md](../../specs/reachy-embodiment.md), "`RobotControl`"):
 
@@ -51,7 +52,7 @@ Every Command is non-raising: it returns a readable string, success or failure, 
 | `start_tracking(user=None)` | with a face detector: follow a user with the head, to show whom the robot pays attention to; a number from `users_in_view` follows that user only, none follows whoever is in front | `"OK — your head now follows user <n>."` or `"… whoever is in front of you."`; `"Can't follow user <n>: they are not in view."` when they left meanwhile |
 | `stop_tracking()` | with a face detector: stop following; the head goes back to its idle movement | `"OK — your head no longer follows anyone."` |
 
-The computer registers no action Command: it has nothing to act with beyond speaking. There is no `list_emotions`: the names are given to the model up front, in the persona and in the tool description. Presence, breathing and wobbling are the bridge's, not the agent's; no Command touches them. Following a person is the agent's choice of *whom*; where the head aims while it follows is the bridge's. The tracking pair collides with nothing: it may go in one turn with `say` or an emotion.
+The computer registers no action Command: it has nothing to act with beyond speaking. There is no `list_emotions`: the names are given to the model up front, in the persona and in the tool description. Presence, breathing and wobbling are the bridge's, not the agent's; no Command touches them. Following a person is the agent's choice of *whom*; where the head aims while it follows is the bridge's. The tracking pair collides with nothing: it may go in one turn with speech or an emotion.
 
 ## The persona: what is appended at startup
 
@@ -60,7 +61,7 @@ The system prompt the model reads is composed once, before the agent starts, in 
 1. **The persona file** named by `wica.agent.system_prompt_file` ([configuration.md](configuration.md#wica-the-agent)), verbatim: `prompts/computer.md` or `prompts/reachy.md`.
 2. **The body's addendum.** The robot appends a "Your emotions" section naming every emotion its library holds, read once from the bridge when the session opened, then, with a face detector, a "The users around you" section: what the four users entries say, that a number is never said aloud, that arrivals, departures and someone in the personal space may be met or let pass, and how to follow someone with `start_tracking`. The computer appends nothing. When the library could not be read, the emotions section is absent and the banner says `Robot: emotions unavailable`.
 3. **The "Hand signs" section**, only when `vision.enabled` is `true` and the body is up. It says a camera detects hand gestures, names the nine signs, explains that a sign state says a gesture was *just detected*, not by whom, and disappears a moment later, that hand numbers are not left and right, and gives the one instruction the vocabulary carries: on `stop`, cancel every running Command and start nothing new, then confirm out loud in the next turn. What `like`, `ok` or a count means is left to the agent on purpose.
-4. **WICA's runtime primer**, appended by the framework: how to read the observations, that Commands run asynchronously and all the calls of one response run at once, that the person is addressed through the output Command, and that `noop` is allowed.
+4. **WICA's runtime primer**, appended by the framework: how to read the observations, that Commands run asynchronously and all the calls of one response run at once, that the person is addressed by writing a `<say>` tag (with the voice's description) and that text outside it is private, that `<noop/>` declines to react, and that a `<next>` note asks for another turn once the speech has been heard.
 
 Two and three are seeded from the config and the code rather than written in the file, so a persona never describes hands it cannot see, users it cannot see or emotions it cannot play, and the same file serves with and without a camera. The dictation reply plays the same role for how a passage ends: the mode is the config's, so `start_dictation`'s reply tells the model, not the file ([../guides/personas.md](../guides/personas.md#what-not-to-write)).
 
@@ -76,9 +77,9 @@ The **Conversation** panel is WICA's transcript component, with one app-owned ho
 | a `personal_space` change | an input item `📏 <who is in the personal space>` |
 | a reaction whose prompt carried `users_in_view` or `tracked_user` | labelled `👥 <who is in view>` or `🎯 <whom the head follows>` in the Reaction panel |
 | a reasoning step | a collapsible **💬 reaction** holding the step's outputs, labelled by channel |
-| a `say` call | **🗣️ say**, with the spoken text as the body: what the person heard |
-| the model's free text | **💭 output sink**: private reasoning, never heard |
+| a `<say>` tag | **🗣️ say**, with the spoken text as the body: what the person heard |
+| the model's text outside the tag | **💭 private text**: private reasoning, never heard |
 | any other Command | **🦾** with its name and arguments |
-| `noop` | **🚫 noop** |
+| a `<noop/>` response | **🚫 noop** |
 
 Every Command item shows its **execution state live**: a spinner while it runs, then ✅ complete, ❌ failed or ⏹ cancelled, with its result and duration. A `say` is therefore visibly in flight for the real duration of the speech, which is how the one-step-at-a-time rule reads on the page: a new utterance that arrives while a reaction is still spinning is the one that gets dropped ([../guides/limits.md](../guides/limits.md#one-reasoning-step-at-a-time)). The **World state** and **Reaction** panels, behind the **Show debug panels** toggle, show the raw entries and the exact prompt of every step.

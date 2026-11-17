@@ -20,12 +20,11 @@ application callables; the sink and the output Command are set afterwards):
   builds the ASR bridge over ``embodiment.mic`` and the gesture input over ``embodiment.camera``.
   Its ``asr_engine_factory=`` / ``gesture_models=`` kwargs are test seams for injecting fakes.
 - ``build_ui(system)`` — the Gradio page (in [app_ui.py](app_ui.py)); it owns the contrib presenters
-  (``TranscriptLog`` / ``ReactionLog``, subscribed to the agent's Events in their constructors) and hands
-  the transcript back on an ``AppUi`` handle.
-- ``wire(system, transcript)`` — Gradio-free: sets the transcript's ``output_sink`` and the
-  embodiment's ``voice`` as the output Command on the agent, registers the dictation Commands and
-  each of ``embodiment.commands()``. Tests call it with a ``TranscriptLog`` they build themselves,
-  playing the UI's role.
+  (``TranscriptLog`` / ``ReactionLog``, subscribed to the agent's Events in their constructors, so
+  built before ``start()``) and returns the page.
+- ``wire(system)`` — Gradio-free: sets the embodiment's ``voice`` as the output Command on the
+  agent (the model speaks it as a ``<say>`` tag in its text), registers the dictation Commands and
+  each of ``embodiment.commands()``.
 - ``run_app(description, load)`` — each embodiment's ``main()`` is this call: parse ``--config``,
   ``load`` it into ``(AppConfig, Embodiment)``, build, then ``_serve`` — UI, wire, start and launch,
   all inside the one ``try`` whose ``finally`` runs ``_shutdown`` (isolated, time-bounded steps; the
@@ -65,7 +64,6 @@ from wica.config import (
     WicaConfig,
     resolve_system_prompt,
 )
-from wica.contrib.gradio import TranscriptLog
 
 from wica_interaction.app_ui import build_ui
 from wica_interaction.asr_bridge import AsrBridge, DictatedPassage
@@ -113,8 +111,8 @@ def asr_config_for(
 # The inputs are transient (specs/app.md, "Inputs are transient"): each perception is a one-shot
 # event the step it triggers observes, then the World clears it (a TTL reset — no trigger, a new
 # id) and it is gone from every later prompt. The values are set so the coalescing window (~200 ms)
-# always observes the input, and little else does: a step woken by something else — a `say`
-# finishing, a command completing, a sign — never re-reads an utterance from earlier as if it were
+# always observes the input, and little else does: a step woken by something else — a command
+# completing, a sign, the model's own `<next>` note after it spoke — never re-reads an utterance from earlier as if it were
 # current, and a held sign is what the person *did*, not ambient state.
 SPEECH_INPUT_TTL = timedelta(seconds=2)
 HAND_GESTURE_TTL = timedelta(seconds=1)
@@ -261,8 +259,8 @@ def build_system(
     else:
         missing.extend(body.missing)
 
-    # --- The agent, on the app-owned loop. No callables here: the sink and the output Command are
-    # set in `wire`, once the UI's transcript exists (build, then wire, then start). The persona is
+    # --- The agent, on the app-owned loop. No callables here: the output Command is set in `wire`,
+    # after the UI's presenters have subscribed (build, then UI, then wire, then start). The persona is
     # resolved *here* (not inside Wica.init) so the startup sections can be appended to it: the
     # embodiment's own addendum (the robot's emotion names) and, when vision is on, the hand-signs
     # vocabulary — so a persona never describes hands it cannot see or emotions it cannot play. ---
@@ -465,20 +463,18 @@ def _seeded_wica_config(config: WicaConfig, addenda: Sequence[str]) -> WicaConfi
     )
 
 
-def wire(system: AppSystem, transcript: TranscriptLog) -> None:
-    """Wire the output channel and the Commands onto the agent — after the UI's presenters exist and
-    before ``start()``. Gradio-free: it takes the transcript presenter, not the page, so the tests
-    call it with a ``TranscriptLog`` they build themselves.
+def wire(system: AppSystem) -> None:
+    """Wire the output channel and the Commands onto the agent — before ``start()``. Gradio-free.
 
-    The transcript's ``output_sink`` receives the model's free text (private reasoning, shown as the
-    💭 item); the embodiment's ``voice`` becomes the output Command (setting it recomposes the system
-    prompt to name it, which is why it precedes ``start()``); the dictation Commands and each of the
+    The embodiment's ``voice`` becomes the output Command: the model speaks by writing a ``<say>``
+    tag in its text, and setting it recomposes the system prompt to teach that tag, which is why it
+    precedes ``start()``. The model's text outside the tag is private: the transcript shows it (💭)
+    from the agent's Events, with nothing wired here. The dictation Commands and each of the
     embodiment's action Commands are registered. Each is wired only when its component was built. A
     no-op without an agent — there is nothing to wire into, and the banner already says why."""
     wica = system.wica
     if wica is None:
         return
-    wica.set_output_sink(transcript.output_sink)
     embodiment = system.embodiment
     if embodiment is not None and embodiment.voice is not None:
         wica.set_output_command(embodiment.voice)
@@ -598,13 +594,13 @@ def _serve(system: AppSystem) -> None:
     All four sit *inside* the ``try``: ``build_system`` has already entered the embodiment (a robot
     session, a daemon the bridge spawned), so a raise anywhere from here on — the page failing to
     build, ``wire`` rejecting a Command name, ``wica.start()`` / ``asr_bridge.start()`` — must still
-    exit it and stop the loop. The UI owns the presenters, so it comes before the wiring that needs
-    the transcript's sink; everything is wired before start."""
+    exit it and stop the loop. The UI owns the presenters, which subscribe to the agent's Events
+    as they are built, so it comes before start; everything is wired before start."""
     try:
-        ui = build_ui(system)
-        wire(system, ui.transcript)
+        page = build_ui(system)
+        wire(system)
         _start(system)
-        ui.blocks.launch()
+        page.launch()
     finally:
         _shutdown(system)
 

@@ -24,9 +24,11 @@ from wica import Command, Content
 
 from wica_interaction.gesture_input import CameraFeed
 
-# The `say` output Command: non-raising, "OK" on success, "TTS error: …" otherwise, awaiting real
-# playback so the Command stays `running` for the duration of the speech. Registered directly, so
-# its name, signature and docstring are what the model reads as the voice's description.
+# The `say` output Command: the model speaks by writing `<say>…</say>` in its text, and WICA calls
+# this with the tag's whole body once the tag closes (a `str` first parameter). Non-raising, "OK" on
+# success, "TTS error: …" otherwise, awaiting real playback so the output stays `running` for the
+# duration of the speech. Its name is the tag's and its docstring is what the primer teaches about
+# the voice.
 Voice = Callable[[str], Awaitable[str]]
 
 # How an input's producer writes one of its own World entries: `deliver(key, value)`. The lifecycle
@@ -88,7 +90,8 @@ class Embodiment(Protocol):
 
     @property
     def voice(self) -> Voice | None:
-        """The output Command; ``None`` ⇒ none is set (the model's free text is then its voice)."""
+        """The output Command; ``None`` ⇒ none is set (no tag is taught: the model's text is all
+        private, and the agent can reason and act but not speak)."""
         ...
 
     @property

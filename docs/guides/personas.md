@@ -15,7 +15,7 @@ The path resolves relative to the config file ([../reference/configuration.md](.
 
 Both files share four sections:
 
-- **How you speak.** Everything the person hears goes through `say`; free text is private thinking, never heard. Replies are short and natural to hear aloud: a sentence or two, no bullet points, headings, code blocks or emoji, numbers spelled out the way one says them. The agent may choose not to react.
+- **How you speak.** Everything the person hears goes through `say`, written as a `<say>…</say>` tag in the response; text outside the tag is private thinking, never heard. The persona names the tag; WICA's primer teaches how it works. Replies are short and natural to hear aloud: a sentence or two, no bullet points, headings, code blocks or emoji, numbers spelled out the way one says them. The agent may choose not to react.
 - **Turns.** One turn at a time: each thing the person says arrives as one complete utterance; reply, then wait. No greeting or sign-off every turn.
 - **Dictation.** When the person wants to dictate something longer, call `start_dictation`; its reply says what ends the passage, which is for the model to know, not to announce. An empty passage means nothing came through: say so briefly and offer to try again.
 - The computer's file opens as *a friendly, helpful voice assistant*; the robot's as *the voice and mind of a Reachy Mini*, in a spoken, physical interaction.
@@ -32,13 +32,13 @@ The file is not the whole prompt. The robot's emotion names, the "Hand signs" se
 
 ## The action rules
 
-WICA's primer tells the model that every Command it issues in one response starts at once and runs concurrently. The robot has one body and one speaker, so the robot persona adds three rules the framework cannot know ([../../specs/reachy-embodiment.md](../../specs/reachy-embodiment.md), "Persona"):
+WICA's primer tells the model that every Command it issues in one response starts at once and runs concurrently, and its speech starts with them. The robot has one body and one speaker, so the robot persona adds three rules the framework cannot know ([../../specs/reachy-embodiment.md](../../specs/reachy-embodiment.md), "Persona"):
 
-1. **No colliding Commands in one turn.** `say` with `play_emotion` (the emotion plays its own sound over the voice and moves the head while it talks), two emotions, a move with a change of the motors' state, a `cancel_command` with the action that replaces what it cancels. When both are wanted: issue the first, then the next in a later turn, once the first is seen complete. Commands that touch different things may go together.
-2. **Order matters.** Dependent actions go in order across turns: re-enable the motors before retrying the move that reported them off, stop one thing before starting the next, say something before playing the emotion that goes with it.
-3. **Spoken feedback for every request.** When the person asks to start, stop, change or cancel something, do it, then say what was done once it is seen done. A request never ends in a silent action. This rides on WICA waking the agent when a Command completes.
+1. **No colliding actions in one turn.** Speaking with `play_emotion` (the emotion plays its own sound over the voice and moves the head while it talks), two emotions, a move with a change of the motors' state, a `cancel_command` with the action that replaces what it cancels. When both are wanted: issue the first, then the next in a later turn, once the first is seen complete. Commands that touch different things may go together.
+2. **Order matters.** Dependent actions go in order across turns: re-enable the motors before retrying the move that reported them off, stop one thing before starting the next. The end of speech does not wake the agent by itself, so to say something and then play the emotion that goes with it, the model writes the `<say>` tag and a `<next>` note naming the emotion in the same response, and gets its turn once the words have been heard.
+3. **Spoken feedback for every request.** When the person asks to start, stop, change or cancel something, do it, then say what was done once it is seen done. A request never ends in a silent action. This rides on WICA waking the agent when a Command completes, `cancel_command` included.
 
-They are **prompt rules, not guards**: nothing in the code serializes `say` and `play_emotion`, and the tests drive a scripted model that never exercises the model's compliance. A model that keeps colliding is a benchmark finding ([benchmarking.md](benchmarking.md)), and a shared lock is the deferred fix. The hand-sign section's `stop` rule follows the same shape: cancel in one turn, confirm in the next.
+They are **prompt rules, not guards**: nothing in the code serializes speech and `play_emotion`, and the tests drive a scripted model that never exercises the model's compliance. A model that keeps colliding is a benchmark finding ([benchmarking.md](benchmarking.md)), and a shared lock is the deferred fix. The hand-sign section's `stop` rule follows the same shape: cancel in one turn, confirm in the next.
 
 ## What not to write
 

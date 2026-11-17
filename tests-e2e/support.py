@@ -243,7 +243,7 @@ def _idle(run: TestRun) -> bool:
     ended = sum(1 for e in timeline if e.kind == "reaction_ended")
     states: dict[str, str] = {}
     for e in timeline:
-        if e.call_id is None or e.name in (None, "noop"):
+        if e.call_id is None or e.name is None:
             continue
         if e.kind == "command_issued":
             states.setdefault(e.call_id, "running")
@@ -266,7 +266,7 @@ def command_spans(run: TestRun) -> list[tuple[str, float, float]]:
     started: dict[str, tuple[str, float]] = {}
     ended: dict[str, float] = {}
     for e in run.timeline():
-        if e.call_id is None or e.name in (None, "noop"):
+        if e.call_id is None or e.name is None:
             continue
         if e.kind == "command_issued":
             started[e.call_id] = (e.name, e.t)

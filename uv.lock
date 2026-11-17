@@ -4845,7 +4845,7 @@ wheels = [
 [[package]]
 name = "wica"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/wica-framework?rev=main#81dac6e154e46b5336f256dec6de04c8ba8a0e3a" }
+source = { git = "https://github.com/funwithagents/wica-framework?rev=main#98058171a73d291ca875e3d926b9fdb03029ca7a" }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
