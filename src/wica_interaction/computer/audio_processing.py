@@ -261,6 +261,12 @@ def _default_capture(
     return AudioCapture(device, loop, audio_format=fmt)
 
 
+# Upper bound on processed mic chunks waiting for the engine. It drains in real time; if it stalls,
+# the oldest audio is dropped (stale speech is useless) instead of PCM piling up without limit. A
+# chunk is one capture block, 100 ms, so 20 chunks is 2 s of backlog — the robot mic's bound too.
+_OUT_QUEUE_MAXSIZE = 20
+
+
 class _ProcessingSink:
     """The ``AudioSink`` handed to ``TTSEngine`` — plays each chunk; the player taps it as the
     reference when it goes out."""
@@ -317,8 +323,11 @@ class AudioProcessingCoordinator:
         resampler_factory: ResamplerFactory = _default_resampler,
         player_factory: PlayerFactory = _default_player,
         capture_factory: CaptureFactory = _default_capture,
+        out_maxsize: int = _OUT_QUEUE_MAXSIZE,
     ) -> None:
         self._processor = processor
+        self._out_maxsize = out_maxsize
+        self._capture_error: str | None = None
         self._asr_device = asr_device
         self._tts_device = tts_device
         self._near_format = near_format
@@ -407,18 +416,37 @@ class AudioProcessingCoordinator:
         loop = asyncio.get_running_loop()
         self._capture = self._capture_factory(self._asr_device, loop, self._near_format)
         raw_queue = self._capture.start()
-        self._out_queue = asyncio.Queue()
+        self._out_queue = asyncio.Queue(maxsize=self._out_maxsize)
         self._near_buf = np.zeros(0, dtype=np.int16)
-        self._pump_task = asyncio.create_task(self._pump(raw_queue))
+        self._capture_error = None
+        self._pump_task = asyncio.create_task(self._pump(raw_queue, self._out_queue))
         return self._out_queue
 
-    async def _pump(self, raw_queue: asyncio.Queue[bytes]) -> None:
-        assert self._out_queue is not None
-        while True:
-            chunk = await raw_queue.get()
-            processed = self._process_chunk(chunk)
-            if processed:
-                self._out_queue.put_nowait(processed)
+    @property
+    def capture_error(self) -> str | None:
+        """Why the processed mic went silent on its own (the pump failed); ``None`` while healthy.
+        The embodiment's ``mic_error``: the engine goes on reporting ``running`` over a queue
+        nothing fills any more."""
+        return self._capture_error
+
+    async def _pump(
+        self, raw_queue: asyncio.Queue[bytes], out_queue: asyncio.Queue[bytes]
+    ) -> None:
+        """Process the raw mic into *out_queue* until cancelled, dropping the oldest chunk when the
+        queue is full. A failure — a chunk that cannot be framed, the processor raising — is logged
+        and kept as ``capture_error`` (cancellation by ``stop()`` is not one: it propagates)."""
+        try:
+            while True:
+                chunk = await raw_queue.get()
+                processed = self._process_chunk(chunk)
+                if not processed:
+                    continue
+                if out_queue.full():
+                    out_queue.get_nowait()  # the engine fell behind: drop the stalest chunk
+                out_queue.put_nowait(processed)
+        except Exception as exc:  # any pump failure is surfaced, not lost
+            logger.exception("mic processing failed; ASR is receiving no audio")
+            self._capture_error = f"mic processing failed: {exc}"
 
     def _process_chunk(self, chunk: bytes) -> bytes:
         """Run one mic chunk through the processor, framing it into 160-sample frames.

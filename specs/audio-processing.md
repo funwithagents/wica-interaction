@@ -72,6 +72,8 @@ class AudioProcessingCoordinator:
     def source(self) -> AudioSource: ... # → the embodiment's mic, any feature
     def bind_far_rate(self, far_rate: int) -> None: ...  # echo cancellation only; opens the player's stream
     def close(self) -> None: ...  # closes it (the embodiment's exit)
+    @property
+    def capture_error(self) -> str | None: ...  # why the pump died; None while healthy
 ```
 
 **Far-end path (`sink`)** — the voice plays through the coordinator's own **`ContinuousPlayer`**, and the reference is taken from it as it plays:
@@ -82,6 +84,8 @@ class AudioProcessingCoordinator:
 - The far buffer is left to empty as the pump consumes it: at drain time it still holds the reference for audio the mic has not finished hearing, so clearing it would leak the echo tail.
 
 **Near-end path (`source`)** — the `AudioSource` handed to ASR, pumped on the app loop: `start()` starts the real `AudioCapture`, spawns a pump task and returns the owned output queue; the pump buffers raw mic samples and, per complete 160-sample frame, pops 160 far samples (silence when the buffer is empty — no playback), runs `processor.process(near, far)`, and re-batches to the input chunk size (preserving ASR's cadence); `stop()` stops the capture and cancels the pump. NS-only setups always see silence references, so `process` denoises the mic alone.
+
+**The pump's health is visible, and its queue bounded** — the robot mic's two rules ([reachy-embodiment.md](reachy-embodiment.md), "`RobotMicSource`"). A pump that fails — the processor raising, a chunk that is not int16 audio — would leave the engine reporting `running` over a queue nothing fills: the failure is logged and kept as the coordinator's `capture_error` (`mic processing failed: <cause>`), which the embodiment returns as `mic_error`, so the ASR line shows it; `start()` clears it. The output queue holds at most 20 chunks (2 s at the capture's 100 ms): when the engine falls behind, the oldest is dropped rather than PCM piling up.
 
 **The construction two-step** (AEC only): `TTSEngine(sink=…)` needs the sink before the engine exists, but the sink's player/resampler need the module's `sample_rate`, known only after. So the embodiment builds the coordinator, injects `coordinator.sink`, then calls `coordinator.bind_far_rate(engine.sample_rate)`. `feed` only runs during `say`, well after binding. NS-only setups never wire the sink and never bind.
 
@@ -138,7 +142,7 @@ Absent ⇒ all defaults ⇒ disabled. **Strict, like every other app-owned secti
 
 - **Config:** an `audio_processing` block parses into `AudioProcessingConfig` (both features, partial sections, ns-level range, type errors); absent ⇒ disabled default; a misspelt feature, an unknown key inside a feature, and a non-object feature each raise, while a `null` feature keeps its defaults.
 - **Processor (skips if the dependency is absent):** with echo cancellation, a delayed/attenuated copy of the far-end is cancelled from the near-end (steady-state ERLE materially positive) and near-end speech with a silent reference passes through; with noise suppression only, stationary noise is attenuated.
-- **Coordinator (fakes, no devices):** `sink.feed` forwards to the player, and the reference is what the player reports played, not what was fed; `close()` closes the player; the source re-chunks a 1600-sample mic chunk into ten 160-sample `process` calls paired with the buffered far frames (silence when empty); output preserves the input chunk length.
+- **Coordinator (fakes, no devices):** `sink.feed` forwards to the player, and the reference is what the player reports played, not what was fed; `close()` closes the player; the source re-chunks a 1600-sample mic chunk into ten 160-sample `process` calls paired with the buffered far frames (silence when empty); output preserves the input chunk length; a processor that raises, or a malformed chunk, ends the pump with a `capture_error` that the next `start()` clears; an undrained output queue stays at its bound, keeping the newest chunks.
 - **`ContinuousPlayer` (a fake stream):** it plays what was fed and silence between, reporting only blocks that carry audio; `feed` blocks beyond its 100 ms lead; `drain` waits for the queue and keeps the stream open; `close` stops it; a stream that stopped on its own does not hang `drain`.
 - **Wiring** — in `tests/computer/test_embodiment.py` ([computer-embodiment.md](computer-embodiment.md)): echo cancellation on wires sink + source and binds the far rate; NS-only wires the source but not the sink and never binds; a forced `ImportError` degrades to direct wiring with a `missing` line.
 

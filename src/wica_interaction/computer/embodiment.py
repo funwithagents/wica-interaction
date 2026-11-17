@@ -220,7 +220,10 @@ class ComputerEmbodiment:
         if ap.any_enabled:
             try:
                 self._coordinator = self._factory(self._config)
-            except (ImportError, RuntimeError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001 - processing degrades alone, whatever broke it
+                # The extra absent (ImportError), an ASR source the processor cannot capture
+                # (RuntimeError), or anything else a native audio dependency raises: the body is
+                # up, its mic going straight to ASR.
                 self.missing.append(f"Audio processing: {exc}")
         # The TTS far-end tap (and its rate binding) is needed only for echo cancellation; noise
         # suppression processes the mic alone. So the sink is wired only when AEC is on.
@@ -282,9 +285,12 @@ class ComputerEmbodiment:
 
     @property
     def mic_error(self) -> str | None:
-        """Always ``None``: a local capture that dies raises inside the engine, which reports it its
-        own way."""
-        return None
+        """Why the processed mic went silent (the coordinator's pump failed), ``None`` while
+        healthy. Without a coordinator, always ``None``: the engine's own capture, when it dies,
+        raises inside the engine, which reports it its own way."""
+        return (
+            self._coordinator.capture_error if self._coordinator is not None else None
+        )
 
     def camera(self, *, fps: float) -> CameraFeed:
         """The webcam, paced at ``fps``, behind the gesture module's ``StreamProvider`` adapter: the

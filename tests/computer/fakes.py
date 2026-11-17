@@ -39,6 +39,7 @@ class FakeCoordinator:
         self.source = object()
         self.bound: list[int] = []
         self.closed = 0
+        self.capture_error: str | None = None
 
     def bind_far_rate(self, rate: int) -> None:
         self.bound.append(rate)

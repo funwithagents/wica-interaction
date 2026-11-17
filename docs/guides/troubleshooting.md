@@ -21,7 +21,7 @@ The page opens even when something could not be built, with one line per failure
 
 ## Nothing happens after I speak
 
-- **Does the ASR line say `running`?** `stopped`, or `ASR unavailable`, means the recognizer was not built: see the banner. A `⚠️ capture:` tail means the engine runs but its microphone stream died (`mic stream failed: …` on the robot): restart the app.
+- **Does the ASR line say `running`?** `stopped`, or `ASR unavailable`, means the recognizer was not built: see the banner. A `⚠️ capture:` tail means the engine runs but its microphone stream died (`mic stream failed: …` on the robot, `mic processing failed: …` on the computer with echo cancellation or noise suppression on): restart the app.
 - **Do your words appear in the live speech box?** If not, the recognizer hears nothing: the wrong device in `asr.engine.audio_source.device` (the computer; `null` is the system default), no microphone permission for the terminal (macOS), the robot's mic on another media session. With a device listed and still nothing, check the level with another application.
 - **They appear and clear, but no 🗣️ shows on the left.** The utterance never closed into a final segment, or it did while the agent was busy. A trigger arriving while a reasoning step is in flight is dropped, not queued ([limits.md](limits.md#one-reasoning-step-at-a-time)): wait for the previous reaction to finish and say it again.
 - **A 🗣️ shows, a reaction opens, but there is no 🗣️ say.** Open the reaction: a **🚫 noop** means the model chose not to answer (ask directly); a 💭 item alone means it wrote free text instead of calling `say`, which the persona forbids and which a weaker model does anyway ([personas.md](personas.md)); a ❌ say shows the `TTS error: …` the voice returned.
