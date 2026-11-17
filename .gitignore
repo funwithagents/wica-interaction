@@ -19,5 +19,11 @@ dist/
 .env
 .env.*
 
+# A local copy of a config template (docs/getting-started.md)
+*.local.json
+
+# Agent worktrees: whole checkouts of this repo, which `ruff` would walk
+.claude/worktrees/
+
 # OS cruft
 .DS_Store
