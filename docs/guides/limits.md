@@ -12,7 +12,7 @@ Because inputs are transient ([../reference/agent.md](../reference/agent.md#inpu
 
 ## No barge-in
 
-Two things are often meant by barge-in. **Echo** is handled, per body: the robot's XVF3800 cancels the robot's own voice in firmware, the computer's echo canceller subtracts the voice's playback from the mic ([computer.md](computer.md#echo-cancellation)). So the mic does not hear the agent, and the agent does not answer itself.
+Two things are often meant by barge-in. **Echo** is handled, per body: the robot's XVF3800 cancels the robot's own voice in firmware, the computer's echo canceller subtracts the voice's playback from the mic ([computer.md](computer.md#echo-cancellation)). So the agent does not answer itself, short of the bursts the computer's canceller can still let through ([troubleshooting.md](troubleshooting.md#the-agent-hears-itself)).
 
 **Talking over the agent** is not handled. Speech that closes while `say` is playing starts a new step with the running `say` visible in the World, and nothing cancels the first: both play, or the model decides. What does work is an explicit stop: the `stop` hand sign, or a spoken "stop", wakes the agent, which cancels the running Command with `cancel_command` and confirms in the next turn, as the persona and the hand-sign section instruct ([hand-signs.md](hand-signs.md)). That is a reaction, with a reaction's latency, not an interruption.
 

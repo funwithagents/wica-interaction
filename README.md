@@ -17,7 +17,7 @@ Speech in is a live speech recognizer, speech out real audio, and the robot real
 
 > [!WARNING]
 > - **Under development: the config and the code change.** The app is at version 0.1 and is shaped as it is used, together with the five first-party packages it is built on; a config field or a persona rule can change between commits, without a deprecation period.
-> - **Run on macOS (Apple silicon)**: the computer embodiment, and the robot embodiment on the MuJoCo simulator and on a **Reachy Mini Lite** over USB. Linux and Windows resolve from the lock file but have not been run; the wireless Reachy Mini is untested here as in the bridge ([docs/reference/install.md](docs/reference/install.md#platforms)).
+> - **Run on macOS (Apple silicon)**: the computer embodiment, and the robot embodiment on the MuJoCo simulator and on a **Reachy Mini Lite** over USB. On Linux x86_64 both embodiments run in CI's end-to-end tier, the robot on the headless simulator; Windows resolves from the lock file and passes the fast tier, but the app has not been run there; the wireless Reachy Mini is untested here as in the bridge ([docs/reference/install.md](docs/reference/install.md#platforms)).
 
 > [!TIP]
 > **Feedback is welcome: open an issue.** Bug reports, questions, reports from a platform, a robot or a model the author does not test on, and what you would want the config or the personas to do differently all go to [the issue tracker](https://github.com/funwithagents/wica-interaction/issues). The project is developed by one person and is not taking pull requests yet; [CONTRIBUTING.md](CONTRIBUTING.md) says why and how to help anyway.
@@ -32,7 +32,7 @@ Speech in is a live speech recognizer, speech out real audio, and the robot real
 | **A robot that sees its users** | With a face detector, the Reachy Mini tells the agent who comes into view and who leaves, who is there now, who is in its personal space and whom its head follows, so it can greet, see off and attend to the people in front of it ([docs/guides/reachy-mini.md](docs/guides/reachy-mini.md#the-users-in-front-of-the-robot)) |
 | **Hand signs** | The body's camera runs through [`vision-modules`](https://github.com/funwithagents/vision-modules)' hand pipeline; a small vocabulary (`stop`, `like`, `dislike`, `ok`, `one` to `five`), one sign per hand, reaches the agent once it has held for half a second, and the agent decides what a sign means, except `stop` ([docs/guides/hand-signs.md](docs/guides/hand-signs.md)) |
 | **Dictation** | The agent switches speech capture to one longer passage when asked, ended by a pause or a trigger word, and reverts on its own ([docs/guides/dictation.md](docs/guides/dictation.md)) |
-| **No echo** | The agent never hears its own voice: the robot's XVF3800 cancels it in hardware, the computer runs an opt-in WebRTC echo canceller fed with what the voice plays ([docs/guides/computer.md](docs/guides/computer.md#echo-cancellation)) |
+| **Echo cancellation** | The agent is kept from hearing its own voice: the robot's XVF3800 cancels it in hardware, the computer runs an opt-in WebRTC echo canceller fed with what the voice plays, which can still let short bursts through ([docs/guides/computer.md](docs/guides/computer.md#echo-cancellation)) |
 | **One JSON config** | The agent provider, the speech recognizer, the voice, the robot backend, the camera and the persona are one file; each engine section is that engine's own document, nested verbatim ([docs/reference/configuration.md](docs/reference/configuration.md)) |
 | **Provider choice** | Anthropic, OpenAI, Gemini, Mistral, the Hugging Face Hub or any OpenAI-compatible server for the agent; Deepgram, Mistral, an OpenAI-compatible server or a local mlx-audio model for speech in; thirteen voices, hosted or local, for speech out, each an extra you install only if you use it ([docs/reference/install.md](docs/reference/install.md#extras)) |
 | **Watch it work** | A Gradio page: the conversation with every Command's execution state live, the live speech recognition and the Vision line, a typed-text box, and WICA's World and reaction panels behind a debug toggle |
@@ -90,7 +90,7 @@ Start at [docs/index.md](docs/index.md), the documentation by task. The pages us
 | [docs/reference/configuration.md](docs/reference/configuration.md) | The one JSON file section by section, the templates, what a loader rejects |
 | [docs/reference/install.md](docs/reference/install.md) | Every extra, the platforms, the system packages, the first-run downloads |
 | [docs/reference/agent.md](docs/reference/agent.md) | What the model sees and can do: the World entries, the Commands, the persona sections, the transcript |
-| [docs/guides/](docs/index.md#by-task) | The computer, the Reachy Mini, hand signs, dictation, personas, benchmarking, limits, troubleshooting |
+| [docs/guides/](docs/index.md#by-task) | The computer, the Reachy Mini, hand signs, dictation, personas, benchmarking (planned, not built yet), limits, troubleshooting |
 
 ## How it is developed
 
