@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 from asr_engine.audio import AudioSource
 from vision_modules import Frame
-from wica import Command, Content, TextPart
+from wica import Command, Content, OutputStream, TextPart
 from wica.config import WicaConfig
 
 from wica_interaction.embodiment import Deliver, Input, InputEntry
@@ -330,12 +330,12 @@ class FakeEmbodiment:
         self.exited = True
 
     @property
-    def voice(self) -> Callable[[str], Any] | None:
+    def voice(self) -> Callable[[OutputStream], Any] | None:
         return self.say if self._voice else None
 
-    async def say(self, text: str) -> str:
-        """Speak `text` aloud to the person."""
-        self.said.append(text)
+    async def say(self, text: OutputStream) -> str:
+        """Speak aloud to the person."""
+        self.said.append(await text.read())
         return "OK"
 
     async def wave(self) -> str:
@@ -366,3 +366,14 @@ class FakeEmbodiment:
     @property
     def prompt_addendum(self) -> str:
         return self._prompt_addendum
+
+
+def utterance(*pieces: str, close: bool = True) -> OutputStream:
+    """A `<say>` tag's body as WICA hands it to a voice: *pieces* already written, the tag closed
+    unless *close* is false (the model still writing — push more, then `close()`)."""
+    stream = OutputStream()
+    for piece in pieces:
+        stream.push(piece)
+    if close:
+        stream.close()
+    return stream

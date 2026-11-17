@@ -20,9 +20,11 @@ from tts_engine.config import ConfigError as TTSConfigError
 from tts_engine.config import TTSEngineConfig
 from tts_engine.engine import TTSEngine
 from vision_modules import FrameSource
+from wica.text_output import output_signature
 
 import wica_interaction.computer.embodiment as embodiment_module
 from tests.computer.fakes import FakeCoordinator, FakeOpenCVSource, FakeTTSEngine
+from tests.fakes import utterance
 from wica_interaction.computer.audio_processing import AudioProcessingCoordinator
 from wica_interaction.computer.config import (
     AudioProcessingConfig,
@@ -175,7 +177,7 @@ def test_a_failing_coordinator_degrades_to_direct_wiring() -> None:
     )
     assert embodiment.mic is None  # degraded to the engine's own capture
     assert embodiment.voice is not None  # the voice is unaffected
-    assert run(embodiment.say("hello")) == "OK"
+    assert run(embodiment.say(utterance("hello"))) == "OK"
 
 
 def test_an_unforeseen_processing_build_failure_costs_the_processing_alone() -> None:
@@ -190,7 +192,7 @@ def test_an_unforeseen_processing_build_failure_costs_the_processing_alone() -> 
 
     assert embodiment.missing == ["Audio processing: PortAudio library not found"]
     assert embodiment.mic is None
-    assert run(embodiment.say("hello")) == "OK"
+    assert run(embodiment.say(utterance("hello"))) == "OK"
 
 
 def test_mic_error_is_the_coordinators_capture_error() -> None:
@@ -278,7 +280,7 @@ def test_a_failed_voice_build_leaves_the_body_up_with_a_say_that_reports_it(
 
     assert any(m.startswith("TTS:") and str(failure) in m for m in embodiment.missing)
     assert embodiment.voice == embodiment.say  # still wired as the output Command
-    assert run(embodiment.say("hello")) == f"TTS error: {failure}"
+    assert run(embodiment.say(utterance("hello"))) == f"TTS error: {failure}"
     assert embodiment.camera(fps=5.0) is not None  # the camera does not need the voice
 
 
@@ -304,23 +306,68 @@ def test_say_speaks_through_the_engine_and_returns_ok() -> None:
     engine = FakeTTSEngine()
     embodiment = _entered(_config(), engine=engine)
 
-    assert run(embodiment.say("hello")) == "OK"
-    assert engine.said == ["hello"]
+    assert run(embodiment.say(utterance("hello", " there"))) == "OK"
+    assert engine.said == ["hello there"]
 
 
-def test_empty_text_is_guarded_without_calling_the_engine() -> None:
+def test_the_voice_is_a_streaming_output_command() -> None:
+    """WICA reads the voice's signature to decide how to hand it the text: an `OutputStream`
+    annotation is what makes it call the voice at the tag's first words instead of at its end."""
+    embodiment = _entered(_config(), engine=FakeTTSEngine())
+    assert embodiment.voice is not None
+    assert output_signature(embodiment.voice).streams
+
+
+def test_say_starts_speaking_before_the_tag_closes() -> None:
+    """The voice streams: the engine has the first words while the model is still writing the
+    rest, and `say` returns only once the whole utterance was spoken."""
     engine = FakeTTSEngine()
     embodiment = _entered(_config(), engine=engine)
 
-    assert run(embodiment.say("")) == "TTS error: text must not be empty"
+    async def scenario() -> tuple[list[str], bool, str]:
+        text = utterance("Hello,", close=False)
+        speaking = asyncio.create_task(embodiment.say(text))
+        while engine.streaming != ["Hello,"]:
+            await asyncio.sleep(0.01)
+        early, done_early = list(engine.streaming), speaking.done()
+        text.push(" how are you?")
+        text.close()
+        return early, done_early, await speaking
+
+    early, done_early, result = run(asyncio.wait_for(scenario(), timeout=2.0))
+    assert early == ["Hello,"] and not done_early  # spoken before the tag closed
+    assert result == "OK"
+    assert engine.said == ["Hello, how are you?"]
+
+
+@pytest.mark.parametrize("pieces", [(), ("",), ("  ", "\n")])
+def test_an_empty_utterance_is_guarded_without_calling_the_engine(
+    pieces: tuple[str, ...],
+) -> None:
+    engine = FakeTTSEngine()
+    embodiment = _entered(_config(), engine=engine)
+
+    assert (
+        run(embodiment.say(utterance(*pieces))) == "TTS error: text must not be empty"
+    )
     assert engine.said == []
+
+
+def test_leading_whitespace_is_kept_once_there_are_words() -> None:
+    """Waiting for the first words drops nothing: the blank pieces read before them still reach
+    the engine, in order."""
+    engine = FakeTTSEngine()
+    embodiment = _entered(_config(), engine=engine)
+
+    assert run(embodiment.say(utterance(" ", "hi", "!"))) == "OK"
+    assert engine.streaming == [" ", "hi", "!"]
 
 
 def test_a_synthesis_failure_is_mapped_not_raised() -> None:
     engine = FakeTTSEngine(raise_message="voice unavailable")
     embodiment = _entered(_config(), engine=engine)
 
-    result = run(embodiment.say("hi"))
+    result = run(embodiment.say(utterance("hi")))
 
     assert result == "TTS error: voice unavailable"
     assert engine.said == ["hi"]  # it did attempt to speak before failing

@@ -14,22 +14,50 @@ imports neither. See specs/embodiment.md for who calls each member and when.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
 
 from asr_engine.audio import AudioSource
-from wica import Command, Content
+from wica import Command, Content, OutputStream
 
 from wica_interaction.gesture_input import CameraFeed
 
 # The `say` output Command: the model speaks by writing `<say>…</say>` in its text, and WICA calls
-# this with the tag's whole body once the tag closes (a `str` first parameter). Non-raising, "OK" on
-# success, "TTS error: …" otherwise, awaiting real playback so the output stays `running` for the
-# duration of the speech. Its name is the tag's and its docstring is what the primer teaches about
-# the voice.
-Voice = Callable[[str], Awaitable[str]]
+# this at the tag's first words with an `OutputStream` of its body, so the voice starts speaking
+# while the model is still writing. Non-raising, "OK" on success, "TTS error: …" otherwise,
+# awaiting real playback so the output stays `running` for the duration of the speech. Its name is
+# the tag's and its docstring is what the primer teaches about the voice.
+Voice = Callable[[OutputStream], Awaitable[str]]
+
+# What a voice answers for a tag with nothing to say in it (empty, or only whitespace).
+EMPTY_UTTERANCE = "TTS error: text must not be empty"
+
+
+async def speakable(text: OutputStream) -> AsyncIterator[str] | None:
+    """*text* as a stream a TTS can take, once it holds something to say: ``None`` when it ends
+    with nothing but whitespace, so an empty utterance never reaches the engine or the robot.
+
+    Waits only for the first piece that is not blank — the first words — then returns a stream of
+    every piece, those already read included, so nothing is lost and speech still starts early."""
+    pieces = text.__aiter__()
+    lead: list[str] = []
+    async for piece in pieces:
+        lead.append(piece)
+        if piece.strip():
+            break
+    else:
+        return None
+
+    async def stream() -> AsyncIterator[str]:
+        for piece in lead:
+            yield piece
+        async for piece in pieces:
+            yield piece
+
+    return stream()
+
 
 # How an input's producer writes one of its own World entries: `deliver(key, value)`. The lifecycle
 # builds it (system.py): it accepts the input's declared keys only and drops a write while the agent

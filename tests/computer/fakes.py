@@ -12,20 +12,30 @@ from tts_engine.modules.base import TTSError
 class FakeTTSEngine:
     """The slice of `TTSEngine` that `TTSTools` and the embodiment touch.
 
-    Records each spoken text in `said` and the `sink` it was built with; `sample_rate` is what
-    `bind_far_rate` is expected to receive. Set `raise_message` to make `say` raise `TTSError` and
-    exercise the voice's non-raising contract.
+    Records each spoken text in `said` (a streamed utterance once it ended), the pieces of the
+    utterance being streamed in `streaming` as they arrive, and the `sink` it was built with;
+    `sample_rate` is what `bind_far_rate` is expected to receive. Set `raise_message` to make
+    speaking raise `TTSError` and exercise the voice's non-raising contract.
     """
 
     sample_rate = 44100
 
     def __init__(self, *, sink: Any = None, raise_message: str | None = None) -> None:
         self.said: list[str] = []
+        self.streaming: list[str] = []
         self.sink = sink
         self._raise_message = raise_message
 
     async def say(self, text: str) -> None:
         self.said.append(text)
+        if self._raise_message is not None:
+            raise TTSError(self._raise_message)
+
+    async def say_stream(self, text_stream: Any) -> None:
+        self.streaming = []
+        async for piece in text_stream:
+            self.streaming.append(piece)
+        self.said.append("".join(self.streaming))
         if self._raise_message is not None:
             raise TTSError(self._raise_message)
 

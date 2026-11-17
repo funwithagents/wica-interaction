@@ -16,9 +16,9 @@ Two things are often meant by barge-in. **Echo** is handled, per body: the robot
 
 **Talking over the agent** is handled only as a reaction. Speech that closes while `say` is playing starts a new step with the running `say` visible in the World. If the model answers out loud, its new `<say>` cuts off the one still playing: one voice at a time, enforced by WICA. If it does not answer (`<noop/>`), or only acts, the first keeps playing. An explicit stop works too: the `stop` hand sign, or a spoken "stop", wakes the agent, which cancels the running Command with `cancel_command` and confirms in the next turn, as the persona and the hand-sign section instruct ([hand-signs.md](hand-signs.md)). Either way the cut comes after a reaction's latency, not the moment the person starts talking.
 
-## No streamed speech
+## Speech streams, the page does not
 
-`say` plays a complete utterance: each `<say>` tag is synthesized and spoken once the tag has closed, and stays `running` until playback ends. There is no word-by-word reveal on the page and no speaking of a reply while it is still being generated. WICA could hand the voice the words as they are written; the app does not take them that way yet.
+`say` speaks a `<say>` tag from its first words, while the model is still writing the rest, on both bodies, and stays `running` until playback ends. The page does not follow along: the transcript shows the 🗣️ say item with its whole text once the tag is complete. After a cut (a new reply, a stop), the model remembers the whole text it wrote, not only the part that was heard.
 
 ## No persistence
 

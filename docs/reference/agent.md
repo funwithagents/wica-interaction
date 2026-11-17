@@ -31,7 +31,7 @@ History keeps what was observed, as each step's own snapshot, so the model still
 
 Every Command is non-raising: it returns a readable string, success or failure, so the model always learns what happened.
 
-The body's voice, `say`, is WICA's **output Command**, and the model does not call it: it writes what it wants heard inside a `<say>…</say>` tag in its response, and WICA hands the tag's text to the voice once the tag closes. Text outside the tag is private reasoning, never heard. A response with no tag at all is spoken whole. Each tag is tracked like a Command (`running` while it plays), and a response that speaks cuts off speech still playing from an earlier one. The end of the speech does not wake the agent unless the model left a `<next>` note in the same response. To do nothing, the model writes `<noop/>`.
+The body's voice, `say`, is WICA's **output Command**, and the model does not call it: it writes what it wants heard inside a `<say>…</say>` tag in its response, and WICA hands the tag's text to the voice as it is written, so speech starts on the first words. Text outside the tag is private reasoning, never heard. A response with no tag at all is spoken whole. Each tag is tracked like a Command (`running` while it plays), and a response that speaks cuts off speech still playing from an earlier one. The end of the speech does not wake the agent unless the model left a `<next>` note in the same response. To do nothing, the model writes `<noop/>`.
 
 **Both bodies:**
 
