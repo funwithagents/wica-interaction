@@ -178,6 +178,36 @@ def test_a_failing_coordinator_degrades_to_direct_wiring() -> None:
     assert run(embodiment.say("hello")) == "OK"
 
 
+def test_an_unforeseen_processing_build_failure_costs_the_processing_alone() -> None:
+    """Not one of the foreseen causes: whatever a native audio dependency raises while the
+    coordinator is built is still an `Audio processing: …` line — never the whole body, which
+    `build_system` would otherwise drop."""
+
+    def boom(_config: ComputerConfig) -> AudioProcessingCoordinator:
+        raise OSError("PortAudio library not found")
+
+    embodiment = _entered(_config(aec=True), engine=FakeTTSEngine(), factory=boom)
+
+    assert embodiment.missing == ["Audio processing: PortAudio library not found"]
+    assert embodiment.mic is None
+    assert run(embodiment.say("hello")) == "OK"
+
+
+def test_mic_error_is_the_coordinators_capture_error() -> None:
+    """The processed mic's health reaches the ASR line: `mic_error` is what the coordinator
+    reports, as it changes."""
+    coordinator = FakeCoordinator()
+    embodiment = _entered(
+        _config(aec=True),
+        engine=FakeTTSEngine(),
+        factory=lambda _config: cast(AudioProcessingCoordinator, coordinator),
+    )
+
+    assert embodiment.mic_error is None
+    coordinator.capture_error = "mic processing failed: boom"
+    assert embodiment.mic_error == "mic processing failed: boom"
+
+
 def test_a_device_format_the_processor_cannot_capture_degrades_the_processing() -> None:
     """The processor opens the microphone itself, at its own 16 kHz. A format asked for the device
     is one the real `build_coordinator` refuses rather than ignores; that `RuntimeError` is a

@@ -344,6 +344,82 @@ def test_source_buffers_sub_frame_remainder_across_chunks() -> None:
     assert second_len == FRAME_SAMPLES * 2
 
 
+def test_a_failing_processor_is_reported_as_the_capture_error_and_a_restart_clears_it() -> (
+    None
+):
+    """A processor that raises ends the pump: nothing reaches the engine any more, which the
+    coordinator says through `capture_error` rather than leaving a mic that reads as live. Starting
+    the source again clears it and delivers."""
+    coordinator, processor, _player, capture = _make_coordinator()
+    chunk = np.zeros(FRAME_SAMPLES, dtype=np.int16).tobytes()
+    healthy = processor.process
+
+    def boom(_near: bytes, _far: bytes) -> bytes:
+        raise RuntimeError("native processor crashed")
+
+    async def scenario() -> tuple[str | None, bool, str | None, int]:
+        out_queue = coordinator.source.start()
+        assert coordinator.capture_error is None
+        processor.process = boom  # type: ignore[method-assign]
+        await capture.push(chunk)
+        await asyncio.sleep(0.05)
+        failed, delivered = coordinator.capture_error, not out_queue.empty()
+
+        coordinator.source.stop()
+        processor.process = healthy  # type: ignore[method-assign]
+        out_queue = coordinator.source.start()
+        await capture.push(chunk)
+        again = await asyncio.wait_for(out_queue.get(), timeout=1.0)
+        return failed, delivered, coordinator.capture_error, len(again)
+
+    failed, delivered, after_restart, again_len = run(scenario())
+    assert failed == "mic processing failed: native processor crashed"
+    assert not delivered
+    assert after_restart is None
+    assert again_len == FRAME_SAMPLES * 2
+
+
+def test_a_malformed_mic_chunk_is_a_capture_error() -> None:
+    """An odd number of bytes is not int16 audio: the pump stops and says why."""
+    coordinator, _processor, _player, capture = _make_coordinator()
+
+    async def scenario() -> str | None:
+        coordinator.source.start()
+        await capture.push(b"\x00\x00\x00")
+        await asyncio.sleep(0.05)
+        return coordinator.capture_error
+
+    error = run(scenario())
+    assert error is not None and error.startswith("mic processing failed:")
+
+
+def test_a_stalled_engine_loses_the_oldest_audio_not_memory() -> None:
+    """With nobody draining it, the processed queue stays at its bound and keeps the newest
+    chunks: stale speech is dropped, the pump goes on."""
+    processor = RecordingProcessor()
+    capture = ScriptedCapture()
+    coordinator = AudioProcessingCoordinator(
+        processor,
+        asr_device=None,
+        tts_device=None,
+        capture_factory=lambda _dev, _loop, _fmt: capture,
+        out_maxsize=3,
+    )
+
+    async def scenario() -> list[int]:
+        out_queue = coordinator.source.start()
+        for value in range(1, 7):  # six chunks into a queue of three
+            await capture.push(np.full(FRAME_SAMPLES, value, dtype=np.int16).tobytes())
+        await asyncio.sleep(0.05)
+        kept = []
+        while not out_queue.empty():
+            kept.append(int(np.frombuffer(out_queue.get_nowait(), dtype=np.int16)[0]))
+        return kept
+
+    assert run(scenario()) == [4, 5, 6]
+    assert coordinator.capture_error is None
+
+
 def test_source_stop_stops_capture() -> None:
     coordinator, _processor, _player, capture = _make_coordinator()
 
