@@ -581,7 +581,7 @@ def test_the_personal_space_is_judged_only_while_the_head_follows() -> None:
 def test_the_personal_space_wakes_on_who_is_inside_changing() -> None:
     assert personal_space_changed(
         None, PersonalSpace(3, 0.3)
-    )  # tracking on, someone inside
+    )  # tracking starts on a user already inside: the agent's first news of it
     assert personal_space_changed(
         PersonalSpace(None), PersonalSpace(3, 0.3)
     )  # entering

@@ -31,7 +31,7 @@ uv sync --no-dev --extra all
 uv sync --dev
 ```
 
-`--no-dev` keeps an install to what you selected: a bare `uv sync` includes the `dev` group, which pulls both bodies, the simulator and the tooling. The **simulator** (MuJoCo) is its own extra, `reachy-sim`, next to `reachy` rather than part of it, since a deployment on a real robot needs none of it: the reachy template targets the simulator, so an install that runs it as committed adds `reachy-sim`. Selecting a provider whose extra is not installed does not fail the install or the config load: it lands on that engine's banner line when the app starts, naming the extra to add ([../guides/troubleshooting.md](../guides/troubleshooting.md#the-banner)).
+`--no-dev` keeps an install to what you selected: a bare `uv sync` includes the `dev` group, which pulls both bodies, the simulator and the tooling. The **simulator** (MuJoCo) is its own extra, `reachy-sim`, next to `reachy` rather than part of it, since a deployment on a real robot needs none of it: the reachy template targets the simulator, so an install that runs it as committed adds `reachy-sim`. Selecting a provider whose extra is not installed does not fail the install or the config load: it lands on that engine's banner line when the app starts, naming the extra to add ([../guides/troubleshooting.md](../guides/troubleshooting.md#the-banner)). The body's own extra is the exception: `wica-interaction-computer` needs `computer` and `wica-interaction-reachy` needs `reachy`, and without it the command fails at import, before the page opens.
 
 ## Extras
 

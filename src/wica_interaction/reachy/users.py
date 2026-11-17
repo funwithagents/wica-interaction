@@ -198,8 +198,9 @@ def personal_space(
 
 def personal_space_changed(old: Any, new: Any) -> bool:
     """``personal_space`` wakes the agent when who is inside changes — someone entering, leaving,
-    another taking their place — while it is judged; not when tracking starts or stops, nor when the
-    user inside only moves."""
+    another taking their place — while it is judged; not when tracking starts or stops in itself, nor
+    when the user inside only moves. Tracking that starts on a user already inside does wake: it is
+    the first time the agent can learn someone is that close."""
     if not isinstance(new, PersonalSpace):
         return False
     before = old.user if isinstance(old, PersonalSpace) else None
