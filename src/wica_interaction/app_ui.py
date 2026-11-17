@@ -16,8 +16,8 @@ the components and owns the timer keeping them live. What this module holds:
 - ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
   the agent's Events in their constructors, both given ``entry_display(system)``), lays out the page (the
   three contrib panels, the app's ASR panel, the typed-text hatch, a banner for anything missing,
-  the debug toggle), and returns the page plus the transcript on an ``AppUi`` handle so the app can
-  wire the transcript's sink (``wire`` in [system.py](system.py)). The UI wires nothing itself.
+  the debug toggle), and returns the page. The UI wires nothing into the agent: its presenters
+  subscribe to the agent's Events themselves.
 - ``tick_asr`` — the live view the ASR panel's timer polls (the only timer the app owns).
 
 The only dependency on ``system`` is the ``AppSystem`` *type* (for annotations), imported under
@@ -31,7 +31,6 @@ import asyncio
 import html
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -105,15 +104,6 @@ def entry_display(system: AppSystem) -> Callable[[WorldEntry], EntryDisplay | No
     return display
 
 
-@dataclass(frozen=True)
-class AppUi:
-    """What build_ui() returns: the page, plus the transcript presenter the app wires into the agent
-    (`transcript.output_sink` → `wica.set_output_sink`)."""
-
-    blocks: gr.Blocks
-    transcript: TranscriptLog
-
-
 # --- The ASR live view its timer polls --------------------------------------------------------
 
 
@@ -185,7 +175,7 @@ def tick_vision(system: AppSystem) -> str:
 # --- Layout ------------------------------------------------------------------------------------
 
 
-def build_ui(system: AppSystem) -> AppUi:
+def build_ui(system: AppSystem) -> gr.Blocks:
     """Assemble the page over an already-built (not yet wired, not yet started) system: Conversation
     + ASR as the main surface, World + Reaction behind a debug toggle, a banner for any missing
     credentials, and the typed-text hatch into `speech_input`. Input widgets only touch
@@ -245,8 +235,9 @@ def build_ui(system: AppSystem) -> AppUi:
             "Speak (or type) a turn; the agent reasons over the World and replies with its **🗣️ "
             "say** voice. It handles **one reasoning call at a time** (v1): input arriving mid-step is "
             "dropped, not queued. On the left, each step is one collapsible **💬 reaction**; inside it, "
-            "items are labelled by channel — **🗣️ say** (what you heard), **💭 output sink** (private "
-            "free text), **🦾** commands, **🚫 noop**. Every command item shows its **execution state "
+            "items are labelled by channel — **🗣️ say** (what you heard), **💭 private text** (what "
+            "the model wrote outside its `<say>` tag, never heard), **🦾** commands, **🚫 noop** (it "
+            "chose not to react). Every command item shows its **execution state "
             "live**: a spinner while it runs, then ✅ complete / ❌ failed / ⏹ cancelled with its result "
             "and duration."
         )
@@ -328,4 +319,4 @@ def build_ui(system: AppSystem) -> AppUi:
             outputs=[asr_live, asr_status, stop_dictation, vision_status],
         )  # pyright: ignore[reportAttributeAccessIssue]
 
-    return AppUi(blocks=demo, transcript=transcript)
+    return demo

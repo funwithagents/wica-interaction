@@ -3,10 +3,10 @@
 Deterministic, no browser/mic/camera/network/body: the agent runs against WICA's `fake` provider (a
 scripted model), the body is a `FakeEmbodiment` that only records, the ASR engine is an injected
 fake, and only the wiring `run_app` does — minus the Gradio page — is exercised: `build_system`,
-then `wire` with a `TranscriptLog` (and a `ReactionLog`) the test builds itself, playing the UI's
+then `wire` after a `TranscriptLog` (and a `ReactionLog`) the test builds itself, playing the UI's
 role exactly as `build_ui` would, then `_start`. Covers the two input paths (typed text and a closed
 ASR segment) reaching the agent and its `say` reaching the embodiment's voice (proving the output
-Command is set), the model's free text reaching the transcript (proving the sink is set), an action
+Command is set), the model's private text reaching the transcript (outside the `<say>` tag), an action
 Command routing back to the body (proving `wire` registers `embodiment.commands()`), the persona
 sections seeded at startup, the vision path, and the degrade and teardown paths.
 
@@ -88,10 +88,9 @@ def _asr_config() -> ASREngineConfig:
 
 
 def _say_once(text: str) -> list[dict]:
-    return [
-        {"tool_calls": [{"name": "say", "args": {"text": text}}]},
-        {"tool_calls": [{"name": "noop", "args": {}}]},
-    ]
+    """One step that speaks *text* through the `<say>` tag. The output's end wakes no further step
+    (no `<next>` note), so one step is the whole reaction."""
+    return [{"text": f"<say>{text}</say>"}]
 
 
 def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
@@ -123,10 +122,11 @@ def _build(
 
 def _wire(system: AppSystem) -> tuple[TranscriptLog, ReactionLog]:
     """Play the UI's role: build the two contrib presenters over the agent (exactly what `build_ui`
-    creates) and wire the transcript's sink + the Commands, as `run_app` does before starting."""
+    creates, subscribing before start), then wire the output Command + the Commands, as `run_app`
+    does before starting."""
     transcript = TranscriptLog(system.wica, display_entry)
     reactions = ReactionLog(system.wica, display_entry)
-    wire(system, transcript)
+    wire(system)
     return transcript, reactions
 
 
@@ -186,28 +186,26 @@ def test_a_body_without_a_voice_sets_no_output_command() -> None:
         _shutdown(system)
 
 
-def test_free_text_lands_in_the_transcript_sink() -> None:
-    """The model's free text for a step reaches the transcript's output sink as the 💭 item — the
-    one observable proof that `wire` set the sink on the agent."""
+def test_private_text_lands_in_the_transcript_and_only_the_tag_is_spoken() -> None:
+    """The model's text outside its `<say>` tag is private: it reaches the transcript as the 💭 item
+    and never the body's voice, which hears the tag's body alone."""
     embodiment = FakeEmbodiment()
-    script = [
-        {"text": "thinking out loud"},
-        {"tool_calls": [{"name": "noop", "args": {}}]},
-    ]
+    script = [{"text": "thinking out loud<say>hello</say>"}]
     system = _build(embodiment, script=script)
     try:
         transcript, _ = _wire(system)
         _start(system)
         system.submit_speech("what are you thinking")
 
-        def sink_item_shown() -> bool:
+        def private_item_shown() -> bool:
             return any(
-                m.get("metadata", {}).get("title") == "💭 output sink"
+                m.get("metadata", {}).get("title") == "💭 private text"
                 and m["content"] == "thinking out loud"
                 for m in transcript.snapshot().conversation
             )
 
-        assert _wait_until(sink_item_shown)
+        assert _wait_until(private_item_shown)
+        assert _wait_until(lambda: embodiment.said == ["hello"])
     finally:
         _shutdown(system)
 
@@ -216,7 +214,7 @@ def test_wire_without_agent_is_a_noop() -> None:
     """With no agent there is nothing to wire into: `wire` returns quietly (the banner already says
     why), so `run_app` stays linear in degraded mode."""
     system = _degraded_system("config unreadable")
-    wire(system, TranscriptLog(None, display_entry))  # must not raise
+    wire(system)  # must not raise
     assert system.wica is None
 
 
@@ -226,7 +224,7 @@ def test_the_bodys_action_commands_are_registered_and_route_back_to_it() -> None
     embodiment = FakeEmbodiment()
     script = [
         {"tool_calls": [{"name": "wave", "args": {}}]},
-        {"tool_calls": [{"name": "noop", "args": {}}]},
+        {"text": "<noop/>"},
     ]
     system = _build(embodiment, script=script)
     try:
@@ -241,7 +239,7 @@ def test_the_bodys_action_commands_are_registered_and_route_back_to_it() -> None
 
 def test_a_body_with_no_actions_registers_none() -> None:
     embodiment = FakeEmbodiment(commands=())
-    system = _build(embodiment, script=[{"tool_calls": [{"name": "noop", "args": {}}]}])
+    system = _build(embodiment, script=[{"text": "<noop/>"}])
     try:
         _wire(system)
         assert system.wica is not None
@@ -258,7 +256,7 @@ def test_prompt_addendum_is_seeded_into_the_persona() -> None:
     embodiment = FakeEmbodiment(
         prompt_addendum="\n\n## Test section\n\nhello from the body"
     )
-    system = _build(embodiment, script=[{"tool_calls": [{"name": "noop", "args": {}}]}])
+    system = _build(embodiment, script=[{"text": "<noop/>"}])
     try:
         assert system.wica is not None
         prompt = system.wica.agent.system_prompt
@@ -273,7 +271,7 @@ def test_missing_lines_from_enter_reach_the_banner() -> None:
     embodiment = FakeEmbodiment(
         missing=["TTS: key unset", "Audio processing: no binding"]
     )
-    system = _build(embodiment, script=[{"tool_calls": [{"name": "noop", "args": {}}]}])
+    system = _build(embodiment, script=[{"text": "<noop/>"}])
     try:
         assert system.embodiment is embodiment
         assert "TTS: key unset" in system.missing
@@ -461,8 +459,8 @@ def test_an_utterance_is_gone_from_the_world_and_the_prompt_after_its_ttl() -> N
         prompt = reactions.prompt_text(0)
         assert prompt is not None
         assert 'You hear someone say: "hi"' in prompt
-        # The say finishing re-triggers one step (the scripted noop); then nothing else may.
-        assert _wait_until(lambda: reactions.snapshot().count == 2)
+        # The say finishing wakes no step (no `<next>` note): one reaction, and nothing else may.
+        assert _wait_until(lambda: reactions.snapshot().count == 1)
 
         assert _wait_until(
             lambda: world.get("speech_input") is None,
@@ -470,7 +468,7 @@ def test_an_utterance_is_gone_from_the_world_and_the_prompt_after_its_ttl() -> N
         )
         assert "speech_input" not in _flat(world.render_full_prompt())
         time.sleep(0.3)  # long enough for a step the reset might (wrongly) have woken
-        assert reactions.snapshot().count == 2
+        assert reactions.snapshot().count == 1
     finally:
         _shutdown(system)
 
@@ -484,7 +482,7 @@ def test_a_body_that_fails_to_enter_degrades_but_the_agent_still_reasons() -> No
     embodiment = FakeEmbodiment(raise_on_enter="no daemon reachable")
     built_over: list[Any] = []
     system = build_system(
-        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]),
+        _config(script=[{"text": "<noop/>"}]),
         embodiment,
         asr_engine_factory=asr_factory(FakeASREngine(), built_over),
     )
@@ -518,9 +516,7 @@ def test_no_body_means_no_prompt_addendum() -> None:
     embodiment = FakeEmbodiment(
         raise_on_enter="no body", prompt_addendum="\n\n## Test section\n\nhi"
     )
-    system = build_system(
-        _config(script=[{"tool_calls": [{"name": "noop", "args": {}}]}]), embodiment
-    )
+    system = build_system(_config(script=[{"text": "<noop/>"}]), embodiment)
     try:
         assert system.wica is not None
         assert "Test section" not in system.wica.agent.system_prompt
@@ -663,7 +659,7 @@ def test_shutdown_stops_asr_before_the_body_exits() -> None:
     fake_asr = FakeASREngine(log=log)
     system = _build(
         embodiment,
-        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        script=[{"text": "<noop/>"}],
         asr=fake_asr,
     )
     _start(system)
@@ -684,14 +680,10 @@ class _NeverLaunched:
         raise AssertionError("launch() must not be reached when an earlier step raises")
 
 
-def _never_launched_ui(system: AppSystem) -> Any:
+def _never_launched_ui(system: AppSystem) -> gr.Blocks:
     """Stand in for `build_ui` (no browser): a real transcript, a page that must not launch."""
-
-    class _Ui:
-        blocks = cast(gr.Blocks, _NeverLaunched())
-        transcript = TranscriptLog(system.wica, display_entry)
-
-    return _Ui()
+    TranscriptLog(system.wica, display_entry)
+    return cast(gr.Blocks, _NeverLaunched())
 
 
 def _loop_stopped(system: AppSystem) -> bool:
@@ -710,7 +702,7 @@ def test_start_failure_still_tears_down_the_body(
     embodiment = FakeEmbodiment()
     system = _build(
         embodiment,
-        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        script=[{"text": "<noop/>"}],
         asr=FakeASREngine(raise_on_start="mic unavailable"),
     )
     assert embodiment.entered
@@ -770,7 +762,7 @@ def test_shutdown_isolates_a_failing_step() -> None:
     embodiment = FakeEmbodiment()
     system = _build(
         embodiment,
-        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        script=[{"text": "<noop/>"}],
         asr=FakeASREngine(raise_on_stop="provider socket broke"),
     )
     _start(system)
@@ -787,7 +779,7 @@ def test_shutdown_bounds_a_hung_step(monkeypatch: pytest.MonkeyPatch) -> None:
     embodiment = FakeEmbodiment()
     system = _build(
         embodiment,
-        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        script=[{"text": "<noop/>"}],
         asr=FakeASREngine(hang_on_stop=True),
     )
     _start(system)
@@ -805,7 +797,7 @@ def test_shutdown_skips_never_started_bridge() -> None:
     embodiment = FakeEmbodiment(log=log)
     system = _build(
         embodiment,
-        script=[{"tool_calls": [{"name": "noop", "args": {}}]}],
+        script=[{"text": "<noop/>"}],
         asr=FakeASREngine(log=log),
     )
 
@@ -979,8 +971,8 @@ def test_another_sign_wakes_the_agent_again() -> None:
     classifier = _ScriptedClassifier(fist=0.9)
     # One step per trigger, each speaking: the second is the one the new sign wakes.
     script = [
-        {"tool_calls": [{"name": "say", "args": {"text": "okay, stopping"}}]},
-        {"tool_calls": [{"name": "say", "args": {"text": "five it is"}}]},
+        {"text": "<say>okay, stopping</say>"},
+        {"text": "<say>five it is</say>"},
     ]
     system = _vision_system(embodiment, classifier, script)
     try:
@@ -1097,7 +1089,7 @@ def _input_steps(reactions: ReactionLog) -> int:
 
 
 def _noop_script() -> list[dict]:
-    return [{"tool_calls": [{"name": "noop", "args": {}}]}]
+    return [{"text": "<noop/>"}]
 
 
 def test_a_body_input_is_registered_delivered_and_wakes_the_agent() -> None:
@@ -1118,7 +1110,7 @@ def test_a_body_input_is_registered_delivered_and_wakes_the_agent() -> None:
         display = entry_display(system)
         transcript = TranscriptLog(system.wica, display)
         reactions = ReactionLog(system.wica, display)
-        wire(system, transcript)
+        wire(system)
         _start(system)
         assert body_input.started == 1 and body_input.loop is system.loop
         assert body_input.deliver is not None

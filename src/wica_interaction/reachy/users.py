@@ -331,7 +331,7 @@ def users_prompt_section() -> str:
         "front of you, and `stop_tracking()` stops. When someone comes into view and your head is "
         "not following anyone, start following them. When several users are in view, follow the "
         "one you are talking with. When everyone has left, stop. Following collides with nothing: "
-        "it may go in the same turn as `say` or an emotion."
+        "it may go in the same turn as speaking or an emotion."
     )
 
 

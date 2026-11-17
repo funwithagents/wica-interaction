@@ -6,7 +6,7 @@ The boundaries of the app as it stands, so a behaviour you meet is read as a kno
 
 The agent handles one model call at a time. A trigger that arrives while a call is in flight is **dropped, not queued**: an utterance that closes, or a sign that is shown, while the model is still thinking is lost. The person says it again, or lowers the hand and shows the sign again, and the next write triggers.
 
-A running `say` is a **Command**, not a step: once the model has answered and the voice is playing, the agent is free again, so speech or a sign during playback does wake it. The transcript makes the difference visible: a reaction still spinning is the window in which input is dropped; a 🗣️ say item still spinning is not ([../reference/agent.md](../reference/agent.md#what-the-transcript-shows)).
+A running `say` is a tracked execution, like a **Command**, not a step: once the model has answered and the voice is playing, the agent is free again, so speech or a sign during playback does wake it. The transcript makes the difference visible: a reaction still spinning is the window in which input is dropped; a 🗣️ say item still spinning is not ([../reference/agent.md](../reference/agent.md#what-the-transcript-shows)).
 
 Because inputs are transient ([../reference/agent.md](../reference/agent.md#inputs-are-transient)), a dropped utterance is gone after two seconds rather than answered late by the next unrelated step.
 
@@ -14,11 +14,11 @@ Because inputs are transient ([../reference/agent.md](../reference/agent.md#inpu
 
 Two things are often meant by barge-in. **Echo** is handled, per body: the robot's XVF3800 cancels the robot's own voice in firmware, the computer's echo canceller subtracts the voice's playback from the mic ([computer.md](computer.md#echo-cancellation)). So the agent does not answer itself, short of the bursts the computer's canceller can still let through ([troubleshooting.md](troubleshooting.md#the-agent-hears-itself)).
 
-**Talking over the agent** is not handled. Speech that closes while `say` is playing starts a new step with the running `say` visible in the World, and nothing cancels the first: both play, or the model decides. What does work is an explicit stop: the `stop` hand sign, or a spoken "stop", wakes the agent, which cancels the running Command with `cancel_command` and confirms in the next turn, as the persona and the hand-sign section instruct ([hand-signs.md](hand-signs.md)). That is a reaction, with a reaction's latency, not an interruption.
+**Talking over the agent** is handled only as a reaction. Speech that closes while `say` is playing starts a new step with the running `say` visible in the World. If the model answers out loud, its new `<say>` cuts off the one still playing: one voice at a time, enforced by WICA. If it does not answer (`<noop/>`), or only acts, the first keeps playing. An explicit stop works too: the `stop` hand sign, or a spoken "stop", wakes the agent, which cancels the running Command with `cancel_command` and confirms in the next turn, as the persona and the hand-sign section instruct ([hand-signs.md](hand-signs.md)). Either way the cut comes after a reaction's latency, not the moment the person starts talking.
 
 ## No streamed speech
 
-`say` plays a complete utterance: the model's reply is synthesized and spoken as one Command, which stays `running` until playback ends. There is no word-by-word reveal on the page and no speaking of a reply while it is still being generated.
+`say` plays a complete utterance: each `<say>` tag is synthesized and spoken once the tag has closed, and stays `running` until playback ends. There is no word-by-word reveal on the page and no speaking of a reply while it is still being generated. WICA could hand the voice the words as they are written; the app does not take them that way yet.
 
 ## No persistence
 

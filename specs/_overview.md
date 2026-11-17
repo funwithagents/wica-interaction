@@ -25,9 +25,9 @@ WICA's model is that you don't thread a conversation — you maintain **World st
  embodiment.mic ─▶ AsrBridge (asr-engine)
                         │  interim segment ─▶ ASR panel (live partial text)   [agent NOT triggered]
                         └─ final segment ───▶ world.update("speech_input") ──▶ WICA Agent
-                                                                                ├─ say(text) ─▶ embodiment.voice ─▶ speakers / robot speaker
+                                                                                ├─ <say>…</say> ─▶ embodiment.voice ─▶ speakers / robot speaker
                                                                                 ├─ embodiment.commands() ─▶ e.g. play_emotion ─▶ robot
-                                                                                └─ free text ─▶ output sink (💭 thought, in the transcript)
+                                                                                └─ text outside the tag ─▶ private (💭 thought, in the transcript)
 ```
 
 The load-bearing rule: **partial speech is visible but inert; only a *closed* segment reaches the agent**, exactly once, as one complete utterance. Vision follows the same shape: the classifier runs continuously, but only a *change* reaches the World and only a sign being *shown* wakes the agent — which decides from context what the sign means, except `stop` ([gesture-input.md](gesture-input.md)).

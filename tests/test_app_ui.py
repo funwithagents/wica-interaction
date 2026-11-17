@@ -274,13 +274,13 @@ def test_vision_line_flags_camera_and_stage_errors() -> None:
 def test_the_page_is_named_after_the_body() -> None:
     """The one place the shared page differs per embodiment: its title and heading name the body the
     app was launched with (specs/embodiment.md, `display_name`)."""
-    ui = build_ui(_system(embodiment=FakeEmbodiment()))
-    assert ui.blocks.title == "WICA Interaction — fake body"
+    page = build_ui(_system(embodiment=FakeEmbodiment()))
+    assert page.title == "WICA Interaction — fake body"
 
     # A body that failed to enter is still the body the app was launched for: the page keeps its
     # name (the banner says why it is absent).
     failed = build_ui(_system(display_name="fake body"))
-    assert failed.blocks.title == "WICA Interaction — fake body"
+    assert failed.title == "WICA Interaction — fake body"
 
     # Only a config that never loaded has no body to name: a neutral title, not a made-up one.
-    assert build_ui(_system()).blocks.title == "WICA Interaction"
+    assert build_ui(_system()).title == "WICA Interaction"

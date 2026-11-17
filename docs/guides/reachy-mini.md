@@ -58,7 +58,7 @@ Beyond `say`, the robot registers three commands, and two more when it sees peop
 | `start_tracking(user=None)` | with a detector: follow a user with the head, the one given by number, or whoever is in front of the robot; a user no longer in view is answered, not raised |
 | `stop_tracking()` | with a detector: stop following; the head goes back to its idle movement |
 
-The motors are assumed enabled: the model is told to just move, and to call `set_motors_state("enabled")` only after a move comes back saying the motors are off, then play it again. Because the robot has one body and one speaker, the persona forbids issuing colliding commands in one turn, `say` together with `play_emotion` among them, and asks for a spoken confirmation after every action ([the action rules](personas.md#the-action-rules)).
+The motors are assumed enabled: the model is told to just move, and to call `set_motors_state("enabled")` only after a move comes back saying the motors are off, then play it again. Because the robot has one body and one speaker, the persona forbids colliding actions in one turn, speaking together with `play_emotion` among them, and asks for a spoken confirmation after every action ([the action rules](personas.md#the-action-rules)).
 
 Presence, breathing and wobbling are the bridge's own aliveness between actions, driven by the `motion` block; none of it is agent-facing, and the persona does not mention it. Following a person is the one exception, framed for the model as whom it pays attention to. If the emotion library cannot be read at startup, the banner shows `Robot: emotions unavailable:` with the cause, the persona carries no emotion names, and `play_emotion` keeps its plain description.
 

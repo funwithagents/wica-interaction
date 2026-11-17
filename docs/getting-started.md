@@ -46,7 +46,7 @@ Open the address Gradio prints (`http://127.0.0.1:7860`) and say something. What
 
 1. The **ASR** panel on the right shows your words as they are recognized, then clears when the utterance closes.
 2. The closed utterance shows on the left as **🗣️ "what you said"**, and the agent reasons: a **💬 reaction** group opens.
-3. Inside it, **🗣️ say** is what you hear, with a spinner while it plays and ✅ with its duration once done. A **💭 output sink** item is the model's private thinking, if it produced any; **🚫 noop** means it chose not to react.
+3. Inside it, **🗣️ say** is what you hear, with a spinner while it plays and ✅ with its duration once done. A **💭 private text** item is the model's private thinking, written outside its `<say>` tag, if it produced any; **🚫 noop** means it chose not to react.
 
 As the template configures it, **echo cancellation** is on, so the agent does not answer its own voice, and **hand signs** are on, reading your webcam: the Vision line under the ASR panel shows what the camera sees, and showing the camera a flat hand or a fist stops the agent mid-sentence ([guides/hand-signs.md](guides/hand-signs.md)). The first start downloads the hand models, a few hundred megabytes. To run without a camera, set `vision.enabled` to `false`.
 
