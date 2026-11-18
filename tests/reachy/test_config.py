@@ -176,6 +176,7 @@ def test_a_face_detection_block_reaches_the_bridge_config(tmp_path: Path) -> Non
         "detector": "yunet",
         "enabled": True,
         "width": 640,
+        "score_threshold": 0.75,
         "target_fps": 5,
     }
     config["reachy"]["motion"] = {"tracking": {"enabled": True}}
@@ -183,8 +184,24 @@ def test_a_face_detection_block_reaches_the_bridge_config(tmp_path: Path) -> Non
     assert cfg.reachy.face_detection.detector == "yunet"
     assert cfg.reachy.face_detection.enabled is True
     assert cfg.reachy.face_detection.width == 640
+    assert cfg.reachy.face_detection.score_threshold == 0.75
     assert cfg.reachy.face_detection.target_fps == 5
     assert cfg.reachy.motion.tracking.enabled is True
+
+
+@pytest.mark.parametrize("threshold", [0, 1, 1.5, True])
+def test_a_score_threshold_outside_0_1_is_the_bridges_config_error(
+    tmp_path: Path, threshold: object
+) -> None:
+    """The detector's confidence cut is strictly between 0 and 1: anything else is rejected at load
+    as a ValueError naming the field, not handed to the detector."""
+    config = _composed()
+    config["reachy"]["face_detection"] = {
+        "detector": "yunet",
+        "score_threshold": threshold,
+    }
+    with pytest.raises(ValueError, match="score_threshold"):
+        load_config(_write(tmp_path, config))
 
 
 def test_tracking_without_a_detector_is_the_bridges_config_error(
@@ -216,4 +233,5 @@ def test_the_committed_template_loads() -> None:
     )
     assert cfg.reachy.face_detection.detector == "yunet"
     assert cfg.reachy.face_detection.enabled is True
+    assert cfg.reachy.face_detection.score_threshold == 0.6
     assert cfg.reachy.motion.tracking.enabled is False

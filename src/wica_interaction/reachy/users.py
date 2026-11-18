@@ -14,8 +14,8 @@ per concept:
 
 - ``user_event`` — what just happened, one-shot like ``speech_input``: a user came into view, or
   left it. It wakes the agent only on whom it attends to: the tracked user (followed or pinned)
-  leaving, or a user arriving while nobody is tracked. Every other change is written, and wakes
-  nothing.
+  leaving, or a user arriving while nobody is tracked. Every other change is not an event at all:
+  it only changes ``users_in_view``, so a step another input wakes never reads it as news.
 - ``users_in_view`` — who is present now, and where. Standing; never wakes the agent.
 - ``personal_space`` — which user, if any, is inside the personal space. Standing; never wakes.
 - ``tracked_user`` — whom the head follows, or that it follows nobody. Standing; never wakes.
@@ -348,10 +348,10 @@ def users_prompt_section() -> str:
         "who anyone is.\n\n"
         f"- `{USER_EVENT}` tells you what just happened: a user came into view, or left your "
         "view. It wakes you only twice: when someone comes into view while your head follows "
-        "nobody, and when the user your head follows leaves. Other comings and goings are "
-        "written there too, for you to know, not to react to. You may greet someone who arrives "
-        "or say goodbye to the user who leaves, or do nothing; don't break off a conversation "
-        "for it.\n"
+        "nobody, and when the user your head follows leaves. Other comings and goings only "
+        "change who is in view: they are for you to know, not to react to. You may greet someone "
+        "who arrives or say goodbye to the user who leaves, or do nothing; don't break off a "
+        "conversation for it.\n"
         f"- `{USERS_IN_VIEW}` tells you who is in view right now, and where.\n"
         f"- `{PERSONAL_SPACE}` tells you which user, if any, is very close to you, inside your "
         "personal space. It is only known while your head follows someone.\n"
@@ -528,8 +528,14 @@ class UsersInput:
         return not ((self._tracked & present) - set(users))
 
     def _events(self, events: tuple[UserChange, ...]) -> None:
-        """Write *events* as the user event — appended to the previous ones when they landed less
-        than ``EVENT_JOIN_S`` ago, so a step woken by both reads both."""
+        """Write the changes of *events* that wake the agent as the user event — appended to the
+        previous ones when they landed less than ``EVENT_JOIN_S`` ago, so a step woken by both
+        reads both. A change that does not wake is not an event: written, it would sit in the
+        World for ``USER_EVENT_TTL`` and a step another input woke (a finished command) would read
+        it as something that just happened; it shows only in the standing entries."""
+        events = tuple(e for e in events if e.wakes)
+        if not events:
+            return
         now = self._clock()
         if self._event and now - self._event_at < EVENT_JOIN_S:
             events = self._event + events

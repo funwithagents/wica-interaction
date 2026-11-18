@@ -206,25 +206,30 @@ def test_a_user_arriving_is_an_event_and_listed_in_view() -> None:
     run(scenario())
 
 
-def test_a_user_leaving_is_an_event() -> None:
+def test_a_user_nobody_follows_leaving_is_no_event() -> None:
+    """Not the tracked user: their departure changes who is in view, and nothing else — no event a
+    step woken by another input could read as news."""
+
     async def scenario() -> None:
         faces = ScriptedFaces()
         async with _seeing(faces) as (_, users, world):
             await users.start(world.deliver)
             faces.show(AHEAD)
-            user = await _arrived(world)
+            await _arrived(world)
+            events = len(world.values(USER_EVENT))
 
             faces.hide()
             assert await _until(
-                lambda: f"User {user} left your view." in world.events()
+                lambda: world.text(USERS_IN_VIEW) == "Nobody is in view."
             ), world.writes
-            assert world.text(USERS_IN_VIEW) == "Nobody is in view."
+            assert len(world.values(USER_EVENT)) == events, world.values(USER_EVENT)
 
     run(scenario())
 
 
-def test_someone_replacing_someone_is_a_departure_and_an_arrival() -> None:
-    """The count stays at one, yet the user changed — what the bridge's users tell apart."""
+def test_someone_replacing_someone_nobody_follows_is_announced_as_an_arrival() -> None:
+    """The count stays at one, yet the user changed — what the bridge's users tell apart. Nobody
+    is followed: the newcomer is an event, the departure only leaves `users_in_view`."""
 
     async def scenario() -> None:
         faces = ScriptedFaces()
@@ -239,10 +244,11 @@ def test_someone_replacing_someone_is_a_departure_and_an_arrival() -> None:
             )  # far from the first: a new track, the first one missed
             assert await _until(
                 lambda: (
-                    any(f"User {first} left your view." in e for e in world.events())
-                    and any("to your right" in e for e in world.events())
+                    any("to your right" in e for e in world.events())
+                    and f"user {first} " not in world.text(USERS_IN_VIEW)
                 )
             ), world.writes
+            assert not any("left your view" in e for e in world.events())
 
     run(scenario())
 
@@ -460,11 +466,11 @@ RIGHT = (0.6, 0.2)
 
 
 def _user_on_the_right(world: World) -> int | None:
-    for event in world.events():
-        if m := re.search(
-            r"A user came into view: user (\d+), [^\n]*to your right", event
-        ):
-            return int(m.group(1))
+    """The user `users_in_view` lists to the robot's right, if any."""
+    value = world.current(USERS_IN_VIEW)
+    for user in value or ():
+        if user.side == "right":
+            return user.user
     return None
 
 
@@ -496,9 +502,10 @@ def test_the_automatic_target_grabbing_a_newcomer_still_wakes_the_agent() -> Non
     run(scenario())
 
 
-def test_around_the_followed_user_comings_and_goings_wake_nothing() -> None:
-    """The head follows user A: B arriving and B leaving are written, and wake nothing; A leaving
-    wakes the agent, worded as the user it followed."""
+def test_around_the_followed_user_comings_and_goings_are_no_events() -> None:
+    """The head follows user A: B arriving and B leaving change who is in view, and are no event
+    at all (nothing to wake on, nothing a later step could read as news); A leaving wakes the
+    agent, worded as the user it followed."""
 
     async def scenario() -> None:
         faces = ScriptedFaces()
@@ -510,20 +517,15 @@ def test_around_the_followed_user_comings_and_goings_wake_nothing() -> None:
             assert await _until(
                 lambda: f"following user {followed}" in world.text(TRACKED_USER)
             ), world.writes
-            woken = len(world.woke)
+            events = len(world.values(USER_EVENT))
 
             faces.show(AHEAD, RIGHT)
             assert await _until(lambda: _user_on_the_right(world) is not None), (
                 world.writes
             )
-            other = _user_on_the_right(world)
             faces.show(AHEAD)
-            assert await _until(
-                lambda: any(
-                    f"User {other} left your view." in e for e in world.events()
-                )
-            ), world.writes
-            assert world.woke[woken:] == [], world.woke[woken:]
+            assert await _until(lambda: _user_on_the_right(world) is None), world.writes
+            assert len(world.values(USER_EVENT)) == events, world.values(USER_EVENT)
 
             faces.hide()
             line = f"User {followed}, whom your head was following, left your view."
