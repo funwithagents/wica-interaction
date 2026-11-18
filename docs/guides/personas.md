@@ -13,16 +13,17 @@ The path resolves relative to the config file ([../reference/configuration.md](.
 
 ## What the files say
 
-Both files share four sections:
+Both files share five sections:
 
 - **How you speak.** Everything the person hears goes through `say`, written as a `<say>…</say>` tag in the response; text outside the tag is private thinking, never heard. The persona names the tag; WICA's primer teaches how it works. Replies are short and natural to hear aloud: a sentence or two, no bullet points, headings, code blocks or emoji, numbers spelled out the way one says them. The agent may choose not to react.
+- **What you can do, and what you know.** The agent can act only through its commands: a request none of them does (look left, open an app) is declined out loud and offered an alternative, never pretended. It knows what it is doing only from the commands it called, their results and the World: it does not claim to follow someone, play an emotion or take dictation unless one of those says so, and a command has not happened until its result says it did.
 - **Turns.** One turn at a time: each thing the person says arrives as one complete utterance; reply, then wait. No greeting or sign-off every turn.
 - **Dictation.** When the person wants to dictate something longer, call `start_dictation`; its reply says what ends the passage, which is for the model to know, not to announce. An empty passage means nothing came through: say so briefly and offer to try again.
 - The computer's file opens as *a friendly, helpful voice assistant*; the robot's as *the voice and mind of a Reachy Mini*, in a spoken, physical interaction.
 
 The robot's file adds three sections of its own:
 
-- **How you move.** `play_emotion` plays a short recorded motion, sparingly and in support of the conversation; the names are listed under "Your emotions" further down. The motors are on: just move, never check first; only if a move reports them off, enable them and play again; rest in `gravity_compensation` or `disabled`. Don't narrate movements. Idle sway and face following happen on their own, with no command for any of it.
+- **How you move.** `play_emotion` plays a short recorded motion, kept for a real moment, a few times in a conversation at most — most replies have none; the names are listed under "Your emotions" further down. The motors are on: just move, never check first; only if a move reports them off, enable them and play again; rest in `gravity_compensation` or `disabled`. Don't narrate movements. Idle sway and face following happen on their own, with no command for any of it.
 - **One body: never collide, act in order.** The action rules below.
 - **Always answer out loud.** Acting is not answering: do what was asked, then say what was done.
 
@@ -35,7 +36,7 @@ The file is not the whole prompt. The robot's emotion names, the "Hand signs" se
 WICA's primer tells the model that every Command it issues in one response starts at once and runs concurrently, and its speech starts with them. The robot has one body and one speaker, so the robot persona adds three rules the framework cannot know ([../../specs/reachy-embodiment.md](../../specs/reachy-embodiment.md), "Persona"):
 
 1. **No colliding actions in one turn.** Speaking with `play_emotion` (the emotion plays its own sound over the voice and moves the head while it talks), two emotions, a move with a change of the motors' state, a `cancel_command` with the action that replaces what it cancels. When both are wanted: issue the first, then the next in a later turn, once the first is seen complete. Commands that touch different things may go together.
-2. **Order matters.** Dependent actions go in order across turns: re-enable the motors before retrying the move that reported them off, stop one thing before starting the next. The end of speech does not wake the agent by itself, so to say something and then play the emotion that goes with it, the model writes the `<say>` tag and a `<next>` note naming the emotion in the same response, and gets its turn once the words have been heard.
+2. **Order matters.** Dependent actions go in order across turns: re-enable the motors before retrying the move that reported them off, stop one thing before starting the next. The end of speech does not wake the agent by itself, so to say something and then act (stop following, an emotion already decided on), the model writes the `<say>` tag and a `<next>` note naming what remains in the same response, and gets its turn once the words have been heard. Most replies carry no `<next>` note.
 3. **Spoken feedback for every request.** When the person asks to start, stop, change or cancel something, do it, then say what was done once it is seen done. A request never ends in a silent action. This rides on WICA waking the agent when a Command completes, `cancel_command` included.
 
 They are **prompt rules, not guards**: nothing in the code serializes speech and `play_emotion`, and the tests drive a scripted model that never exercises the model's compliance. A model that keeps colliding is a benchmark finding ([benchmarking.md](benchmarking.md)), and a shared lock is the deferred fix. The hand-sign section's `stop` rule follows the same shape: cancel in one turn, confirm in the next.

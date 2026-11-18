@@ -146,7 +146,7 @@ def main() -> None:
 
 ## Persona
 
-[prompts/computer.md](../prompts/computer.md): a friendly voice assistant in a spoken conversation; it speaks only through `say`, may choose not to react, and can switch to dictation when asked — including the sentence that an empty dictated passage means nothing came through. It says nothing about hands: the "Hand signs" section is appended at startup by the app when vision is on ([gesture-input.md](gesture-input.md), "What the agent does with it"), so the same file serves with and without a webcam. It does **not** say how a dictated passage ends: that depends on the config's `dictation_default_segmentation_mode`, so `start_dictation`'s reply says it — for the model to know, not to announce ([asr-bridge.md](asr-bridge.md), "Dictation").
+[prompts/computer.md](../prompts/computer.md): a friendly voice assistant in a spoken conversation; it speaks only through `say`, may choose not to react, knows it can do only what its commands do and its own state only from their results and the World (the shared self-knowledge rules: asked to open an app or set a timer, it says it cannot), and can switch to dictation when asked — including the sentence that an empty dictated passage means nothing came through. It says nothing about hands: the "Hand signs" section is appended at startup by the app when vision is on ([gesture-input.md](gesture-input.md), "What the agent does with it"), so the same file serves with and without a webcam. It does **not** say how a dictated passage ends: that depends on the config's `dictation_default_segmentation_mode`, so `start_dictation`'s reply says it — for the model to know, not to announce ([asr-bridge.md](asr-bridge.md), "Dictation").
 
 ## Testing
 
