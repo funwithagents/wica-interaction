@@ -172,36 +172,46 @@ def _hand(label: str | None, confidence: float) -> str:
 
 
 def tick_vision(system: AppSystem) -> str:
-    """Refresh the Vision line: whether the gesture input runs, every hand's raw top label and score
-    in slot order (or "no hand") under the configured cap, every hand's last delivered sign, the
-    camera feed's achieved rate (its own — the robot's daemon-paced feed, or the paced webcam) and
-    each stage's next to the configured target (the hand demo's readout), and any camera (a
-    failure, a stall) / stage error."""
+    """Refresh the hand signs' part of the Vision section, as a few readable lines: whether the
+    gesture input runs; one table row per hand slot under the configured cap — the hand's raw top
+    label and score (or "no hand") and its last delivered sign; the camera feed's achieved rate (its
+    own — the robot's daemon-paced feed, or the paced webcam) and each stage's next to the
+    configured target (the hand demo's readout); then any camera (a failure, a stall) or stage
+    error, each on its own line."""
     gesture = system.gesture
     if gesture is None:
         return "_Vision off (`vision.enabled` is false, or no camera)._"
     status = gesture.status()
-    seen = ", ".join(
-        f"#{i} {_hand(hand['label'], hand['confidence'])}"
-        for i, hand in enumerate(status["hands"], start=1)
-    )
-    signs = ", ".join(
-        f"#{hand} {sign if sign is not None else '—'}"
-        for hand, sign in enumerate(status["signs"], start=1)
-    )
+    hands = status["hands"]
+    signs = status["signs"]
+    rows = ["| hand | seen | sign |", "|---|---|---|"]
+    for i in range(status["max_hands"]):
+        seen = (
+            _hand(hands[i]["label"], hands[i]["confidence"])
+            if i < len(hands)
+            else "no hand"
+        )
+        sign = signs[i] if i < len(signs) and signs[i] is not None else "—"
+        rows.append(f"| #{i + 1} | {seen} | {sign} |")
     target = status["target_fps"]
-    status_md = (
-        f"**Vision:** {'running' if status['running'] else 'stopped'} · "
-        f"**hands (max {status['max_hands']}):** {seen or 'no hand'} · **signs:** {signs} · "
-        f"**camera:** {_fps(status['stream_fps'])} · "
-        f"**hand stage:** {_fps(status['hand_fps'])} (target {target:g}) · "
-        f"**classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
-    )
+    lines = [
+        "#### Hand signs",
+        (
+            f"**Status:** {'running' if status['running'] else 'stopped'} · "
+            f"up to {status['max_hands']} hands"
+        ),
+        "\n".join(rows),
+        (
+            f"- **camera:** {_fps(status['stream_fps'])}\n"
+            f"- **hand stage:** {_fps(status['hand_fps'])} (target {target:g})\n"
+            f"- **classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
+        ),
+    ]
     if status["capture_error"]:
-        status_md += f" · ⚠️ **camera:** {status['capture_error']}"
+        lines.append(f"⚠️ **camera:** {status['capture_error']}")
     if status["error"]:
-        status_md += f" · ⚠️ **error:** {status['error']}"
-    return status_md
+        lines.append(f"⚠️ **error:** {status['error']}")
+    return "\n\n".join(lines)
 
 
 # --- What the page shows of the body: the camera and its status --------------------------------------------------

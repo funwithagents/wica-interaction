@@ -161,11 +161,11 @@ def head_line(tracking: HeadTrackingReport) -> str:
 
 
 def users_markdown(users: UsersReport, tracking: HeadTrackingReport) -> str:
-    """The head line, then one row per user present: ``●`` on the one the head follows, whether
+    """Under a "Users" subheading, the head line, then one row per user present: ``●`` on the one the head follows, whether
     they were seen on the last observation and the camera frames where they are, how long they have
     been missing in view, and where they are — the side and distance as the agent is told them (the
     camera's own left and right, not the mirrored picture's)."""
-    head = head_line(tracking)
+    head = f"#### Users\n\n{head_line(tracking)}"
     if not users.active:
         return f"{head}\n\n_No detector is looking._"
     if not users.users:

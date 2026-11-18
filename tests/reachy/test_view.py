@@ -128,7 +128,7 @@ def test_the_users_table_lists_who_is_present_and_marks_the_followed_one() -> No
     text = users_markdown(
         _users(_user(3), _user(5, x=-0.8, in_view=False)), _tracking(track_id=3)
     )
-    assert text.startswith("**Head:** follows #3\n\n| user |")
+    assert text.startswith("#### Users\n\n**Head:** follows #3\n\n| user |")
     assert "| ● #3 | yes | yes | 0.0 s | about 0.7 m away, in front of you |" in text
     # Out of view through a move of the robot's own: still present, under the same number.
     assert "| #5 | no | no | 1.5 s | about 0.7 m away, to your left |" in text
@@ -214,7 +214,9 @@ def test_the_robot_shows_its_camera_and_its_users_once_it_came_up() -> None:
         await seeing.enter()
         try:
             assert await _until(lambda: seeing.view().frame is not None)
-            assert seeing.view().status.startswith("**Head:** tracking off")
+            assert seeing.view().status.startswith(
+                "#### Users\n\n**Head:** tracking off"
+            )
         finally:
             await seeing.exit()
 

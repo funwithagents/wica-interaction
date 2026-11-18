@@ -206,54 +206,46 @@ def test_vision_line_without_gesture_input_says_off() -> None:
     assert "off" in tick_vision(_system_with_gesture(None))
 
 
-def test_vision_line_shows_hand_label_score_and_signs() -> None:
+def test_vision_shows_each_hand_slot_as_a_row_and_the_rates_as_a_list() -> None:
     no_hand = tick_vision(_system_with_gesture(_Gesture()))
-    assert "running" in no_hand and "signs: #1 —, #2 —" in no_hand.replace("**", "")
-    assert "hands (max 2): no hand" in no_hand.replace("**", "")
+    assert no_hand.startswith("#### Hand signs\n\n**Status:** running · up to 2 hands")
+    assert "| #1 | no hand | — |" in no_hand and "| #2 | no hand | — |" in no_hand
     # Before the first sampling window the achieved rates are a placeholder; the stages show their
     # target, the camera (which runs at its own rate) none.
-    assert "camera: — fps ·" in no_hand.replace("**", "")
-    assert "hand stage: — fps (target 5)" in no_hand.replace("**", "")
-    assert "classifier: — fps (target 5)" in no_hand.replace("**", "")
+    assert "- **camera:** — fps\n" in no_hand
+    assert "- **hand stage:** — fps (target 5)" in no_hand
+    assert "- **classifier:** — fps (target 5)" in no_hand
 
     rates = tick_vision(
         _system_with_gesture(
             _Gesture(stream_fps=5.02, hand_fps=4.93, classifier_fps=2.5, target_fps=5.0)
         )
-    ).replace("**", "")
-    assert "camera: 5.0 fps ·" in rates
-    assert "hand stage: 4.9 fps (target 5)" in rates
-    assert "classifier: 2.5 fps (target 5)" in rates
+    )
+    assert "- **camera:** 5.0 fps\n" in rates
+    assert "- **hand stage:** 4.9 fps (target 5)" in rates
+    assert "- **classifier:** 2.5 fps (target 5)" in rates
 
+    # What the hand shows, beside the sign it last delivered.
     signing = tick_vision(
         _system_with_gesture(
             _Gesture(
                 signs=["stop", None], hands=[{"label": "fist", "confidence": 0.87}]
             )
         )
-    ).replace("**", "")
-    assert "#1 fist (0.87)" in signing and "signs: #1 stop, #2 —" in signing
-    # The camera's rate is its own (the robot's feed runs at the daemon's rate, not the target);
-    # the stages show theirs next to the configured target.
-    rates = tick_vision(
-        _system_with_gesture(
-            _Gesture(stream_fps=10.0, hand_fps=4.9, classifier_fps=4.8)
-        )
-    ).replace("**", "")
-    assert "camera: 10.0 fps ·" in rates and "poll" not in rates
-    assert "hand stage: 4.9 fps (target 5)" in rates
+    )
+    assert "| #1 | fist (0.87) | stop |" in signing
 
     # A hand whose top class missed the threshold: the raw score shows, unvalidated, no sign.
     weak = tick_vision(
         _system_with_gesture(_Gesture(hands=[{"label": None, "confidence": 0.5}]))
-    ).replace("**", "")
-    assert "#1 below threshold (0.50)" in weak and "signs: #1 —, #2 —" in weak
+    )
+    assert "| #1 | below threshold (0.50) | — |" in weak
 
 
-def test_vision_line_lists_every_hand_in_slot_order() -> None:
+def test_vision_lists_every_hand_in_slot_order() -> None:
     """Three slots: each hand shows under its number — a hand classified outside the vocabulary, a
     fist on the second, a hand at the frame edge with no crop — under the configured cap."""
-    line = tick_vision(
+    text = tick_vision(
         _system_with_gesture(
             _Gesture(
                 signs=[None, "stop", None],
@@ -265,9 +257,12 @@ def test_vision_line_lists_every_hand_in_slot_order() -> None:
                 ],
             )
         )
-    ).replace("**", "")
-    assert "hands (max 3): #1 call (0.91), #2 fist (0.77), #3 no crop" in line
-    assert "signs: #1 —, #2 stop, #3 —" in line
+    )
+    assert "up to 3 hands" in text
+    assert (
+        "| #1 | call (0.91) | — |\n| #2 | fist (0.77) | stop |\n| #3 | no crop | — |"
+        in (text)
+    )
 
 
 def test_vision_line_flags_camera_and_stage_errors() -> None:
@@ -279,7 +274,8 @@ def test_vision_line_flags_camera_and_stage_errors() -> None:
     stalled = tick_vision(
         _system_with_gesture(_Gesture(capture_error="no camera frame for 3 s"))
     )
-    assert "⚠️" in stalled and "no camera frame for 3 s" in stalled
+    # Each problem on a line of its own, after the rates.
+    assert stalled.endswith("\n\n⚠️ **camera:** no camera frame for 3 s")
 
     stage = tick_vision(_system_with_gesture(_Gesture(error="model download failed")))
     assert "error" in stage and "model download failed" in stage
