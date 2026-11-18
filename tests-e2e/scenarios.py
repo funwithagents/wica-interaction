@@ -414,8 +414,8 @@ def _user_arrives(e2e: E2E) -> int:
 def users(e2e: E2E) -> None:
     """Scenario 4: nobody is announced while nobody is there; a user arriving is delivered, listed
     and reacted to; the agent follows them (asked out loud when it did not on its own); coming into
-    the personal space and stepping back out are each delivered and reacted to; leaving is delivered
-    and reacted to."""
+    the personal space and stepping back out are each delivered, waking nothing; leaving — the user
+    the head follows — is delivered and reacted to."""
     since = begin(e2e, "users")
 
     t = time.monotonic()
@@ -451,7 +451,6 @@ def users(e2e: E2E) -> None:
         "the agent never settled"
     )
 
-    reacted = reactions_to(e2e.run, "personal_space")
     t = time.monotonic()
     e2e.person.step_to(PERSON_NEAR)
     inside = e2e.inputs.wait_for(
@@ -464,14 +463,7 @@ def users(e2e: E2E) -> None:
         e2e.inputs.delivered("personal_space"),
         e2e.inputs.delivered("tracked_user")[-3:],
     )
-    assert wait_until(
-        lambda: reactions_to(e2e.run, "personal_space") > reacted, REPLY_WITHIN_S
-    ), "the agent never reacted to the user coming into its personal space"
-    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
-        "the agent never settled"
-    )
 
-    reacted = reactions_to(e2e.run, "personal_space")
     t = time.monotonic()
     e2e.person.step_to(PERSON_FAR)
     out = e2e.inputs.wait_for(
@@ -481,11 +473,8 @@ def users(e2e: E2E) -> None:
         after=t,
     )
     assert out is not None, e2e.inputs.delivered("personal_space")
-    assert wait_until(
-        lambda: reactions_to(e2e.run, "personal_space") > reacted, REPLY_WITHIN_S
-    ), "the agent never reacted to the user stepping back out of its personal space"
-    assert wait_until(lambda: settled(e2e.run), SPOKEN_WITHIN_S), (
-        "the agent never settled"
+    assert reactions_to(e2e.run, "personal_space") == 0, (
+        "the personal space woke the agent"
     )
 
     reacted = reactions_to(e2e.run, "user_event")
