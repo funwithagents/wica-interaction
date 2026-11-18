@@ -74,6 +74,7 @@ from wica_interaction.gesture_input import (
     GestureModels,
     hand_signs_prompt_section,
     preload_mediapipe,
+    preload_transformers,
     sign_shown,
 )
 
@@ -239,12 +240,14 @@ def build_system(
 
     # MediaPipe before the body: imported once the robot's media runs, it aborts the process on
     # Linux (see `preload_mediapipe`). Only for the shipped detector — an injected one needs none.
-    if (
-        config.vision is not None
-        and config.vision.enabled
-        and (gesture_models is None or gesture_models.detector is None)
-    ):
+    vision_on = config.vision is not None and config.vision.enabled
+    if vision_on and (gesture_models is None or gesture_models.detector is None):
         preload_mediapipe()
+    # Transformers before any worker thread: imported on two at once (the classifier's stage and
+    # the mlx-audio ASR's model load), it fails (see `preload_transformers`). Only for the shipped
+    # classifier — an injected one needs none.
+    if vision_on and (gesture_models is None or gesture_models.classifier is None):
+        preload_transformers()
 
     # --- The body: entered on the app loop. Any failure is "no embodiment" — the agent still
     # builds and typed text still drives it, but nothing that needs a body is wired. The

@@ -10,6 +10,8 @@ with them. See specs/gesture-input.md ("Testing").
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -921,3 +923,71 @@ def test_hand_signs_prompt_section_names_the_whole_vocabulary_and_the_stop_rule(
     # It reports a detection, not who made it: the camera cannot tell whose hand it is.
     assert "cannot tell whose hand" in section
     assert "showing none" not in section
+
+
+# --- Transformers imported before any worker thread ------------------------------------------------
+
+# The race the preload prevents, in a fresh interpreter: the mlx-audio ASR's model load imports
+# `transformers` on its worker thread while the classifier imports `pipeline` from it on its own.
+# Without the preload either side fails with "cannot import name …" (every run, 2026-11-18).
+_RACE = """
+import sys, threading
+from wica_interaction.gesture_input import preload_transformers
+
+preload_transformers()
+errors = []
+
+def run(work):
+    try:
+        work()
+    except Exception as exc:
+        errors.append(repr(exc))
+
+def asr():
+    import mlx_audio.stt.models  # what the ASR's model load imports, on its worker thread
+
+def classifier():
+    from transformers import pipeline  # what the shipped classifier imports, on its stage
+
+threads = [threading.Thread(target=run, args=(w,)) for w in (asr, classifier)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+sys.exit("\\n".join(errors) or None)
+"""
+
+
+def test_preloading_transformers_lets_the_asr_and_the_classifier_import_it_at_once() -> (
+    None
+):
+    pytest.importorskip("transformers")
+    pytest.importorskip("mlx_audio")
+    done = subprocess.run(
+        [sys.executable, "-c", _RACE],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+
+
+def test_preloading_transformers_leaves_its_absence_to_the_classifier() -> None:
+    """Without `transformers` the preload says nothing: the classifier reports it as its error."""
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; sys.modules['transformers'] = None\n"
+                "from wica_interaction.gesture_input import preload_transformers\n"
+                "preload_transformers()"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
