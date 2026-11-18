@@ -22,6 +22,15 @@
       "vad": { "type": "silero", "min_silence_duration_ms": 1500 }
     }
   },
+  "vision": {
+    "enabled": true,
+    "threshold": 0.55,
+    "fps": 10,
+    "max_hands": 2,
+    "hold_s": 0.3,
+    "release_hold_s": 0.5,
+    "device": null
+  },
   "reachy": {
     "backend": "sim",
     "robot": {},
@@ -54,20 +63,41 @@
       "detector": "yunet",
       "enabled": true,
       "width": 640,
+      "score_threshold": 0.6,
       "target_fps": null
     },
     "motion": {
       "presence": true,
       "idle": "breathing",
       "wobbling": true,
-      "tracking": { "enabled": false } }
-  },
-  "vision": {
-    "enabled": true,
-    "threshold": 0.55,
-    "fps": 10,
-    "max_hands": 2,
-    "hold_s": 0.3,
-    "release_hold_s": 0.5,
-    "device": null }
+      "tracking": {
+        "enabled": false,
+        "focus": false,
+        "mirroring": {
+          "enabled": true,
+          "gain": 1.0,
+          "max_deg": 20.0
+        },
+        "approach": {
+          "enabled": true,
+          "lean_mm": 15.0
+        },
+        "personal_space": {
+          "enabled": true,
+          "distance_m": 0.3,
+          "max_back_mm": 20.0,
+          "span_m": 0.1,
+          "exit_margin_m": 0.1
+        },
+        "frame_delay_s": 0.0
+      },
+      "base_following": {
+        "enabled": true,
+        "deadband_deg": 20.0,
+        "hold_s": 20.0,
+        "lag_s": 0.8
+      },
+      "max_tilt_deg": 25.0
+    }
+  }
 }

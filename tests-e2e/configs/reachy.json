@@ -25,7 +25,7 @@
       "module": { "type": "phonon", "voice": "Micah" }
     },
     "audio": { "xvf3800": null },
-    "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "target_fps": null },
+    "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "score_threshold": 0.6, "target_fps": null },
     "motion": {
       "presence": true,
       "idle": "breathing",

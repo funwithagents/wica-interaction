@@ -140,7 +140,7 @@ Computer only, optional: absent means device `0`. What the hand-sign input reads
   "daemon": { "spawn": "auto", "headless": false, "camera": { "source": "webcam", "device": null, "hfov_deg": 70.0 }, "startup_timeout": 45.0 },
   "tts": { "module": { "type": "pocket", "voice": "george", "device": "auto" } },
   "audio": { "xvf3800": null },
-  "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "target_fps": null },
+  "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "score_threshold": 0.6, "target_fps": null },
   "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": { "enabled": false } }
 }
 ```
@@ -154,7 +154,7 @@ Robot only. The section is a reachy-mini-bridge config, handed whole to `ReachyM
 | `daemon` | whether the bridge starts a daemon (`spawn`), with or without the viewer window (`headless`), what the simulated camera shows (`camera.source`: your `webcam`, or the rendered `sim` scene), how long to wait for it (`startup_timeout`) |
 | `tts` | **the robot's voice**: a tts-engine engine block, the same shape as the computer's `tts.engine`, built by the bridge; its `tts-<type>` extra must be installed. Absent, the robot comes up without a voice |
 | `audio` | the XVF3800 profile; `null` keeps the firmware defaults. Echo cancellation is the robot's, in hardware |
-| `face_detection` | the bridge's face detector (`yunet`, shipped; weights downloaded on first use), and its cost knobs `width` and `target_fps`. With a detector the robot sees people and tells the agent, and the app runs detection for the whole session whatever `enabled` says; without one it sees nobody ([guides/reachy-mini.md](../guides/reachy-mini.md#the-users-in-front-of-the-robot)) |
+| `face_detection` | the bridge's face detector (`yunet`, shipped; weights downloaded on first use), `score_threshold` (the confidence a face is kept from, strictly between 0 and 1; the template's `0.6` is upstream's default, `null` follows it), and its cost knobs `width` and `target_fps`. With a detector the robot sees people and tells the agent, and the app runs detection for the whole session whatever `enabled` says; without one it sees nobody ([guides/reachy-mini.md](../guides/reachy-mini.md#the-users-in-front-of-the-robot)) |
 | `motion` | the robot's aliveness between actions: `presence`, the `idle` move, `wobbling` with the voice, none of it agent-facing; and `tracking`, following a person with the head: an object whose `enabled` says whether a session starts following (the template: `false`, the agent starts it), the rest being the bridge's posture settings. Needs a detector |
 
 Absent, the section means the `real` backend with the bridge's defaults and no voice. The ASR section's `audio_source` is `{"type": "custom"}` on the robot: the app listens through the robot's echo-cancelled microphone, whatever rate the ASR module is fed.
