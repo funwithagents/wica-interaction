@@ -294,16 +294,28 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                 )
                 stop_dictation = gr.Button("Stop dictation", interactive=False)
 
+            with gr.Column(scale=2):
+                # What the body sees and knows (specs/app.md, "What the user sees", Camera).
+                gr.Markdown("### Camera")
+                camera = gr.Image(
+                    label="Camera (mirrored)",
+                    type="numpy",
+                    interactive=False,
+                    show_label=False,
+                )
+                camera_status = gr.Markdown("_No camera frame yet._")
+
+                # The hand signs read this same camera (specs/app.md, "What the user sees").
                 gr.Markdown("### Vision")
                 vision_status = gr.Markdown("_Vision status…_")
                 if system.gesture is not None:
                     # As in the vision-modules hand demo: save what each stage last consumed.
+                    snapshot_folder = gr.Textbox(
+                        value=str(_SNAPSHOT_DIR), label="Snapshot folder"
+                    )
                     with gr.Row():
-                        snapshot_folder = gr.Textbox(
-                            value=str(_SNAPSHOT_DIR), label="Snapshot folder", scale=3
-                        )
-                        save_detector = gr.Button("Save detector snapshot", scale=1)
-                        save_classifier = gr.Button("Save classifier snapshot", scale=1)
+                        save_detector = gr.Button("Save detector snapshot")
+                        save_classifier = gr.Button("Save classifier snapshot")
                     snapshot_status = gr.Markdown("")
                     save_detector.click(  # pyright: ignore[reportAttributeAccessIssue]
                         on_save_detector,
@@ -316,16 +328,6 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                         outputs=snapshot_status,
                     )
 
-            with gr.Column(scale=2):
-                # What the body sees and knows (specs/app.md, "What the user sees", Camera).
-                gr.Markdown("### Camera")
-                camera = gr.Image(
-                    label="Camera (mirrored)",
-                    type="numpy",
-                    interactive=False,
-                    show_label=False,
-                )
-                camera_status = gr.Markdown("_No camera frame yet._")
                 show_debug = gr.Checkbox(label="Show debug panels", value=False)
                 # The toggle is visibility only: the contrib panels own their timers and keep
                 # ticking while hidden (see specs/app.md, "Refresh cost").

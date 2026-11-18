@@ -53,7 +53,7 @@ With the stages, the hold and the agent's coalescing window of about 200 ms, a `
 
 ## The Vision line
 
-Under the ASR panel, refreshed with it. Off, it reads `Vision off (vision.enabled is false, or no camera).` On, one line:
+Under the Camera panel, refreshed with the ASR panel. Off, it reads `Vision off (vision.enabled is false, or no camera).` On, one line:
 
 ```
 Vision: running · hands (max 2): #1 like (0.91), #2 below threshold (0.40) · signs: #1 like, #2 — · camera: 9.8 fps · hand stage: 9.8 fps (target 10) · classifier: 9.5 fps (target 10)
