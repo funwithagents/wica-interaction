@@ -24,10 +24,10 @@ The file carries the shared sections (`wica`, `asr`, optional `vision` — [conf
 ```json
 {
   "wica": { "agent": { "…": "…", "system_prompt_file": "prompts/computer.md" } },
-  "asr": { "engine": { "…": "…", "audio": { "device": null } } },
+  "asr": { "engine": { "…": "…" } },
   "tts": {
     "engine": {
-      "module": { "type": "elevenlabs", "api_key_env": "ELEVENLABS_API_KEY", "voice_id": "…" },
+      "module": { "type": "phonon", "voice": "Miles" },
       "player": { "device": null }
     }
   },

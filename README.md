@@ -46,10 +46,10 @@ Python 3.12+ and [`uv`](https://docs.astral.sh/uv/), from a checkout. Pick a bod
 git clone https://github.com/funwithagents/wica-interaction.git && cd wica-interaction
 
 # the computer, as the template configures it
-uv sync --no-dev --extra computer --extra wica-anthropic --extra asr-deepgram --extra asr-silero --extra tts-elevenlabs --extra audio-processing --extra vision
+uv sync --no-dev --extra computer --extra wica-huggingface-hub --extra asr-mlx-audio --extra asr-silero --extra tts-phonon --extra audio-processing --extra vision
 
 # the Reachy Mini, as the template configures it: in the simulator (drop reachy-sim for a real robot)
-uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-deepgram --extra asr-silero --extra tts-pocket --extra vision
+uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-mlx-audio --extra asr-silero --extra tts-phonon --extra vision
 
 # the development environment: both bodies, every agent provider, the simulator, the tooling
 uv sync --dev
@@ -59,12 +59,10 @@ Every extra, the platforms, the system packages and the first-run downloads are 
 
 ## Quick start
 
-One config file stands up each embodiment; the committed files are templates to copy and adapt ([docs/reference/configuration.md](docs/reference/configuration.md)). Keys are referenced by environment variable, never stored.
+One config file stands up each embodiment; the committed files are templates to copy and adapt ([docs/reference/configuration.md](docs/reference/configuration.md)). They run speech in and the voice on your machine (the recognizer needs Apple silicon) and the agent on the Hugging Face Hub, so they need one key, referenced by environment variable, never stored:
 
 ```
-export WICA_ANTHROPIC_API_KEY=sk-...   # the agent
-export DEEPGRAM_API_KEY=...            # speech in
-export ELEVENLABS_API_KEY=...          # the voice
+export WICA_HF_TOKEN=hf_...            # the agent
 uv run wica-interaction-computer --config config.computer.example.json
 ```
 
@@ -73,12 +71,11 @@ Open the address Gradio prints and talk. Each thing you say shows as 🗣️ on 
 The robot, in the simulator the bridge spawns for you (the MuJoCo viewer opens; needs the `reachy-sim` extra, and on macOS an unlocked GUI session):
 
 ```
-export WICA_HF_TOKEN=hf_...            # the agent (the template uses the Hugging Face Hub)
-export DEEPGRAM_API_KEY=...
+export WICA_HF_TOKEN=hf_...            # the agent
 uv run wica-interaction-reachy --config config.reachy.example.json
 ```
 
-The template's voice is the local `pocket` model, which needs no key and downloads its weights on first run. For a Reachy Mini Lite plugged in over USB, set `reachy.backend` to `"real"`; the complete walk-through, the simulator's options and the robot's, continues in [docs/getting-started.md](docs/getting-started.md).
+The first run downloads the speech recognizer's model and the voice. Another agent, recognizer or voice is a change of one block plus its extra; [docs/reference/configuration.md](docs/reference/configuration.md#what-the-templates-run-and-the-other-choices) says where each provider is documented. For a Reachy Mini Lite plugged in over USB, set `reachy.backend` to `"real"`; the complete walk-through, the simulator's options and the robot's, continues in [docs/getting-started.md](docs/getting-started.md).
 
 ## Documentation
 

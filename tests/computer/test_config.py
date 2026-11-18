@@ -158,3 +158,17 @@ def test_camera_device_of_the_wrong_type_raises(tmp_path: Path, device: object) 
         ValueError, match="camera.device must be an integer or a string"
     ):
         load_config(_write(tmp_path, {**_composed(), "camera": {"device": device}}))
+
+
+def test_the_committed_template_loads() -> None:
+    """The shipped template must open, and run without a hosted speech key: a local recognizer and
+    a local voice, echo cancellation and hand signs on, everything else at its default (the
+    webcam is device 0)."""
+    cfg = load_config(
+        str(Path(__file__).resolve().parents[2] / "config.computer.example.json")
+    )
+    assert cfg.app.asr_engine.module.type == "mlx-audio"
+    assert cfg.tts_engine.module["type"] == "phonon"
+    assert cfg.audio_processing.echo_cancellation.enabled is True
+    assert cfg.app.vision is not None and cfg.app.vision.enabled is True
+    assert cfg.camera == CameraConfig()
