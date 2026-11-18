@@ -1,6 +1,6 @@
 # The users wake the agent only on whom it attends to
 
-**Status:** In progress
+**Status:** Done
 
 Implements `specs/reachy-embodiment.md` ("Users: `UsersInput`", as updated 2026-11-18) and the matching scenario 4 of `specs/e2e.md`: a `user_event` wakes the agent only when the tracked user (followed or pinned) leaves, or a user arrives while nobody is tracked; `personal_space` no longer wakes it. Leaves out any awareness of the robot's own moves and any distance gate on arrivals (open question 6).
 
