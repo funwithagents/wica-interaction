@@ -100,17 +100,21 @@ def _input(
     threshold: float = 0.55,
     max_hands: int = 2,
     hold_s: float = 0.0,
+    release_hold_s: float | None = None,
     stall_s: float = 3.0,
+    fps: float = _FPS,
 ) -> GestureInput:
     """No hold unless a test asks for one: the reduction and change tests are about what each
-    frame does; the hold has its own tests below."""
+    frame does; the hold has its own tests below. One hold for both directions unless a test
+    sets the release's apart."""
     return GestureInput(
         camera,
         on_gesture=lambda hand, sign: deliveries.append((hand, sign)),
         threshold=threshold,
-        fps=_FPS,
+        fps=fps,
         max_hands=max_hands,
         hold_s=hold_s,
+        release_hold_s=hold_s if release_hold_s is None else release_hold_s,
         stall_s=stall_s,
         models=GestureModels(detector=ScriptedDetector(), classifier=classifier),
     )
@@ -330,6 +334,39 @@ def test_hold_applies_to_a_sign_going_away_too() -> None:
     assert hold.value is None
 
 
+def test_a_sign_and_its_release_each_wait_their_own_hold() -> None:
+    """A short hold for a sign, a long one for it going away: the sign arrives after 0.25 s, a
+    switch to another sign after 0.25 s too, and the release only after 0.5 s."""
+    hold = HoldFilter(0.25, release_hold_s=0.5)
+    assert hold.observe("two", 0.0) is False
+    assert hold.observe("two", 0.25) is True  # a sign appearing: the short hold
+    assert hold.observe("three", 1.0) is False
+    assert (
+        hold.observe("three", 1.25) is True
+    )  # a sign replacing another: the short hold too
+    assert hold.observe(None, 2.0) is False
+    assert (
+        hold.observe(None, 2.25) is False
+    )  # the short hold has passed, the release's has not
+    assert hold.observe(None, 2.4) is False
+    assert hold.observe(None, 2.5) is True
+    assert hold.value is None
+
+
+def test_a_dip_longer_than_the_sign_hold_is_still_swallowed_by_the_release_hold() -> (
+    None
+):
+    """What the longer release hold is for: a dip to `None` that outlasts the sign's hold but not
+    the release's delivers nothing, so the sign coming back is not a second trigger."""
+    hold = HoldFilter(0.25, release_hold_s=0.5)
+    hold.observe("two", 0.0)
+    assert hold.observe("two", 0.25) is True
+    assert hold.observe(None, 1.0) is False
+    assert hold.observe(None, 1.3) is False  # 0.3 s of nothing: past 0.25, short of 0.5
+    assert hold.observe("two", 1.4) is False  # back: nothing was delivered in between
+    assert hold.value == "two"
+
+
 def test_hold_of_zero_delivers_on_the_first_observation() -> None:
     hold = HoldFilter(0.0)
     assert hold.observe("ok", 5.0) is True
@@ -341,6 +378,8 @@ def test_hold_of_zero_delivers_on_the_first_observation() -> None:
 def test_hold_rejects_a_negative_duration() -> None:
     with pytest.raises(ValueError, match="hold_s"):
         HoldFilter(-0.1)
+    with pytest.raises(ValueError, match="release_hold_s"):
+        HoldFilter(0.1, release_hold_s=-0.1)
     with pytest.raises(ValueError, match="hold_s"):
         GestureInput(
             _camera(),
@@ -380,6 +419,53 @@ def test_a_sign_is_delivered_after_the_hold_and_not_before() -> None:
         assert deliveries == [(1, "like")]
     finally:
         gesture.stop()
+
+
+def test_a_result_is_delivered_as_it_lands_whatever_the_stage_rate() -> None:
+    """The watcher does not poll at the stages' rate: with stages at 1 fps, a classifier result
+    reaches the consumer well inside the 1 s period it would otherwise wait out."""
+    camera = _camera()
+    deliveries: list[Delivery] = []
+    classified_at: list[float] = []
+    delivered_at: list[float] = []
+
+    class TimedClassifier(ScriptedClassifier):
+        def classify(self, image_bgr: np.ndarray) -> dict[str, float]:
+            classified_at.append(time.monotonic())
+            return super().classify(image_bgr)
+
+    gesture = GestureInput(
+        camera,
+        on_gesture=lambda hand, sign: (
+            delivered_at.append(time.monotonic()),
+            deliveries.append((hand, sign)),
+        )[1],
+        fps=1.0,
+        hold_s=0.0,
+        release_hold_s=0.0,
+        models=GestureModels(
+            detector=ScriptedDetector(),
+            classifier=TimedClassifier(_scores("like", 0.9)),
+        ),
+    )
+    gesture.start()
+    try:
+        assert _wait_until(lambda: deliveries == [(1, "like")], timeout=5.0)
+        assert delivered_at[0] - classified_at[0] < 0.5
+    finally:
+        gesture.stop()
+
+
+def test_the_status_echoes_both_holds() -> None:
+    gesture = _input(
+        _camera(),
+        ScriptedClassifier(_scores("like", 0.9)),
+        [],
+        hold_s=0.25,
+        release_hold_s=0.75,
+    )
+    status = gesture.status()
+    assert (status["hold_s"], status["release_hold_s"]) == (0.25, 0.75)
 
 
 def test_a_flickering_sign_never_arrives_until_it_settles() -> None:

@@ -47,7 +47,9 @@ class WebcamSource:
 
     Obeys the three rules every camera source does (specs/gesture-input.md, "``StreamFeed``"): it
     paces itself to ``fps`` (the provider calls ``read()`` back-to-back, and a
-    webcam delivering 30 fps into a 5 fps hand stage would be wasted captures); a device that cannot
+    webcam delivering 30 fps into a 10 fps hand stage would be wasted captures) by waiting *before*
+    it reads the device, so the frame it returns was just captured, not held back for an interval;
+    a device that cannot
     be opened — or a read that fails — is recorded in ``capture_error`` and retried at the poll rate,
     so an unplugged webcam shows on the Vision line and heals when plugged back in; and only
     ``close()`` makes ``read()`` return ``None``. A device that delivered frames and then yields
@@ -67,6 +69,9 @@ class WebcamSource:
         if fps <= 0:
             raise ValueError("fps must be > 0")
         self._interval = 1.0 / fps
+        # When the next poll of the device is due (capture thread only). Reset by `open()`, so
+        # the first read is immediate.
+        self._next_poll = 0.0
         self._inner = opener(device)  # constructed, not opened: open() does that
         self._opened = False
         # Whether the device delivered a frame since it was last opened: a missing frame after one
@@ -86,6 +91,7 @@ class WebcamSource:
     def open(self) -> None:
         """Open the device — never raises: a device that is not there is a ``capture_error`` the UI
         shows, and ``read()`` keeps retrying the open at the poll rate."""
+        self._next_poll = 0.0
         self._closed.clear()
         self._open_device()
 
@@ -112,15 +118,17 @@ class WebcamSource:
     def read(self) -> np.ndarray | None:
         """The next frame, or ``None`` once closed. Never ``None`` for "no frame yet"."""
         while not self._closed.is_set():
-            deadline = time.monotonic() + self._interval
+            # Pace first, read after: the interval is waited out before the device is polled, so
+            # the frame handed over is fresh. Waiting after the read would age every frame by a
+            # whole interval before the hand stage could see it.
+            if self._closed.wait(max(self._next_poll - time.monotonic(), 0.0)):
+                break
+            self._next_poll = time.monotonic() + self._interval
             self._open_device()  # a retry when a previous open failed; a no-op once open
             frame = self._read_frame() if self._opened else None
             if frame is not None:
                 self._clear_error()
-                # Pace: hold the rest of the interval before the provider asks again.
-                self._closed.wait(max(deadline - time.monotonic(), 0.0))
                 return frame
-            self._closed.wait(max(deadline - time.monotonic(), 0.0))
         return None
 
     def _read_frame(self) -> np.ndarray | None:

@@ -36,9 +36,10 @@
   "vision": {
     "enabled": true,
     "threshold": 0.55,
-    "fps": 5,
+    "fps": 10,
     "max_hands": 2,
-    "hold_s": 0.5,
+    "hold_s": 0.3,
+    "release_hold_s": 0.5,
     "device": null
   }
 }

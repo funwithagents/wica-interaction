@@ -34,7 +34,7 @@ HEARD_WITHIN_S = 20.0
 REPLY_WITHIN_S = 30.0
 # The reply spoken to its end.
 SPOKEN_WITHIN_S = 60.0
-# A sign: the camera's next poll, the hand and classifier stages, the 0.5 s hold.
+# A sign: the camera's next poll, the hand and classifier stages, the 0.3 s hold.
 SIGN_WITHIN_S = 15.0
 # How long an empty camera must deliver nothing.
 QUIET_S = 3.0

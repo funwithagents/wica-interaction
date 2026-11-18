@@ -46,7 +46,7 @@ With every feature off, the section can be dropped: the microphone and the speak
 
 ## The webcam
 
-With `vision.enabled` on ([hand-signs.md](hand-signs.md)), the app opens the camera named by `camera.device` through OpenCV and reads it at `vision.fps`: a webcam delivering thirty frames a second into a five-frame-a-second hand stage would be wasted captures, so the source paces itself and nothing downstream runs faster than the configured rate.
+With `vision.enabled` on ([hand-signs.md](hand-signs.md)), the app opens the camera named by `camera.device` through OpenCV and reads it at `vision.fps`: a webcam delivering thirty frames a second into a ten-frame-a-second hand stage would be wasted captures, so the source paces itself and nothing downstream runs faster than the configured rate.
 
 A camera that cannot be opened is visible, not fatal. The app opens and the Vision line shows `⚠️ camera: camera open failed: …`; the source keeps retrying at its poll rate, so a camera plugged in later heals the line without a restart. A camera that goes away mid-run is reported and retried the same way ([troubleshooting.md](troubleshooting.md#no-camera-frame-or-no-sign)).
 

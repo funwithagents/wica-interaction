@@ -42,7 +42,7 @@ The file carries the shared sections (`wica`, `asr`, optional `vision` — [conf
     "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "target_fps": null },
     "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": { "enabled": false } }
   },
-  "vision": { "enabled": true, "threshold": 0.55, "fps": 5, "max_hands": 2, "hold_s": 0.5, "device": null }
+  "vision": { "enabled": true, "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null }
 }
 ```
 
