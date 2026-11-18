@@ -52,7 +52,8 @@ _MOTORS_OFF = (
 # where it picks the tool (the docstring is the fallback when they aren't).
 _PLAY_EMOTION_DESCRIPTION = (
     "Play a physical emotion on the robot — a short recorded motion. Valid names: {names}. "
-    "Use exactly one of these. The motors are on by default: just play it — only if the reply "
+    "Use exactly one of these, and use it rarely: most replies need no emotion. "
+    "The motors are on by default: just play it — only if the reply "
     "says they are off, enable them and play it again."
 )
 
@@ -116,7 +117,7 @@ class RobotControl:
 
     async def play_emotion(self, name: str) -> str:
         """Play a physical emotion on the robot — a short recorded motion, e.g. "happy" or
-        "curious". The motors are on by default: just play it — only if the reply says they are
+        "curious". Use it rarely: most replies need no emotion. The motors are on by default: just play it — only if the reply says they are
         off, enable them and play it again."""
         try:
             await self._bridge.play_emotion(name)
