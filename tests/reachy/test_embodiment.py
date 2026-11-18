@@ -18,7 +18,9 @@ from asr_engine.audio import AudioFormat
 from reachy_mini_bridge import ReachyMiniBridge
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica import Command
+from wica.text_output import output_signature
 
+from tests.fakes import utterance
 from tests.reachy.fakes import FakeReachyMiniBridge, ScriptedFaces, seeing_config
 from tests.test_gesture_input import ScriptedClassifier, ScriptedDetector, _scores
 from wica_interaction.config import AppConfig
@@ -241,7 +243,7 @@ def test_failed_synthesizer_build_is_reported_on_the_tts_axis() -> None:
         assert not any(m.startswith("Robot:") for m in embodiment.missing)
         assert embodiment.voice is not None
         # And it degrades to a readable string rather than raising.
-        assert run(embodiment.say("hi")).startswith("TTS error:")
+        assert run(embodiment.say(utterance("hi"))).startswith("TTS error:")
     finally:
         run(embodiment.exit())
 
@@ -262,29 +264,63 @@ def test_say_speaks_through_the_robot_and_returns_ok() -> None:
     bridge = FakeReachyMiniBridge()
     embodiment = _entered(bridge)
 
-    assert run(embodiment.say("hello")) == "OK"
-    assert bridge.said == ["hello"]
+    assert run(embodiment.say(utterance("hello", " there"))) == "OK"
+    assert bridge.said == ["hello there"]
 
 
-def test_empty_text_is_guarded_without_calling_the_robot() -> None:
+def test_the_voice_is_a_streaming_output_command() -> None:
+    """WICA reads the voice's signature to decide how to hand it the text: an `OutputStream`
+    annotation is what makes it call the voice at the tag's first words instead of at its end."""
+    embodiment = _entered(FakeReachyMiniBridge())
+    assert embodiment.voice is not None
+    assert output_signature(embodiment.voice).streams
+
+
+def test_say_starts_speaking_before_the_tag_closes() -> None:
+    """The robot's voice streams through the bridge's `say_stream`: it has the first words while
+    the model is still writing, and `say` returns once the whole utterance was heard."""
     bridge = FakeReachyMiniBridge()
     embodiment = _entered(bridge)
 
-    assert run(embodiment.say("")) == "TTS error: text must not be empty"
-    assert run(embodiment.say("   ")) == "TTS error: text must not be empty"
+    async def scenario() -> tuple[list[str], bool, str]:
+        text = utterance("Hello,", close=False)
+        speaking = asyncio.create_task(embodiment.say(text))
+        while bridge.streaming != ["Hello,"]:
+            await asyncio.sleep(0.01)
+        early, done_early = list(bridge.streaming), speaking.done()
+        text.push(" nice to see you.")
+        text.close()
+        return early, done_early, await speaking
+
+    early, done_early, result = run(asyncio.wait_for(scenario(), timeout=2.0))
+    assert early == ["Hello,"] and not done_early
+    assert result == "OK"
+    assert bridge.said == ["Hello, nice to see you."]
+
+
+@pytest.mark.parametrize("pieces", [(), ("",), ("   ",), (" ", "\n")])
+def test_empty_text_is_guarded_without_calling_the_robot(
+    pieces: tuple[str, ...],
+) -> None:
+    bridge = FakeReachyMiniBridge()
+    embodiment = _entered(bridge)
+
+    assert (
+        run(embodiment.say(utterance(*pieces))) == "TTS error: text must not be empty"
+    )
     assert bridge.said == []  # never reached the robot
 
 
 def test_say_error_is_mapped_not_raised() -> None:
     class RaisingBridge(FakeReachyMiniBridge):
-        async def say(self, text: str) -> None:
-            self.said.append(text)
+        async def say_stream(self, text_stream: Any) -> None:
+            self.said.append("".join([p async for p in text_stream]))
             raise RuntimeError("boom")
 
     bridge = RaisingBridge()
     embodiment = _entered(bridge)
 
-    assert run(embodiment.say("hi")) == "TTS error: boom"
+    assert run(embodiment.say(utterance("hi"))) == "TTS error: boom"
     assert bridge.said == ["hi"]  # it did attempt to speak before failing
 
 

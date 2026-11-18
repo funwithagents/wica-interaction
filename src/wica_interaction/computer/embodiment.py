@@ -25,16 +25,16 @@ from typing import Any
 import numpy as np
 from asr_engine.audio import AudioSource
 from tts_engine.engine import TTSEngine
-from tts_engine.tools import TTSTools
+from tts_engine.modules.base import TTSError
 from vision_modules import FrameSource, OpenCVSource
-from wica import Command
+from wica import Command, OutputStream
 
 from wica_interaction.computer.audio_processing import (
     AudioProcessingCoordinator,
     build_coordinator,
 )
 from wica_interaction.computer.config import ComputerConfig
-from wica_interaction.embodiment import Input, Voice
+from wica_interaction.embodiment import EMPTY_UTTERANCE, Input, Voice, speakable
 from wica_interaction.gesture_input import CameraFeed, StreamFeed
 
 logger = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ class ComputerEmbodiment:
         self._injected_engine = tts_engine
         self._factory = coordinator_factory
         self._coordinator: AudioProcessingCoordinator | None = None
-        self._tools: TTSTools | None = None
+        self._engine: TTSEngine | None = None
         # Why there is no engine, once `enter()` failed to build one: what `say` answers with.
         self._voice_error: str | None = None
         self.missing: list[str] = []
@@ -244,7 +244,7 @@ class ComputerEmbodiment:
                 )  # sink is set only with a coordinator
                 # Two-step: the sink's player/resampler need the module's rate, known only now.
                 self._coordinator.bind_far_rate(engine.sample_rate)
-            self._tools = TTSTools(engine)
+            self._engine = engine
         except Exception as exc:  # noqa: BLE001 - the voice degrades alone, whatever broke it
             # A key unset or a misconfigured module (tts-engine's ConfigError), the provider's extra
             # not installed (ImportError — the SDK import is lazy inside the module), or anything
@@ -267,11 +267,22 @@ class ComputerEmbodiment:
         output Command and the model can see why nothing was heard."""
         return self.say
 
-    async def say(self, text: str) -> str:
+    async def say(self, text: OutputStream) -> str:
         """Your voice: spoken aloud to the user through the machine's speakers."""
-        if self._tools is None:
+        if self._engine is None:
+            # Nothing to speak with: let the tag finish, then say why it was not heard.
+            await text.read()
             return f"TTS error: {self._voice_error or 'no voice was built'}"
-        return await self._tools.say(text)
+        words = await speakable(text)
+        if words is None:
+            return EMPTY_UTTERANCE
+        try:
+            # Synthesis starts on the first words and plays as the model writes the rest; returns
+            # once the whole utterance has been played (the engine drains its sink).
+            await self._engine.say_stream(words)
+        except TTSError as exc:
+            return f"TTS error: {exc}"
+        return "OK"
 
     @property
     def mic(self) -> AudioSource | None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any
 
 import numpy as np
 from reachy_mini_bridge import CameraFrame, PixelFace
@@ -70,6 +71,8 @@ class FakeReachyMiniBridge:
         log: list[str] | None = None,
     ) -> None:
         self.said: list[str] = []
+        # The pieces of the utterance being streamed, as they arrive.
+        self.streaming: list[str] = []
         self.played: list[str] = []
         self.started = False
         self.stopped = False
@@ -105,6 +108,12 @@ class FakeReachyMiniBridge:
 
     async def say(self, text: str) -> None:
         self.said.append(text)
+
+    async def say_stream(self, text_stream: Any) -> None:
+        self.streaming = []
+        async for piece in text_stream:
+            self.streaming.append(piece)
+        self.said.append("".join(self.streaming))
 
     # The robot-control slice.
     async def get_motors_state(self) -> str:

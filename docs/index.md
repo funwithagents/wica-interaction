@@ -17,7 +17,7 @@ The documentation of WICA Interaction, by what you want to do. The [README](../R
 | change what the agent is, says or does | [guides/personas.md](guides/personas.md): the prompt files, what is appended at startup, the robot's action rules |
 | know what the model sees and can do | [reference/agent.md](reference/agent.md): the World entries, the Commands per body, the persona sections, the transcript's reading of each |
 | compare models on this app (planned, not built yet) | [guides/benchmarking.md](guides/benchmarking.md): the design of the bench embodiment, the sessions, the persona checks, the runner |
-| know what v1 does not do yet | [guides/limits.md](guides/limits.md): no barge-in, no streamed speech, no persistence, one step at a time |
+| know what v1 does not do yet | [guides/limits.md](guides/limits.md): no barge-in, speech that streams but a page that does not, no persistence, one step at a time |
 | find out why nothing happens, or what a banner line means | [guides/troubleshooting.md](guides/troubleshooting.md): the checks for each symptom, routed to the page that explains it |
 
 ## The references

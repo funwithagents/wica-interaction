@@ -29,9 +29,9 @@ from typing import Any
 
 from asr_engine.audio import AudioFormat, AudioSource
 from reachy_mini_bridge import CameraFrame, ReachyMiniBridge
-from wica import Command
+from wica import Command, OutputStream
 
-from wica_interaction.embodiment import Input, Voice
+from wica_interaction.embodiment import EMPTY_UTTERANCE, Input, Voice, speakable
 from wica_interaction.gesture_input import CameraFeed
 from wica_interaction.reachy.config import ReachyConfig
 from wica_interaction.reachy.robot_control import RobotControl, emotions_prompt_section
@@ -265,15 +265,17 @@ class ReachyEmbodiment:
         the bridge built no synthesizer."""
         return self.say
 
-    async def say(self, text: str) -> str:
+    async def say(self, text: OutputStream) -> str:
         """Your voice: spoken aloud to the person, out of the robot's speaker."""
         assert self._bridge is not None
-        if not text.strip():
-            # Guard before touching the robot: an empty utterance is nothing to say. Mirrors the
-            # non-raising Command contract — the agent always gets a readable string, never an error.
-            return "TTS error: text must not be empty"
+        # Guard before touching the robot: an empty utterance is nothing to say. Mirrors the
+        # non-raising Command contract — the agent always gets a readable string, never an error.
+        words = await speakable(text)
+        if words is None:
+            return EMPTY_UTTERANCE
         try:
-            await self._bridge.say(text)
+            # The bridge speaks from the first words and returns once the utterance was heard.
+            await self._bridge.say_stream(words)
         except Exception as exc:  # noqa: BLE001 - any synth/media/bridge failure becomes a readable reply
             return f"TTS error: {exc}"
         return "OK"

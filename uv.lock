@@ -3630,7 +3630,7 @@ wheels = [
 [[package]]
 name = "reachy-mini-bridge"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main#d2516aa89933e4b524302593e61e302d44fc3de1" }
+source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main#93cba9ebde021a2dee844bd99b20305b1712f170" }
 dependencies = [
     { name = "numpy" },
     { name = "reachy-mini" },
@@ -4845,7 +4845,7 @@ wheels = [
 [[package]]
 name = "wica"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/wica-framework?rev=main#98058171a73d291ca875e3d926b9fdb03029ca7a" }
+source = { git = "https://github.com/funwithagents/wica-framework?rev=main#40bd077b1267359ed9935d0254e89c942199d96b" }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
