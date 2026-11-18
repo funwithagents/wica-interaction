@@ -3,6 +3,7 @@ code:
   - src/wica_interaction/reachy/embodiment.py
   - src/wica_interaction/reachy/robot_control.py
   - src/wica_interaction/reachy/users.py
+  - src/wica_interaction/reachy/view.py
   - src/wica_interaction/reachy/config.py
   - src/wica_interaction/reachy/app.py
   - prompts/reachy.md
@@ -10,6 +11,7 @@ tests:
   - tests/reachy/test_embodiment.py
   - tests/reachy/test_robot_control.py
   - tests/reachy/test_users.py
+  - tests/reachy/test_view.py
   - tests/reachy/test_config.py
 ---
 
@@ -94,6 +96,7 @@ The members:
 - **`camera(fps=…)`** — `RobotCameraFeed(bridge)`, below; `fps` is ignored (the feed runs at the daemon's rate, the gesture stages pace themselves).
 - **`commands()`** — `RobotControl(bridge, emotions=names, tracking=<users up>).commands()`, below.
 - **`inputs()`** — `(UsersInput,)` when step 5 built it, else `()`.
+- **`view()`** — `robot_view(bridge)`: the camera with the faces, the head line and the users ("The page view", below).
 - **`prompt_addendum`** — `emotions_prompt_section(names)` when names were fetched, then `users_prompt_section()` when the users input is up; `""` with neither.
 - **`exit()`** — `await bridge.stop()`: stops the motion loop, the camera feed (its `latest()` reads `None` from then on), the mic feed (ending every `audio_input()` subscriber), the media session and the robot connection (and the managed daemon); a no-op on a bridge that never started. The lifecycle runs it after ASR and vision are stopped, so the mic pump is cancelled and the hand stage joined while the media session and the feed are still live ([app.md](app.md), "Wiring and lifecycle").
 
@@ -250,6 +253,27 @@ The standing entries — `users_in_view`, `tracked_user` and `personal_space` �
 - **What it never claims.** A number is a track, not an identity: the same person coming back after a break gets a new one, and the wording never says *the same person* or a name.
 - **A non-raising producer.** A watcher that fails is logged and ends; the robot keeps running, the entries stop changing. `stop` cancels both watchers and the refresher and waits for them.
 
+## The page view
+
+What the page's Camera panel shows of the robot ([app.md](app.md), "What the user sees"), from `reachy/view.py` — the app's port of the bridge's own control panel (`reachy-mini-bridge/examples/control_panel`, its camera's face markers and its Users section), without its tracking-events log. One read of the bridge's published reports per tick, no round trip to the robot:
+
+```python
+def robot_view(bridge: ReachyMiniBridge) -> EmbodimentView: ...
+def draw_faces(
+    frame: np.ndarray,  # RGB
+    positions: Sequence[tuple[float, float]],  # normalised, [-1, 1], x right, y down
+    target: int | None = None,  # the index drawn thicker: the face the head follows
+    *,
+    labels: Sequence[str] = (),  # per face, "#<id>"
+    mirror: bool = False,
+) -> np.ndarray: ...
+def users_markdown(users: UsersReport, tracking: HeadTrackingReport) -> str: ...
+```
+
+- **The frame** — `bridge.camera.latest()` through `display_frame`, then `draw_faces` with the faces of `bridge.faces.value`: a green square on each (side 15 % of the frame's height), the one whose `track_id` the head follows (`bridge.head_tracking.value.track_id`) drawn thicker, the frame flipped (`mirror=True`), and each face's `#<track_id>` stamped above its square — below it when there is no room above — in green on a black plate, **after** the flip, so it reads the right way round; a 3×5 bitmap font of the digits and `#`, scaled with the frame's height. Plain numpy, no vision code. No frame (before the first, after the session) ⇒ none.
+- **The status** — `users_markdown`: a **head line** — `**Head:** follows #4` (`, pinned` when the agent pinned them), `watching` (`, waiting for #3` while a pinned user is not followed), or `tracking off` — then a **users table**, one row per user present (`bridge.users.value`, in `track_id` order): `#id` (`●` on the one the head follows), `seen`, `in view`, `missing` (s), where (the side and distance as the agent is told them, `UsersInput`'s wording — the camera's own left and right, not the mirrored picture's), with `_No detector is looking._` while detection is not running and `_Nobody present._` when it is and nobody is. The faces on the frame are who is in the picture; the users are who is present — through an emotion that turns the head away, a user stays in the table, `in view` no, under the same number.
+- **No detector configured** ⇒ the frame without faces and no status.
+
 ## `RobotControl` — the action commands
 
 The agent does not just talk, it *acts through the robot*: a small set of WICA **Commands** wrapping `ReachyMiniBridge` verbs, the same first-class, observable, cancellable mechanism `say` uses. The bridge holds all robot state and orchestration; this is a thin, **non-raising** adapter.
@@ -341,6 +365,7 @@ Like the computer persona, it says nothing about hands: the "Hand signs" section
 - **`RobotMicSource`:** `start()` returns a queue receiving the bridge's chunks in order; `stop()` cancels the pump; a raising or ending stream sets `capture_error`, a restart clears it; undrained, only the newest `maxsize` chunks are kept; a second `start()` without `stop()` leaves one stream open.
 - **`RobotCameraFeed`:** over a fake bridge carrying a fake `camera` (a settable frame published under an advancing `frame_id`, `start`/`stop` calls recorded): `latest()` is the bridge's frame object itself and `published_count` its count; `open()` / `close()` call neither `start()` nor `stop()` on the bridge's feed; `capture_error` is `None`; `camera(fps=…)` on an entered embodiment returns one over its bridge. Through `GestureInput` with the scripted detector/classifier, a sign on the fake feed's frame is delivered — the robot path end to end, no `StreamProvider` involved.
 - **`UsersInput`:** over a real `ReachyMiniBridge` on the `fake` backend, its detector a scripted `FaceDetector` registered through `face_detection.face_detector` (`custom`) — faces shown and hidden as `PixelFace` boxes on the fake's frames, so the bridge's own confirmation, tracks, departures, pin and personal space run unmodified: the four entries and which wake; a face shown → one `user_event` naming its number, side and distance, and `users_in_view` listing it; the face hidden → `left your view` once the bridge drops it; a user replacing another → a departure and an arrival; a face at start-up → the start-up event; two faces at once → one write carrying both lines; detection stopping → no event, `users_in_view` omitted; `tracked_user` through the pin, the automatic target and tracking off; `personal_space` omitted with tracking off, nobody once tracking starts, the followed user inside when their face fills the frame and nobody again when it shrinks — the World woken by neither; which events wake, through a real World: an arrival with nobody tracked wakes, a second arrival while the head follows the first does not, a user not followed leaving does not, the followed (or pinned) user leaving does, with the following wording; no write for a face that merely moves; `stop` ending the watchers. The wordings, `personal_space` and `user_event_wakes` on their own, as pure functions.
+- **The page view:** over the `fake` bridge with a scripted face: the frame is the fake's camera frame, mirrored, with the face's square in green where the mirrored face is and its `#<id>` label, read the right way round; the users table lists that user, `●` once the head follows them and the head line `follows #<id>, pinned` after a pin; `_Nobody present._` before the face; `draw_faces` marking a face's pixels, the followed one thicker, and stamping a label below its square at the frame's top edge, as a pure function.
 - **Enter with a detector:** detection turned on when the config left it off; `inputs()` the users input and `commands()` the five actions with tracking; `prompt_addendum` carrying the users section; with no detector, none of the three.
 - **`RobotControl`:** `play_emotion(<known>)` records the move; `<unknown>` returns a non-raising failure naming the valid names; with motors disabled the motor-precondition message (pinned on the `fake`, which honours it — the sim daemon ignores motor-state changes); `get_motors_state()` reflects `set_motors_state(...)`; `commands()` yields no `list_emotions`, and the tracking pair only with `tracking=True`; over the `fake` bridge with a scripted face, `start_tracking(<present>)` pins it (the head tracking report's `pinned_track_id`), `start_tracking()` returns to the automatic target, `start_tracking(<gone>)` answers the not-in-view reply without raising, `stop_tracking()` turns tracking off.
 

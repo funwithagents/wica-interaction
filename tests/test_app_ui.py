@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import numpy as np
 from asr_engine.engine import ASREngine
 from wica import CommandExecution
 from wica.contrib.gradio import EntryDisplay
@@ -21,9 +22,11 @@ from wica_interaction.app_ui import (
     display_entry,
     entry_display,
     tick_asr,
+    tick_view,
     tick_vision,
 )
 from wica_interaction.asr_bridge import AsrBridge
+from wica_interaction.embodiment import EmbodimentView
 from wica_interaction.gesture_input import GestureInput
 from wica_interaction.system import AppSystem
 
@@ -284,3 +287,32 @@ def test_the_page_is_named_after_the_body() -> None:
 
     # Only a config that never loaded has no body to name: a neutral title, not a made-up one.
     assert build_ui(_system()).title == "WICA Interaction"
+
+
+# --- The Camera panel ------------------------------------------------------------------------------
+
+
+def test_the_camera_panel_shows_the_bodys_view() -> None:
+    """The frame and the status come from the body's `view()`; without a frame yet, a note before
+    the status; with no body, a note alone."""
+    assert tick_view(_system()) == (None, "_No body._")
+    body = FakeEmbodiment(view=EmbodimentView(status="**Head:** tracking off"))
+    system = _system(embodiment=body)
+    assert tick_view(system) == (
+        None,
+        "_No camera frame yet._\n\n**Head:** tracking off",
+    )
+    frame = np.zeros((2, 3, 3), dtype=np.uint8)
+    body.shown = EmbodimentView(frame=frame, status="**Head:** follows #4")
+    shown, status = tick_view(system)
+    assert shown is frame and status == "**Head:** follows #4"
+
+
+def test_a_failing_view_is_a_line_on_the_page_not_a_crash() -> None:
+    class Broken(FakeEmbodiment):
+        def view(self) -> EmbodimentView:
+            raise RuntimeError("camera <gone>")
+
+    frame, status = tick_view(_system(embodiment=Broken()))
+    assert frame is None
+    assert status == "⚠️ _View unavailable: camera &lt;gone&gt;_"

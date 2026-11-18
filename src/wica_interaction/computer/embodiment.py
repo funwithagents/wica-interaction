@@ -34,7 +34,14 @@ from wica_interaction.computer.audio_processing import (
     build_coordinator,
 )
 from wica_interaction.computer.config import ComputerConfig
-from wica_interaction.embodiment import EMPTY_UTTERANCE, Input, Voice, speakable
+from wica_interaction.embodiment import (
+    EMPTY_UTTERANCE,
+    EmbodimentView,
+    Input,
+    Voice,
+    display_frame,
+    speakable,
+)
 from wica_interaction.gesture_input import CameraFeed, StreamFeed
 
 logger = logging.getLogger(__name__)
@@ -215,6 +222,9 @@ class ComputerEmbodiment:
         self._factory = coordinator_factory
         self._coordinator: AudioProcessingCoordinator | None = None
         self._engine: TTSEngine | None = None
+        self._feed: StreamFeed | None = (
+            None  # the webcam, once `camera()` built it (vision on)
+        )
         # Why there is no engine, once `enter()` failed to build one: what `say` answers with.
         self._voice_error: str | None = None
         self.missing: list[str] = []
@@ -313,9 +323,19 @@ class ComputerEmbodiment:
         device, ``close()`` releases it, ``capture_error`` is the webcam's."""
         # The opener is named here, not left to the default, so the module attribute is what is
         # resolved at call time (a test swaps it for a fake device).
-        return StreamFeed(
+        self._feed = StreamFeed(
             WebcamSource(self._config.camera.device, fps=fps, opener=OpenCVSource)
         )
+        return self._feed
+
+    def view(self) -> EmbodimentView:
+        """The webcam on the page: the newest frame of the feed `camera()` built — the one the
+        gesture input samples, so the page opens no device of its own — mirrored like a selfie, no
+        status. Nothing before vision built the feed or its first frame."""
+        frame = self._feed.latest() if self._feed is not None else None
+        if frame is None:
+            return EmbodimentView()
+        return EmbodimentView(frame=display_frame(frame.image)[:, ::-1].copy())
 
     def commands(self) -> Sequence[Command | Callable[..., Any]]:
         """Empty: the computer has nothing to act with beyond speaking."""

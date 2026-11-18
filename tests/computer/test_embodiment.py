@@ -412,6 +412,38 @@ def test_camera_is_the_webcam_behind_a_stream_feed(
         failing.close()
 
 
+def test_the_page_sees_the_webcam_the_gesture_input_opened(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`view()` shows nothing until vision built and opened the webcam; then its newest frame, as
+    the page shows it: RGB, mirrored like a selfie, a copy — no device of its own."""
+    # A frame whose every pixel says where it came from: blue rising left to right, red constant.
+    image = np.zeros((4, 6, 3), dtype=np.uint8)
+    image[:, :, 0] = np.arange(6) * 40  # B, by column
+    image[:, :, 2] = 7  # R
+    inner = FakeOpenCVSource(image)
+    monkeypatch.setattr(embodiment_module, "OpenCVSource", lambda _device: inner)
+    embodiment = _entered(_config(), engine=FakeTTSEngine())
+    assert embodiment.view().frame is None  # vision off: no webcam at all
+    feed = embodiment.camera(fps=100.0)
+    assert embodiment.view().frame is None  # built, not opened
+    feed.open()
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and embodiment.view().frame is None:
+            time.sleep(0.005)
+        frame = embodiment.view().frame
+        assert frame is not None
+        assert frame.shape == image.shape
+        assert (frame[:, :, 0] == 7).all()  # RGB: red first
+        # Mirrored: the device's rightmost column shows on the left.
+        assert list(frame[0, :, 2]) == [200, 160, 120, 80, 40, 0]
+        assert inner.opens == 1  # the gesture input's device, not one of the page's
+        assert embodiment.view().status == ""
+    finally:
+        feed.close()
+
+
 # --- WebcamSource ---------------------------------------------------------------------------------
 
 

@@ -86,4 +86,4 @@ The status line under the buttons reports `Saved …` with the path, or a `⚠�
 - **Hands are slots, not identities.** Hand 1 is the first hand the detector published and stays that hand while it is in view, but when hand 1 leaves and hand 2 stays, the remaining hand becomes hand 1 and its sign moves with it. The agent is told the numbers are not left and right.
 - **A sign shown while the model is reasoning is lost.** The agent handles one reasoning step at a time; a sign shown while it speaks does wake it, since speaking is a command, not a step, but one shown mid-reasoning is dropped. Lower the hand and show it again ([limits.md](limits.md)).
 - **A held sign expires.** A sign is cleared one second after it lands and is not refreshed while the hand keeps holding it; it reads as no sign until the hand changes.
-- **Only a status line.** The camera image is not shown on the page; the snapshots are the way to see it.
+- **The page shows the camera, not what the models saw.** The **Camera** panel shows the camera's picture, mirrored like a selfie; the snapshots are the way to see the exact frame and hand crops each stage consumed.

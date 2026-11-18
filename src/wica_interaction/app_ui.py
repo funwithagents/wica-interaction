@@ -15,10 +15,11 @@ the components and owns the timer keeping them live. What this module holds:
   transcript without this module knowing the body.
 - ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
   the agent's Events in their constructors, both given ``entry_display(system)``), lays out the page (the
-  three contrib panels, the app's ASR panel, the typed-text hatch, a banner for anything missing,
-  the debug toggle), and returns the page. The UI wires nothing into the agent: its presenters
+  three contrib panels, the app's ASR panel, the Camera panel, the typed-text hatch, a banner for
+  anything missing, the debug toggle), and returns the page. The UI wires nothing into the agent: its presenters
   subscribe to the agent's Events themselves.
-- ``tick_asr`` — the live view the ASR panel's timer polls (the only timer the app owns).
+- ``tick_asr`` — the live view the ASR panel's timer polls; ``tick_view`` — what the Camera panel's
+  timer shows of the body (``embodiment.view()``). The app owns these two timers.
 
 The only dependency on ``system`` is the ``AppSystem`` *type* (for annotations), imported under
 ``TYPE_CHECKING`` so there is no import cycle: ``system`` imports ``build_ui`` from here at runtime,
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -46,7 +48,12 @@ from wica.contrib.gradio import (
 )
 
 if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+
     from wica_interaction.system import AppSystem
+
+logger = logging.getLogger(__name__)
 
 # The output Command's name (the embodiment's `say.__name__`): the voice, whose execution item the
 # hook titles by channel with the spoken text as body.
@@ -172,6 +179,27 @@ def tick_vision(system: AppSystem) -> str:
     return status_md
 
 
+# --- What the Camera panel shows of the body --------------------------------------------------
+
+
+def tick_view(system: AppSystem) -> tuple[npt.NDArray[np.uint8] | None, str]:
+    """Refresh the Camera panel from ``embodiment.view()``: the frame (``None`` clears the image)
+    and the Markdown under it — the body's status, after a one-line note when there is no frame. A
+    body whose view fails shows the failure; the page never breaks on it."""
+    body = system.embodiment
+    if body is None:
+        return None, "_No body._"
+    try:
+        view = body.view()
+    except Exception as exc:
+        logger.exception("the embodiment's view failed")
+        return None, f"⚠️ _View unavailable: {html.escape(str(exc))}_"
+    if view.frame is None:
+        note = "_No camera frame yet._"
+        return None, f"{note}\n\n{view.status}" if view.status else note
+    return view.frame, view.status
+
+
 # --- Layout ------------------------------------------------------------------------------------
 
 
@@ -289,6 +317,15 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                     )
 
             with gr.Column(scale=2):
+                # What the body sees and knows (specs/app.md, "What the user sees", Camera).
+                gr.Markdown("### Camera")
+                camera = gr.Image(
+                    label="Camera (mirrored)",
+                    type="numpy",
+                    interactive=False,
+                    show_label=False,
+                )
+                camera_status = gr.Markdown("_No camera frame yet._")
                 show_debug = gr.Checkbox(label="Show debug panels", value=False)
                 # The toggle is visibility only: the contrib panels own their timers and keep
                 # ticking while hidden (see specs/app.md, "Refresh cost").
@@ -310,13 +347,17 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             outputs=debug_panels,
         )
 
-        # The one timer the app owns: the ASR panel reads the bridge and the Vision line reads the
-        # gesture input (the contrib panels above each own theirs, so the surfaces never share one
-        # round-trip).
+        # The app's two timers: the ASR panel reads the bridge and the Vision line reads the
+        # gesture input; the Camera reads the body's view, on its own so a frame's encoding never
+        # delays the live text (the contrib panels above each own theirs).
         asr_timer = gr.Timer(0.2)
         asr_timer.tick(
             lambda: (*tick_asr(system), tick_vision(system)),
             outputs=[asr_live, asr_status, stop_dictation, vision_status],
         )  # pyright: ignore[reportAttributeAccessIssue]
+        view_timer = gr.Timer(0.2)
+        view_timer.tick(  # pyright: ignore[reportAttributeAccessIssue]
+            lambda: tick_view(system), outputs=[camera, camera_status]
+        )
 
     return demo
