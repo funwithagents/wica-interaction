@@ -15,10 +15,12 @@ the components and owns the timer keeping them live. What this module holds:
   transcript without this module knowing the body.
 - ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
   the agent's Events in their constructors, both given ``entry_display(system)``), lays out the page (the
-  three contrib panels, the app's ASR panel, the typed-text hatch, a banner for anything missing,
-  the debug toggle), and returns the page. The UI wires nothing into the agent: its presenters
+  Conversation beside the body's camera and the typed-text hatch, then the app's ASR beside its
+  Vision, then the debug toggle and the two debug panels side by side, a banner for anything
+  missing), and returns the page. The UI wires nothing into the agent: its presenters
   subscribe to the agent's Events themselves.
-- ``tick_asr`` — the live view the ASR panel's timer polls (the only timer the app owns).
+- ``tick_asr`` — the live view the ASR panel's timer polls; ``tick_view`` — what the camera's
+  timer shows of the body (``embodiment.view()``). The app owns these two timers.
 
 The only dependency on ``system`` is the ``AppSystem`` *type* (for annotations), imported under
 ``TYPE_CHECKING`` so there is no import cycle: ``system`` imports ``build_ui`` from here at runtime,
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -46,13 +49,21 @@ from wica.contrib.gradio import (
 )
 
 if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+
     from wica_interaction.system import AppSystem
+
+logger = logging.getLogger(__name__)
 
 # The output Command's name (the embodiment's `say.__name__`): the voice, whose execution item the
 # hook titles by channel with the spoken text as body.
 _SAY_COMMAND_NAME = "say"
 
 _NO_LIVE_SPEECH = "(no speech yet)"
+
+# The Conversation's height (px): tall enough to follow a few reactions without scrolling.
+CONVERSATION_HEIGHT = 640
 
 # The World keys of the per-hand sign entries (`hand_gesture_1`, …) — see specs/gesture-input.md.
 _HAND_GESTURE_KEY = re.compile(r"^hand_gesture_(\d+)$")
@@ -107,12 +118,31 @@ def entry_display(system: AppSystem) -> Callable[[WorldEntry], EntryDisplay | No
 # --- The ASR live view its timer polls --------------------------------------------------------
 
 
-def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
-    """Refresh the ASR panel: live interim text, a status line, and the Stop-dictation button's
-    enabled state (interactive only while dictating)."""
+# The voice-activity line, per `AsrBridge.status()["vad"]`.
+_VAD_LINES = {
+    "speech": "**Voice activity:** 🟢 speech detected",
+    "silence": "**Voice activity:** ⚪ no speech",
+    "failed_open": "**Voice activity:** ⚠️ VAD failed: all audio goes to the recognizer",
+    None: "**Voice activity:** — _no VAD (the recognizer ends utterances itself)_",
+}
+
+
+def vad_line(vad: str | None) -> str:
+    """The ASR section's voice-activity line: whether the engine's VAD hears speech right now."""
+    return _VAD_LINES.get(vad, _VAD_LINES[None])
+
+
+def tick_asr(system: AppSystem) -> tuple[str, str, Any, str]:
+    """Refresh the ASR panel: live interim text, a status line, the Stop-dictation button's
+    enabled state (interactive only while dictating), and the voice-activity line."""
     bridge = system.bridge
     if bridge is None:
-        return _NO_LIVE_SPEECH, "_ASR unavailable._", gr.update(interactive=False)
+        return (
+            _NO_LIVE_SPEECH,
+            "_ASR unavailable._",
+            gr.update(interactive=False),
+            "",
+        )
     display = bridge.display_text or _NO_LIVE_SPEECH
     status = bridge.status()
     mode = "dictation" if status["dictating"] else "conversation"
@@ -123,7 +153,12 @@ def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
     if status["capture_error"]:
         # The engine can still say "running" while its mic stream is dead — say so plainly.
         status_md += f" · ⚠️ **capture:** {status['capture_error']}"
-    return display, status_md, gr.update(interactive=bool(status["dictating"]))
+    return (
+        display,
+        status_md,
+        gr.update(interactive=bool(status["dictating"])),
+        vad_line(status["vad"]),
+    )
 
 
 def _fps(value: float | None) -> str:
@@ -140,36 +175,67 @@ def _hand(label: str | None, confidence: float) -> str:
 
 
 def tick_vision(system: AppSystem) -> str:
-    """Refresh the Vision line: whether the gesture input runs, every hand's raw top label and score
-    in slot order (or "no hand") under the configured cap, every hand's last delivered sign, the
-    camera feed's achieved rate (its own — the robot's daemon-paced feed, or the paced webcam) and
-    each stage's next to the configured target (the hand demo's readout), and any camera (a
-    failure, a stall) / stage error."""
+    """Refresh the pipeline's part of the Vision section, as a few readable lines: first the camera
+    feed's achieved rate (its own — the robot's daemon-paced feed, or the paced webcam) and each
+    stage's next to the configured target (the hand demo's readout); then, under a "Hand signs"
+    subheading, whether the gesture input runs and one table row per hand slot under the configured cap — the hand's raw top label and score (or "no
+    hand") and its last delivered sign; then any camera (a failure, a stall) or stage
+    error, each on its own line."""
     gesture = system.gesture
     if gesture is None:
         return "_Vision off (`vision.enabled` is false, or no camera)._"
     status = gesture.status()
-    seen = ", ".join(
-        f"#{i} {_hand(hand['label'], hand['confidence'])}"
-        for i, hand in enumerate(status["hands"], start=1)
-    )
-    signs = ", ".join(
-        f"#{hand} {sign if sign is not None else '—'}"
-        for hand, sign in enumerate(status["signs"], start=1)
-    )
+    hands = status["hands"]
+    signs = status["signs"]
+    rows = ["| hand | seen | sign |", "|---|---|---|"]
+    for i in range(status["max_hands"]):
+        seen = (
+            _hand(hands[i]["label"], hands[i]["confidence"])
+            if i < len(hands)
+            else "no hand"
+        )
+        sign = signs[i] if i < len(signs) and signs[i] is not None else "—"
+        rows.append(f"| #{i + 1} | {seen} | {sign} |")
     target = status["target_fps"]
-    status_md = (
-        f"**Vision:** {'running' if status['running'] else 'stopped'} · "
-        f"**hands (max {status['max_hands']}):** {seen or 'no hand'} · **signs:** {signs} · "
-        f"**camera:** {_fps(status['stream_fps'])} · "
-        f"**hand stage:** {_fps(status['hand_fps'])} (target {target:g}) · "
-        f"**classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
-    )
+    lines = [
+        (
+            f"- **camera:** {_fps(status['stream_fps'])}\n"
+            f"- **hand stage:** {_fps(status['hand_fps'])} (target {target:g})\n"
+            f"- **classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
+        ),
+        "#### Hand signs",
+        (
+            f"**Status:** {'running' if status['running'] else 'stopped'} · "
+            f"up to {status['max_hands']} hands"
+        ),
+        "\n".join(rows),
+    ]
     if status["capture_error"]:
-        status_md += f" · ⚠️ **camera:** {status['capture_error']}"
+        lines.append(f"⚠️ **camera:** {status['capture_error']}")
     if status["error"]:
-        status_md += f" · ⚠️ **error:** {status['error']}"
-    return status_md
+        lines.append(f"⚠️ **error:** {status['error']}")
+    return "\n\n".join(lines)
+
+
+# --- What the page shows of the body: the camera and its status --------------------------------------------------
+
+
+def tick_view(system: AppSystem) -> tuple[npt.NDArray[np.uint8] | None, str]:
+    """Refresh the camera and the body's status from ``embodiment.view()``: the frame (``None`` clears the image)
+    and the Markdown under it — the body's status, after a one-line note when there is no frame. A
+    body whose view fails shows the failure; the page never breaks on it."""
+    body = system.embodiment
+    if body is None:
+        return None, "_No body._"
+    try:
+        view = body.view()
+    except Exception as exc:
+        logger.exception("the embodiment's view failed")
+        return None, f"⚠️ _View unavailable: {html.escape(str(exc))}_"
+    if view.frame is None:
+        note = "_No camera frame yet._"
+        return None, f"{note}\n\n{view.status}" if view.status else note
+    return view.frame, view.status
 
 
 # --- Layout ------------------------------------------------------------------------------------
@@ -242,10 +308,20 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             "and duration."
         )
 
-        with gr.Row():
-            with gr.Column(scale=3):
+        # The main surface, two rows of two equal columns (specs/app.md, "The layout"): the
+        # Conversation beside the body's camera and the typed-text box; then ASR beside Vision.
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1):
                 # The contrib transcript: its own timer, pushed only when the transcript changed.
-                conversation_panel(transcript)
+                conversation_panel(transcript, height=CONVERSATION_HEIGHT)
+            with gr.Column(scale=1):
+                # The body's camera, its faces drawn (embodiment.view(); its status is Vision's).
+                camera = gr.Image(
+                    label="Camera (mirrored)",
+                    type="numpy",
+                    interactive=False,
+                    show_label=False,
+                )
                 with gr.Row():
                     # gradio's dynamic event methods (.click/.submit/.change/.tick) aren't in the
                     # stubs, hence the narrow ignores below.
@@ -256,8 +332,11 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                     )
                     send = gr.Button("Send", variant="primary", scale=1)
 
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1):
                 gr.Markdown("### ASR")
                 asr_status = gr.Markdown("_ASR status…_")
+                asr_vad = gr.Markdown("_Voice activity…_")
                 asr_live = gr.Textbox(
                     label="Live speech (interim)",
                     value=_NO_LIVE_SPEECH,
@@ -265,17 +344,20 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                     lines=2,
                 )
                 stop_dictation = gr.Button("Stop dictation", interactive=False)
-
+            with gr.Column(scale=1):
                 gr.Markdown("### Vision")
                 vision_status = gr.Markdown("_Vision status…_")
+                # What the body knows of what it sees: on the robot, whom the head follows and
+                # the users present.
+                camera_status = gr.Markdown("_No camera frame yet._")
                 if system.gesture is not None:
                     # As in the vision-modules hand demo: save what each stage last consumed.
+                    snapshot_folder = gr.Textbox(
+                        value=str(_SNAPSHOT_DIR), label="Snapshot folder"
+                    )
                     with gr.Row():
-                        snapshot_folder = gr.Textbox(
-                            value=str(_SNAPSHOT_DIR), label="Snapshot folder", scale=3
-                        )
-                        save_detector = gr.Button("Save detector snapshot", scale=1)
-                        save_classifier = gr.Button("Save classifier snapshot", scale=1)
+                        save_detector = gr.Button("Save detector snapshot")
+                        save_classifier = gr.Button("Save classifier snapshot")
                     snapshot_status = gr.Markdown("")
                     save_detector.click(  # pyright: ignore[reportAttributeAccessIssue]
                         on_save_detector,
@@ -288,18 +370,20 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                         outputs=snapshot_status,
                     )
 
-            with gr.Column(scale=2):
-                show_debug = gr.Checkbox(label="Show debug panels", value=False)
-                # The toggle is visibility only: the contrib panels own their timers and keep
-                # ticking while hidden (see specs/app.md, "Refresh cost").
-                with gr.Column(visible=False) as debug_panels:
-                    gr.Markdown("### World state (live)")
-                    if wica is not None:
-                        world_state_panel(wica.world)
-                    else:
-                        gr.Markdown("_No agent — there is no World to show._")
-                    gr.Markdown("### Reaction (prompt + instrumentation)")
-                    reaction_panel(reactions)
+        # Debug surface last, on one line: the toggle, then World state and Reaction side by side.
+        # The toggle is visibility only: the contrib panels own their timers and keep ticking while
+        # hidden (see specs/app.md, "Refresh cost").
+        show_debug = gr.Checkbox(label="Show debug panels", value=False)
+        with gr.Row(visible=False, equal_height=False) as debug_panels:
+            with gr.Column():
+                gr.Markdown("### World state (live)")
+                if wica is not None:
+                    world_state_panel(wica.world)
+                else:
+                    gr.Markdown("_No agent — there is no World to show._")
+            with gr.Column():
+                gr.Markdown("### Reaction (prompt + instrumentation)")
+                reaction_panel(reactions)
 
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
@@ -310,13 +394,17 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             outputs=debug_panels,
         )
 
-        # The one timer the app owns: the ASR panel reads the bridge and the Vision line reads the
-        # gesture input (the contrib panels above each own theirs, so the surfaces never share one
-        # round-trip).
+        # The app's two timers: one reads the ASR bridge and the gesture input (the status lines
+        # and the live text), the other the body's view, on its own so a frame's encoding never
+        # delays the live text (the contrib panels above each own theirs).
         asr_timer = gr.Timer(0.2)
         asr_timer.tick(
             lambda: (*tick_asr(system), tick_vision(system)),
-            outputs=[asr_live, asr_status, stop_dictation, vision_status],
+            outputs=[asr_live, asr_status, stop_dictation, asr_vad, vision_status],
         )  # pyright: ignore[reportAttributeAccessIssue]
+        view_timer = gr.Timer(0.2)
+        view_timer.tick(  # pyright: ignore[reportAttributeAccessIssue]
+            lambda: tick_view(system), outputs=[camera, camera_status]
+        )
 
     return demo

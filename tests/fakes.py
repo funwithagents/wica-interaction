@@ -14,11 +14,12 @@ from typing import Any
 
 import numpy as np
 from asr_engine.audio import AudioSource
+from asr_engine.vad.gate import VadState
 from vision_modules import Frame
 from wica import Command, Content, OutputStream, TextPart
 from wica.config import WicaConfig
 
-from wica_interaction.embodiment import Deliver, Input, InputEntry
+from wica_interaction.embodiment import Deliver, EmbodimentView, Input, InputEntry
 from wica_interaction.gesture_input import CameraFeed
 
 
@@ -66,6 +67,7 @@ class FakeASREngine:
         self._raise_on_start = raise_on_start
         self._raise_on_stop = raise_on_stop
         self._hang_on_stop = hang_on_stop
+        self.vad_state: VadState | None = None  # no VAD configured; a test sets one
 
     async def start(self) -> None:
         if self._raise_on_start is not None:
@@ -293,6 +295,7 @@ class FakeEmbodiment:
         missing: Sequence[str] = (),
         raise_on_enter: str | None = None,
         log: list[str] | None = None,
+        view: EmbodimentView | None = None,
     ) -> None:
         self.said: list[str] = []
         self.waved = 0
@@ -316,6 +319,8 @@ class FakeEmbodiment:
         self._missing = tuple(missing)
         self._raise_on_enter = raise_on_enter
         self._log = log
+        # What the page is shown of this body; settable mid-test (the camera publishing a frame).
+        self.shown = view if view is not None else EmbodimentView()
 
     async def enter(self) -> None:
         if self._raise_on_enter is not None:
@@ -366,6 +371,9 @@ class FakeEmbodiment:
     @property
     def prompt_addendum(self) -> str:
         return self._prompt_addendum
+
+    def view(self) -> EmbodimentView:
+        return self.shown
 
 
 def utterance(*pieces: str, close: bool = True) -> OutputStream:

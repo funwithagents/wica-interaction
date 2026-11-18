@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
 
+import numpy as np
 from asr_engine.audio import AudioSource
 from wica import Command, Content
 
@@ -55,6 +56,14 @@ class Input(Protocol):  # a producer of perceptions, and the entries it writes
         self, deliver: Deliver
     ) -> None: ...  # on the app loop, the agent running
     async def stop(self) -> None: ...  # on the app loop, before the body exits
+
+
+@dataclass(frozen=True)
+class EmbodimentView:  # what the page shows of the body, read on the page's timer
+    frame: np.ndarray | None = (
+        None  # (H, W, 3) uint8 RGB, display-ready; None: nothing to show
+    )
+    status: str = ""  # Markdown under the frame ("" for none)
 
 
 class Embodiment(Protocol):
@@ -93,6 +102,10 @@ class Embodiment(Protocol):
     def prompt_addendum(
         self,
     ) -> str: ...  # persona text appended at startup ("" for none)
+
+    def view(
+        self,
+    ) -> EmbodimentView: ...  # the camera and the body's state, for the page
 ```
 
 A `typing.Protocol`, not a base class: pyright checks every real embodiment structurally at the call `build_system(config, ReachyEmbodiment(...))`, so an implementation that drifts from this surface is a type error in its own package, and the lifecycle tests drive `build_system` with a `FakeEmbodiment` that imports neither a robot SDK nor an audio engine.
@@ -113,6 +126,7 @@ Each member is touched at exactly one point of the lifecycle ([app.md](app.md), 
 | `voice` | `wire`, as `wica.set_output_command(voice)`. `None` is for a body with **no speaker at all** (no output Command is set — no `<say>` tag is taught and the model's text is all private: it reasons and acts but cannot speak); a body whose voice merely *failed to build* keeps its `say` wired (below) | `say` streaming into `engine.say_stream`; with no engine it answers `"TTS error: <why>"` | `say` streaming into `bridge.say_stream`; with no synthesizer it answers `"TTS error: <why>"` |
 | `commands()` | `wire`, each item `register_command`ed after the dictation commands | `()` | `play_emotion`, `get_motors_state`, `set_motors_state`, and — when the users input is up — `start_tracking`, `stop_tracking` |
 | `inputs()` | `build_system`, right after `speech_input` is registered, only with a body and an agent: each `Input`'s entries are registered, its producer handed a guarded `deliver`. Each started by `_start` after the agent, each stopped by `_shutdown` right after the agent closes | `()` | its users in view ([reachy-embodiment.md](reachy-embodiment.md), "Users: `UsersInput`"), when a face detector is configured |
+| `view()` | the page's camera timer (`tick_view`, 0.2 s, on the Gradio thread — [app.md](app.md), "What the user sees"), only while the page is open. A cheap read: no I/O, no round trip to the loop, never raising (a body with nothing to show returns `EmbodimentView()`) | the webcam's newest frame, mirrored — once `camera()` built the feed (vision on) and it has published; no status | the robot's camera with each detected face boxed and labelled `#<id>` (the followed one thicker), mirrored; the status the head line and the users table ([reachy-embodiment.md](reachy-embodiment.md), "The page view") |
 | `exit()` | `_shutdown`, scheduled onto the loop after the agent, the inputs, vision and ASR are stopped, before the loop stops | closes the audio-processing coordinator's voice stream, when one was built; nothing otherwise | `ReachyMiniBridge.stop()` |
 
 Read the "called by" column top to bottom and it is the lifecycle: construct the embodiment from its own config in the entry point (no I/O in the constructor), `enter` it, seed the prompt, register its inputs, build ASR over its mic, build vision over its camera, wire its voice and commands, run, `exit` it.
@@ -133,7 +147,9 @@ Read the "called by" column top to bottom and it is the lifecycle: construct the
 
 - **Config loading.** Each embodiment's package parses its own sections and constructs the embodiment from them ([configuration.md](configuration.md)); the shared code only ever sees the shared `AppConfig` (`wica`, `asr`, `vision`).
 - **The World.** `speech_input` and `hand_gesture_<n>` are the app's ([app.md](app.md), [gesture-input.md](gesture-input.md)). An embodiment adds entries of its own only through `inputs()`, described and delivered, never written directly: registration, the running guard and the order stay the lifecycle's.
-- **UI.** The page is shared ([app.md](app.md), "What the user sees"). If an embodiment ever needs a panel of its own — a robot's motor state, a battery line — that is a new member to add then, not a hook reserved now (open question 1).
+- **Gradio.** The page is shared ([app.md](app.md), "What the user sees"); what a body adds to it is data — `view()`'s frame and Markdown — which `app_ui` places, so no embodiment imports Gradio and a body is tested without a page.
+
+**`view()` is display-ready.** The body owns what its camera shows and what it knows about it, so the frame comes out as the page shows it: RGB, at most `VIEW_MAX_WIDTH` (640) pixels wide (`display_frame`, a whole-number subsample of the BGR image a feed publishes, shared by both bodies), and **mirrored** like a selfie — the person facing the camera sees themselves as in a mirror. Mirroring is display only: what the agent is told keeps the camera's own left and right (the robot's `to your left`). An overlay is drawn by the body before the flip, and any text on it after, so it reads the right way round.
 - **The entry point.** Which embodiment runs is decided by the command you launch (`wica-interaction-computer`, `wica-interaction-reachy`), not by a config key: each entry point imports only its own package, so a computer-only install never imports the robot SDK ([project.md](project.md), "Extras"). A reachy config handed to the computer command fails on its unknown `reachy` section — a clearer error than a discriminator could give.
 
 ## Testing
@@ -153,5 +169,5 @@ Each embodiment's own tests ([computer-embodiment.md](computer-embodiment.md), [
 
 ## Open questions
 
-1. **Per-embodiment UI.** A status surface owned by the embodiment (robot connection and motor state; the computer's audio-processing on/degraded state) would be a `panel(...)`-style member the shared page places. Deferred until one is wanted — the [app.md](app.md) banner and the ASR/Vision lines cover today's needs.
+1. ~~**Per-embodiment UI.**~~ Answered on 2026-11-18 by `view()`: the camera and the body's state as data the shared page places. Motor state, the computer's audio-processing state, would be more lines in its `status`.
 2. **A timeout on `enter`.** The robot's enter can block for the bridge's `daemon.startup_timeout` (45 s) before failing; the app adds no timeout of its own ([reachy-embodiment.md](reachy-embodiment.md)). Whether the protocol should carry one, or leave it to each implementation, is deferred.

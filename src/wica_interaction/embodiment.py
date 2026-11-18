@@ -14,11 +14,14 @@ imports neither. See specs/embodiment.md for who calls each member and when.
 
 from __future__ import annotations
 
+import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
 
+import numpy as np
+import numpy.typing as npt
 from asr_engine.audio import AudioSource
 from wica import Command, Content, OutputStream
 
@@ -57,6 +60,32 @@ async def speakable(text: OutputStream) -> AsyncIterator[str] | None:
             yield piece
 
     return stream()
+
+
+# The widest frame the page is sent: a camera's full frame is subsampled down to this, so a tick
+# encodes a few hundred kilobytes, not a sensor's worth.
+VIEW_MAX_WIDTH = 640
+
+
+@dataclass(frozen=True)
+class EmbodimentView:
+    """What the page shows of the body, read on the page's own timer (specs/embodiment.md,
+    "``view()`` is display-ready"): the camera's ``frame`` as the page shows it — (H, W, 3) uint8
+    RGB, mirrored like a selfie, any overlay drawn — or ``None`` with nothing to show, and a
+    ``status`` in Markdown under it (``""`` for none)."""
+
+    frame: npt.NDArray[np.uint8] | None = None
+    status: str = ""
+
+
+def display_frame(
+    image_bgr: npt.NDArray[np.uint8], *, max_width: int = VIEW_MAX_WIDTH
+) -> npt.NDArray[np.uint8]:
+    """A camera's BGR image as the page takes it: RGB, subsampled by a whole step down to at most
+    *max_width* pixels wide — a copy, never the feed's shared array. Not mirrored: a body draws its
+    overlay in the camera's own coordinates first, then flips."""
+    step = max(1, math.ceil(image_bgr.shape[1] / max_width))
+    return np.ascontiguousarray(image_bgr[::step, ::step, ::-1])
 
 
 # How an input's producer writes one of its own World entries: `deliver(key, value)`. The lifecycle
@@ -152,4 +181,10 @@ class Embodiment(Protocol):
     @property
     def prompt_addendum(self) -> str:
         """Persona text appended to the resolved prompt at startup (``""`` for none)."""
+        ...
+
+    def view(self) -> EmbodimentView:
+        """What the page shows of the body: its camera's frame and its state, read on the page's
+        timer from the Gradio thread — cheap, no I/O, never raising (``EmbodimentView()`` with
+        nothing to show)."""
         ...

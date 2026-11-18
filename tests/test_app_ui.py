@@ -10,7 +10,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import numpy as np
 from asr_engine.engine import ASREngine
+from asr_engine.vad.gate import VadState
 from wica import CommandExecution
 from wica.contrib.gradio import EntryDisplay
 from wica.world import WorldEntry, WorldEntryVersion
@@ -21,9 +23,11 @@ from wica_interaction.app_ui import (
     display_entry,
     entry_display,
     tick_asr,
+    tick_view,
     tick_vision,
 )
 from wica_interaction.asr_bridge import AsrBridge
+from wica_interaction.embodiment import EmbodimentView
 from wica_interaction.gesture_input import GestureInput
 from wica_interaction.system import AppSystem
 
@@ -92,6 +96,7 @@ class _FakeEngine:
         self.on_speech_segment: Any = None
         self.dictating = False
         self.segmentation_mode = "utterance"
+        self.vad_state: VadState | None = None  # no VAD configured
 
     def status(self) -> dict[str, Any]:
         return {"running": True}
@@ -131,12 +136,27 @@ def _system(
 
 def test_asr_status_line_flags_a_dead_mic_stream() -> None:
     """The engine still says "running", but the status line tells the user capture has stalled."""
-    _, healthy, _ = tick_asr(_system_with_mic(None))
+    _, healthy, _, _ = tick_asr(_system_with_mic(None))
     assert "running" in healthy and "capture" not in healthy
 
-    _, stalled, _ = tick_asr(_system_with_mic("mic stream ended"))
+    _, stalled, _, _ = tick_asr(_system_with_mic("mic stream ended"))
     assert "running" in stalled
     assert "capture" in stalled and "mic stream ended" in stalled
+
+
+def test_the_asr_section_says_whether_speech_is_detected() -> None:
+    engine = _FakeEngine()
+    system = _system(
+        bridge=AsrBridge(cast(ASREngine, engine), on_final_segment=lambda _t: None)
+    )
+    assert "no VAD" in tick_asr(system)[3]
+    engine.vad_state = VadState()
+    assert tick_asr(system)[3] == "**Voice activity:** ⚪ no speech"
+    engine.vad_state = VadState(speaking=True)
+    assert tick_asr(system)[3] == "**Voice activity:** 🟢 speech detected"
+    engine.vad_state = VadState(speaking=True, failed_open=True)
+    assert "VAD failed" in tick_asr(system)[3]
+    assert tick_asr(_system())[3] == ""  # no ASR at all: no line
 
 
 # --- The Vision line (specs/app.md, "Vision line"; specs/gesture-input.md) --------------------
@@ -186,54 +206,49 @@ def test_vision_line_without_gesture_input_says_off() -> None:
     assert "off" in tick_vision(_system_with_gesture(None))
 
 
-def test_vision_line_shows_hand_label_score_and_signs() -> None:
+def test_vision_shows_each_hand_slot_as_a_row_and_the_rates_as_a_list() -> None:
     no_hand = tick_vision(_system_with_gesture(_Gesture()))
-    assert "running" in no_hand and "signs: #1 —, #2 —" in no_hand.replace("**", "")
-    assert "hands (max 2): no hand" in no_hand.replace("**", "")
+    assert "#### Hand signs\n\n**Status:** running · up to 2 hands" in no_hand
+    assert "| #1 | no hand | — |" in no_hand and "| #2 | no hand | — |" in no_hand
     # Before the first sampling window the achieved rates are a placeholder; the stages show their
     # target, the camera (which runs at its own rate) none.
-    assert "camera: — fps ·" in no_hand.replace("**", "")
-    assert "hand stage: — fps (target 5)" in no_hand.replace("**", "")
-    assert "classifier: — fps (target 5)" in no_hand.replace("**", "")
+    assert "- **camera:** — fps\n" in no_hand
+    assert "- **hand stage:** — fps (target 5)" in no_hand
+    assert "- **classifier:** — fps (target 5)" in no_hand
+    # The rates come first, above the hand signs' subheading.
+    assert no_hand.startswith("- **camera:**")
+    assert no_hand.index("- **classifier:**") < no_hand.index("#### Hand signs")
 
     rates = tick_vision(
         _system_with_gesture(
             _Gesture(stream_fps=5.02, hand_fps=4.93, classifier_fps=2.5, target_fps=5.0)
         )
-    ).replace("**", "")
-    assert "camera: 5.0 fps ·" in rates
-    assert "hand stage: 4.9 fps (target 5)" in rates
-    assert "classifier: 2.5 fps (target 5)" in rates
+    )
+    assert "- **camera:** 5.0 fps\n" in rates
+    assert "- **hand stage:** 4.9 fps (target 5)" in rates
+    assert "- **classifier:** 2.5 fps (target 5)" in rates
 
+    # What the hand shows, beside the sign it last delivered.
     signing = tick_vision(
         _system_with_gesture(
             _Gesture(
                 signs=["stop", None], hands=[{"label": "fist", "confidence": 0.87}]
             )
         )
-    ).replace("**", "")
-    assert "#1 fist (0.87)" in signing and "signs: #1 stop, #2 —" in signing
-    # The camera's rate is its own (the robot's feed runs at the daemon's rate, not the target);
-    # the stages show theirs next to the configured target.
-    rates = tick_vision(
-        _system_with_gesture(
-            _Gesture(stream_fps=10.0, hand_fps=4.9, classifier_fps=4.8)
-        )
-    ).replace("**", "")
-    assert "camera: 10.0 fps ·" in rates and "poll" not in rates
-    assert "hand stage: 4.9 fps (target 5)" in rates
+    )
+    assert "| #1 | fist (0.87) | stop |" in signing
 
     # A hand whose top class missed the threshold: the raw score shows, unvalidated, no sign.
     weak = tick_vision(
         _system_with_gesture(_Gesture(hands=[{"label": None, "confidence": 0.5}]))
-    ).replace("**", "")
-    assert "#1 below threshold (0.50)" in weak and "signs: #1 —, #2 —" in weak
+    )
+    assert "| #1 | below threshold (0.50) | — |" in weak
 
 
-def test_vision_line_lists_every_hand_in_slot_order() -> None:
+def test_vision_lists_every_hand_in_slot_order() -> None:
     """Three slots: each hand shows under its number — a hand classified outside the vocabulary, a
     fist on the second, a hand at the frame edge with no crop — under the configured cap."""
-    line = tick_vision(
+    text = tick_vision(
         _system_with_gesture(
             _Gesture(
                 signs=[None, "stop", None],
@@ -245,9 +260,12 @@ def test_vision_line_lists_every_hand_in_slot_order() -> None:
                 ],
             )
         )
-    ).replace("**", "")
-    assert "hands (max 3): #1 call (0.91), #2 fist (0.77), #3 no crop" in line
-    assert "signs: #1 —, #2 stop, #3 —" in line
+    )
+    assert "up to 3 hands" in text
+    assert (
+        "| #1 | call (0.91) | — |\n| #2 | fist (0.77) | stop |\n| #3 | no crop | — |"
+        in (text)
+    )
 
 
 def test_vision_line_flags_camera_and_stage_errors() -> None:
@@ -259,7 +277,8 @@ def test_vision_line_flags_camera_and_stage_errors() -> None:
     stalled = tick_vision(
         _system_with_gesture(_Gesture(capture_error="no camera frame for 3 s"))
     )
-    assert "⚠️" in stalled and "no camera frame for 3 s" in stalled
+    # Each problem on a line of its own, after the rates.
+    assert stalled.endswith("\n\n⚠️ **camera:** no camera frame for 3 s")
 
     stage = tick_vision(_system_with_gesture(_Gesture(error="model download failed")))
     assert "error" in stage and "model download failed" in stage
@@ -284,3 +303,32 @@ def test_the_page_is_named_after_the_body() -> None:
 
     # Only a config that never loaded has no body to name: a neutral title, not a made-up one.
     assert build_ui(_system()).title == "WICA Interaction"
+
+
+# --- The Camera panel ------------------------------------------------------------------------------
+
+
+def test_the_camera_panel_shows_the_bodys_view() -> None:
+    """The frame and the status come from the body's `view()`; without a frame yet, a note before
+    the status; with no body, a note alone."""
+    assert tick_view(_system()) == (None, "_No body._")
+    body = FakeEmbodiment(view=EmbodimentView(status="**Head:** tracking off"))
+    system = _system(embodiment=body)
+    assert tick_view(system) == (
+        None,
+        "_No camera frame yet._\n\n**Head:** tracking off",
+    )
+    frame = np.zeros((2, 3, 3), dtype=np.uint8)
+    body.shown = EmbodimentView(frame=frame, status="**Head:** follows #4")
+    shown, status = tick_view(system)
+    assert shown is frame and status == "**Head:** follows #4"
+
+
+def test_a_failing_view_is_a_line_on_the_page_not_a_crash() -> None:
+    class Broken(FakeEmbodiment):
+        def view(self) -> EmbodimentView:
+            raise RuntimeError("camera <gone>")
+
+    frame, status = tick_view(_system(embodiment=Broken()))
+    assert frame is None
+    assert status == "⚠️ _View unavailable: camera &lt;gone&gt;_"

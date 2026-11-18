@@ -31,11 +31,18 @@ from asr_engine.audio import AudioFormat, AudioSource
 from reachy_mini_bridge import CameraFrame, ReachyMiniBridge
 from wica import Command, OutputStream
 
-from wica_interaction.embodiment import EMPTY_UTTERANCE, Input, Voice, speakable
+from wica_interaction.embodiment import (
+    EMPTY_UTTERANCE,
+    EmbodimentView,
+    Input,
+    Voice,
+    speakable,
+)
 from wica_interaction.gesture_input import CameraFeed
 from wica_interaction.reachy.config import ReachyConfig
 from wica_interaction.reachy.robot_control import RobotControl, emotions_prompt_section
 from wica_interaction.reachy.users import UsersInput, users_prompt_section
+from wica_interaction.reachy.view import robot_view
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +312,14 @@ class ReachyEmbodiment:
     def inputs(self) -> Sequence[Input]:
         """The users in view, when the robot sees people (a face detector configured)."""
         return (self._users,) if self._users is not None else ()
+
+    def view(self) -> EmbodimentView:
+        """The robot on the page: its camera with the detected faces and their numbers, and — when
+        it sees people — whom the head follows and the users present (``reachy/view.py``). Nothing
+        before the robot came up."""
+        if self._bridge is None:
+            return EmbodimentView()
+        return robot_view(self._bridge, users=self._users is not None)
 
     @property
     def prompt_addendum(self) -> str:
