@@ -22,23 +22,14 @@ The app is stood up from one JSON file, and `--config` is required. The two comm
 cp config.computer.example.json config.computer.local.json
 ```
 
-Keys never go in the file. Each section names an **environment variable** (`api_key_env`), and you export the variable in the shell that runs the command. The computer template needs three, the reachy template two:
+Both templates run speech in and the voice **on your machine**, and the agent on the Hugging Face Hub, so they need **one key**: a [Hugging Face token](https://huggingface.co/settings/tokens) in `WICA_HF_TOKEN`. Keys never go in the file: each section names an **environment variable** (`api_key_env`), and you export the variable in the shell that runs the command.
 
-| Variable | For | Template |
-|---|---|---|
-| `WICA_ANTHROPIC_API_KEY` | the agent, Anthropic | computer |
-| `WICA_HF_TOKEN` | the agent, the Hugging Face Hub | reachy |
-| `DEEPGRAM_API_KEY` | speech in | both |
-| `ELEVENLABS_API_KEY` | the voice | computer; the reachy template's `pocket` voice needs none |
-
-Another agent provider is a change of `wica.agent` (`provider`, `model`, `api_key_env`) with its `wica-*` extra installed; another voice a change of the `tts` block's `module`. The reference page has each section ([reference/configuration.md](reference/configuration.md)).
+The local speech recognizer, `mlx-audio`, runs on **Apple silicon** only. On another machine, or for another agent, recognizer or voice, change that block and install its extra: [reference/configuration.md](reference/configuration.md#what-the-templates-run-and-the-other-choices) lists what the templates run and links each provider's own documentation.
 
 ## The computer
 
 ```
-export WICA_ANTHROPIC_API_KEY=sk-...
-export DEEPGRAM_API_KEY=...
-export ELEVENLABS_API_KEY=...
+export WICA_HF_TOKEN=hf_...
 uv run wica-interaction-computer --config config.computer.local.json
 ```
 
@@ -48,7 +39,7 @@ Open the address Gradio prints (`http://127.0.0.1:7860`) and say something. What
 2. The closed utterance shows on the left as **🗣️ "what you said"**, and the agent reasons: a **💬 reaction** group opens.
 3. Inside it, **🗣️ say** is what you hear, with a spinner while it plays and ✅ with its duration once done. A **💭 private text** item is the model's private thinking, written outside its `<say>` tag, if it produced any; **🚫 noop** means it chose not to react.
 
-As the template configures it, **echo cancellation** is on, so the agent does not answer its own voice, and **hand signs** are on, reading your webcam: the Vision section shows what the camera sees, and showing the camera a flat hand or a fist stops the agent mid-sentence ([guides/hand-signs.md](guides/hand-signs.md)). The first start downloads the hand models, a few hundred megabytes. To run without a camera, set `vision.enabled` to `false`.
+As the template configures it, **echo cancellation** is on, so the agent does not answer its own voice, and **hand signs** are on, reading your webcam: the Vision section shows what the camera sees, and showing the camera a flat hand or a fist stops the agent mid-sentence ([guides/hand-signs.md](guides/hand-signs.md)). The first start downloads the speech recognizer's model, the voice and the hand models, so give it a few minutes: the ASR line says `running` once the recognizer is ready. To run without a camera, set `vision.enabled` to `false`.
 
 Three more things on the page. The **camera**, beside the Conversation, shows what the body sees, mirrored like a selfie: the webcam on the computer once hand signs are on, the robot's camera with each detected face boxed and numbered; who is present is listed in the **Vision** section, beside the ASR one ([guides/reachy-mini.md](guides/reachy-mini.md#the-users-in-front-of-the-robot)). The **text box** sends a typed turn through the same path as speech, so the app works with only the agent's key set. And **Show debug panels**, at the bottom, reveals WICA's own views: the World as the agent sees it, and every reasoning step with its prompt and timing.
 
@@ -61,11 +52,10 @@ The reachy template targets the **MuJoCo simulator**, which the bridge spawns fo
 ```
 cp config.reachy.example.json config.reachy.local.json
 export WICA_HF_TOKEN=hf_...
-export DEEPGRAM_API_KEY=...
 uv run wica-interaction-reachy --config config.reachy.local.json
 ```
 
-The viewer opens with the webcam picture in its corner, the page opens as before, and the robot speaks with the local `pocket` voice, which downloads its weights on the first `say`. Ask it to show you it is happy: a **🦾 play_emotion** item runs, the simulated robot moves, and the robot confirms out loud in its next turn. The first emotion loads the recorded-moves library, another first-run download.
+The viewer opens with the webcam picture in its corner, the page opens as before, and the robot speaks with the local `phonon` voice, as the computer does. Ask it to show you it is happy: a **🦾 play_emotion** item runs, the simulated robot moves, and the robot confirms out loud in its next turn. The first emotion loads the recorded-moves library, another first-run download.
 
 A windowless simulator is `reachy.daemon.headless` set to `true`; the rendered scene instead of the webcam is `reachy.daemon.camera.source` set to `"sim"` (on macOS a headless simulator has no camera at all). The simulator's options, the voice and face tracking are in [guides/reachy-mini.md](guides/reachy-mini.md); a simulator that does not come up, [guides/troubleshooting.md](guides/troubleshooting.md#the-robot-does-not-start).
 

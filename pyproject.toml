@@ -100,12 +100,14 @@ dev = [
     "pyright>=1.1.411",
     "pytest>=9.1.1",
     "ruff>=0.16.6",
-    # What the example configs and the test tier run, not `all`: both embodiments and their
-    # features, every (light) agent provider, and the speech providers the example configs select.
-    # The other speech providers are resolved by `uv lock` all the same, just not installed.
+    # What the example configs, the e2e configs and the test tier run, not `all`: both embodiments
+    # and their features, every (light) agent provider, and the speech providers those configs
+    # select — the templates' local recognizer (mlx-audio, Apple silicon only: elsewhere its extra
+    # installs nothing) and voice, the e2e tier's Deepgram. The other speech providers are resolved
+    # by `uv lock` all the same, just not installed.
     "wica-interaction[computer,audio-processing,reachy,vision]",
     "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-gemini,wica-mistral,wica-openai-compatible]",
-    "wica-interaction[asr-deepgram,asr-silero,tts-elevenlabs,tts-gradium,tts-pocket,tts-phonon]",
+    "wica-interaction[asr-mlx-audio,asr-deepgram,asr-silero,tts-elevenlabs,tts-gradium,tts-pocket,tts-phonon]",
     # The simulator, what the reachy template targets, for manual/e2e testing against a simulated
     # robot.
     "wica-interaction[reachy-sim]",

@@ -4991,7 +4991,7 @@ dev = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "wica-interaction", extra = ["asr-deepgram", "asr-silero", "audio-processing", "computer", "reachy", "reachy-sim", "tts-elevenlabs", "tts-gradium", "tts-phonon", "tts-pocket", "vision", "wica-anthropic", "wica-gemini", "wica-huggingface-hub", "wica-mistral", "wica-openai", "wica-openai-compatible"] },
+    { name = "wica-interaction", extra = ["asr-deepgram", "asr-mlx-audio", "asr-silero", "audio-processing", "computer", "reachy", "reachy-sim", "tts-elevenlabs", "tts-gradium", "tts-phonon", "tts-pocket", "vision", "wica-anthropic", "wica-gemini", "wica-huggingface-hub", "wica-mistral", "wica-openai", "wica-openai-compatible"] },
 ]
 
 [package.metadata]
@@ -5044,7 +5044,7 @@ dev = [
     { name = "pyright", specifier = ">=1.1.411" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.16.6" },
-    { name = "wica-interaction", extras = ["asr-deepgram", "asr-silero", "tts-elevenlabs", "tts-gradium", "tts-pocket", "tts-phonon"], editable = "." },
+    { name = "wica-interaction", extras = ["asr-mlx-audio", "asr-deepgram", "asr-silero", "tts-elevenlabs", "tts-gradium", "tts-pocket", "tts-phonon"], editable = "." },
     { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "vision"], editable = "." },
     { name = "wica-interaction", extras = ["reachy-sim"], editable = "." },
     { name = "wica-interaction", extras = ["wica-anthropic", "wica-huggingface-hub", "wica-openai", "wica-gemini", "wica-mistral", "wica-openai-compatible"], editable = "." },

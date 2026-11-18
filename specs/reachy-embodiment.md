@@ -39,7 +39,7 @@ The file carries the shared sections (`wica`, `asr`, optional `vision` — [conf
     "backend": "sim",
     "robot": {},
     "daemon": { "spawn": "auto", "headless": false, "camera": { "source": "webcam", "device": null } },
-    "tts": { "module": { "type": "pocket", "voice": "george", "device": "auto" } },
+    "tts": { "module": { "type": "phonon", "voice": "Micah" } },
     "audio": { "xvf3800": null },
     "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "score_threshold": 0.6, "target_fps": null },
     "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": { "enabled": false } }
@@ -343,7 +343,7 @@ def main() -> None:
     run_app(description="Talk to a WICA-driven Reachy Mini.", load=_load)
 ```
 
-`run_app` ([app.md](app.md)) requires `--config`: the committed `config.reachy.example.json` is a template (a daemon the bridge spawns itself, `pocket` voice, the shipped `yunet` face detector with detection on and head tracking off — the agent's to start —, vision on) to copy and point at what you drive — `"real"` for the physical robot, `"sim"` for the MuJoCo simulator, `"fake"` (with no `daemon` block) for offline development.
+`run_app` ([app.md](app.md)) requires `--config`: the committed `config.reachy.example.json` is a template (the Hugging Face Hub agent, the local `mlx-audio` recognizer and `phonon` voice, a simulator daemon the bridge spawns itself with the webcam as its camera, the shipped `yunet` face detector with detection on, every motion switch shown at its default — head tracking off, the agent's to start —, vision on; the `reachy` section keeps to the fields that matter here and leaves the rest at the bridge's defaults) to copy and point at what you drive — `"real"` for the physical robot, `"sim"` for the MuJoCo simulator, `"fake"` (with no `daemon` block) for offline development.
 
 ## Persona
 

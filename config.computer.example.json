@@ -1,40 +1,33 @@
 {
   "wica": {
     "agent": {
-      "provider": "anthropic",
-      "model": "claude-sonnet-5",
-      "api_key_env": "WICA_ANTHROPIC_API_KEY",
-      "system_prompt_file": "prompts/computer.md"
-    }
-  },
-  "tts": {
-    "engine": {
-      "module": {
-        "type": "elevenlabs",
-        "api_key_env": "ELEVENLABS_API_KEY",
-        "voice_id": "JBFqnCBsd6RMkjVDRZzb",
-        "model": "eleven_flash_v2_5"
-      },
-      "player": {
-        "device": null
-      }
+      "provider": "huggingface-hub",
+      "model": "openai/gpt-oss-120b",
+      "hf_provider": "cerebras",
+      "api_key_env": "WICA_HF_TOKEN",
+      "system_prompt_file": "prompts/computer.md",
+      "context_window": 128000,
+      "history_budget": 0.5
     }
   },
   "asr": {
     "engine": {
       "module": {
-        "type": "deepgram-v2",
-        "api_key_env": "DEEPGRAM_API_KEY",
-        "model": "flux-general-en"
+        "type": "mlx-audio",
+        "model": "mlx-community/parakeet-tdt-0.6b-v3",
+        "interim_interval_s": 0.5
       },
-      "audio_source": {
-        "type": "input-device",
-        "device": null
-      },
-      "dictation_default_segmentation_mode": "trigger_word",
       "vad": {
         "type": "silero",
-        "min_silence_duration_ms": 1500
+        "min_silence_duration_ms": 700
+      }
+    }
+  },
+  "tts": {
+    "engine": {
+      "module": {
+        "type": "phonon",
+        "voice": "Miles"
       }
     }
   },
@@ -56,8 +49,5 @@
     "hold_s": 0.3,
     "release_hold_s": 0.5,
     "device": null
-  },
-  "camera": {
-    "device": 0
   }
 }
