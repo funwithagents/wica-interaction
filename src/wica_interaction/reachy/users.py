@@ -13,10 +13,11 @@ space, is its head tracker's (specs/motion/head_tracking.md). This module only *
 per concept:
 
 - ``user_event`` — what just happened, one-shot like ``speech_input``: a user came into view, or
-  left it. It wakes the agent.
+  left it. It wakes the agent only on whom it attends to: the tracked user (followed or pinned)
+  leaving, or a user arriving while nobody is tracked. Every other change is written, and wakes
+  nothing.
 - ``users_in_view`` — who is present now, and where. Standing; never wakes the agent.
-- ``personal_space`` — which user, if any, is inside the personal space. A state that wakes the
-  agent when it changes: someone entering, leaving, another taking their place.
+- ``personal_space`` — which user, if any, is inside the personal space. Standing; never wakes.
 - ``tracked_user`` — whom the head follows, or that it follows nobody. Standing; never wakes.
 
 The standing entries are the app's exception to "no mirrored embodiment state" (specs/app.md, "World,
@@ -32,7 +33,7 @@ import asyncio
 import logging
 import math
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, Literal
@@ -65,7 +66,7 @@ EVENT_JOIN_S = 0.5
 # coming nearer); each is written only when its value changed.
 STANDING_REFRESH_S = 1.0
 # How long the personal space says what just changed (someone came in, stepped out) before it is
-# rewritten settled — a state alone reads the same in the step it wakes as in every later one.
+# rewritten settled, so a step running within those seconds reads that it just happened.
 SPACE_CHANGE_S = 2.0
 
 # The side a face is on, from its normalised x in [-1, 1]: the outer thirds are left and right. The
@@ -85,12 +86,15 @@ Side = Literal["left", "front", "right"]
 @dataclass(frozen=True)
 class UserChange:
     """One thing that just happened to a user: ``arrived`` (came into view), ``present`` (already
-    in view when the input started), ``left`` (seen walking away)."""
+    in view when the input started), ``left`` (seen walking away). ``wakes``: it concerns whom the
+    robot attends to — the tracked user leaving, or an arrival with nobody tracked — so it wakes the
+    agent (``user_event_wakes``)."""
 
     kind: Literal["arrived", "present", "left"]
     user: int
     side: Side | None = None
     distance_m: float | None = None
+    wakes: bool = False
 
 
 @dataclass(frozen=True)
@@ -153,10 +157,33 @@ def user_in_view(user: User) -> UserInView:
     )
 
 
-def change(kind: Literal["arrived", "present"], user: User) -> UserChange:
+def change(
+    kind: Literal["arrived", "present"], user: User, *, wakes: bool = False
+) -> UserChange:
     return UserChange(
-        kind, user.track_id, side_of(user.face), rounded(user.face.distance_m)
+        kind,
+        user.track_id,
+        side_of(user.face),
+        rounded(user.face.distance_m),
+        wakes=wakes,
     )
+
+
+def user_event_wakes(old: Any, new: Any) -> bool:
+    """``user_event`` wakes the agent when a write brings a change that wakes (the tracked user
+    leaving, an arrival with nobody tracked) and that the previous value did not already hold — so
+    a quiet change appended to a waking one (``EVENT_JOIN_S``) does not wake twice."""
+    if not isinstance(new, tuple):
+        return False
+    before = old if isinstance(old, tuple) else ()
+    return any(isinstance(c, UserChange) and c.wakes and c not in before for c in new)
+
+
+def tracked_ids(tracking: HeadTrackingReport) -> set[int]:
+    """The users tracking is on: the one the head follows and the one the agent pinned."""
+    if not tracking.active:
+        return set()
+    return {t for t in (tracking.track_id, tracking.pinned_track_id) if t is not None}
 
 
 def users_in_view(users: UsersReport) -> tuple[UserInView, ...] | None:
@@ -229,6 +256,8 @@ def place(side: Side | None, distance_m: float | None) -> str:
 
 def change_line(event: UserChange) -> str:
     if event.kind == "left":
+        if event.wakes:
+            return f"User {event.user}, whom your head was following, left your view."
         return f"User {event.user} left your view."
     where = place(event.side, event.distance_m)
     lead = (
@@ -318,23 +347,23 @@ def users_prompt_section() -> str:
         "never say it aloud, and someone who comes back later may get a new one. You cannot tell "
         "who anyone is.\n\n"
         f"- `{USER_EVENT}` tells you what just happened: a user came into view, or left your "
-        "view. You may greet someone who arrives or say goodbye to someone who leaves, or do "
-        "nothing; don't break off a conversation to comment on every coming and going.\n"
+        "view. It wakes you only twice: when someone comes into view while your head follows "
+        "nobody, and when the user your head follows leaves. Other comings and goings are "
+        "written there too, for you to know, not to react to. You may greet someone who arrives "
+        "or say goodbye to the user who leaves, or do nothing; don't break off a conversation "
+        "for it.\n"
         f"- `{USERS_IN_VIEW}` tells you who is in view right now, and where.\n"
         f"- `{PERSONAL_SPACE}` tells you which user, if any, is very close to you, inside your "
-        "personal space, and says when someone just came in or just stepped back out. You like "
-        "your personal space: when someone comes into it, react out loud, a little surprised or "
-        "uneasy but still friendly and brief; when they step back out, show you are relieved, or "
-        "thank them lightly. Someone coming so close is one of the moments an emotion may fit: "
-        "if one of yours matches, speak first and play it after, with a `<next>` note. It is "
-        "only known while your head follows someone.\n"
+        "personal space. It is only known while your head follows someone.\n"
         f"- `{TRACKED_USER}` tells you whom your head is following, if anyone.\n\n"
         "Following a user with your head shows them you are paying attention: "
         "`start_tracking(user)` follows that user, `start_tracking()` follows whoever is in "
         "front of you, and `stop_tracking()` stops. When someone comes into view and your head is "
         "not following anyone, start following them. When several users are in view, follow the "
-        "one you are talking with. When everyone has left, stop. Following collides with nothing: "
-        "it may go in the same turn as speaking or an emotion."
+        "one you are talking with. When the user you follow leaves and someone else is in view, "
+        "follow them (your head may already have turned to them: `tracked_user` says); when "
+        "nobody is left, stop. Following collides with nothing: it may go in the same turn as "
+        "speaking or an emotion."
     )
 
 
@@ -371,12 +400,16 @@ class UsersInput:
         self._space_changed_at = (
             -math.inf
         )  # when personal_space last said what just changed
+        # The users tracked (followed or pinned) as this module last saw them; one dropped from
+        # tracking because they are no longer present stays until their departure is judged.
+        self._tracked: set[int] = set()
         self._entries = (
             InputEntry(
                 USER_EVENT,
                 tuple,
                 serialize_fn=_serializer(events_text),
                 triggers_llm_call=True,
+                trigger_condition_fn=user_event_wakes,
                 ttl=USER_EVENT_TTL,
                 display_fn=lambda value: f"👤 {events_text(value)}",
             ),
@@ -390,8 +423,6 @@ class UsersInput:
                 PERSONAL_SPACE,
                 PersonalSpace,
                 serialize_fn=_serializer(personal_space_line),
-                triggers_llm_call=True,
-                trigger_condition_fn=personal_space_changed,
                 display_fn=lambda value: f"📏 {personal_space_line(value)}",
             ),
             InputEntry(
@@ -412,6 +443,7 @@ class UsersInput:
         await self.stop()
         self._deliver = deliver
         self._written = {}
+        self._tracked = tracked_ids(self._bridge.head_tracking.value)
         loop = asyncio.get_running_loop()
         self._tasks = [
             loop.create_task(self._guarded(self._watch_users())),
@@ -447,7 +479,11 @@ class UsersInput:
         present = self._bridge.users.value
         self._refresh()
         if present.active and present.users:
-            self._events(tuple(change("present", u) for u in present.users))
+            ids = {u.track_id for u in present.users}
+            wakes = self._nobody_tracked_but(ids, present=ids)
+            self._events(
+                tuple(change("present", u, wakes=wakes) for u in present.users)
+            )
         async for report in self._bridge.users.changes(every=True):
             self._on_users(report)
 
@@ -462,15 +498,34 @@ class UsersInput:
 
     def _on_users(self, report: UsersReport) -> None:
         arrived = set(report.arrived)
-        events = [change("arrived", u) for u in report.users if u.track_id in arrived]
+        # Judged against who was tracked before this report: an arrival wakes when nobody is
+        # tracked but the arrivals themselves (the automatic target may have grabbed one already).
+        welcome = bool(arrived) and self._nobody_tracked_but(
+            arrived, present={u.track_id for u in report.users}
+        )
+        events = [
+            change("arrived", u, wakes=welcome)
+            for u in report.users
+            if u.track_id in arrived
+        ]
         # Only someone seen walking away is an event: "unseen" (not looked at for a while) and
         # "stopped" (detection stopped) say nothing about the user; the standing entries follow.
         events += [
-            UserChange("left", d.track_id) for d in report.left if d.reason == "left"
+            UserChange("left", d.track_id, wakes=d.track_id in self._tracked)
+            for d in report.left
+            if d.reason == "left"
         ]
         if events:
             self._events(tuple(events))
+        # A departure judged, the departed user is no longer kept as tracked.
+        self._tracked -= {d.track_id for d in report.left}
         self._refresh()
+
+    def _nobody_tracked_but(self, users: Iterable[int], *, present: set[int]) -> bool:
+        """Whether no user *present* is tracked but *users* (an arrival the tracker grabbed
+        first). A pin on someone who left (the bridge keeps it) is nobody: the head waits on an
+        empty spot, and a newcomer is worth waking for."""
+        return not ((self._tracked & present) - set(users))
 
     def _events(self, events: tuple[UserChange, ...]) -> None:
         """Write *events* as the user event — appended to the previous ones when they landed less
@@ -482,19 +537,24 @@ class UsersInput:
         self._write(USER_EVENT, events)
 
     def _refresh(self) -> None:
-        """Re-render the standing entries from the bridge's current reports; write each only when
-        its value changed (``personal_space`` wakes the agent by its own trigger rule)."""
+        """Re-render the standing entries from the bridge's current reports, noting who is tracked;
+        write each only when its value changed."""
         users = self._bridge.users.value
         tracking = self._bridge.head_tracking.value
         present = frozenset(u.track_id for u in users.users)
+        # Tracking as it stands, keeping one it dropped because they left: their departure is
+        # judged by the users watcher, which may run after this.
+        self._tracked = tracked_ids(tracking) | {
+            t for t in self._tracked if t not in present
+        }
         self._standing(USERS_IN_VIEW, users_in_view(users))
         self._standing(PERSONAL_SPACE, self._space(personal_space(users, tracking)))
         self._standing(TRACKED_USER, tracked_user(tracking, present))
 
     def _space(self, now: PersonalSpace | None) -> PersonalSpace | None:
-        """*now* (settled), saying what just changed: a change of who is inside is written with it
-        (and wakes the agent, by ``personal_space_changed``), kept for ``SPACE_CHANGE_S``, then
-        rewritten settled (waking no one: who is inside is the same)."""
+        """*now* (settled), saying what just changed: a change of who is inside
+        (``personal_space_changed``) is written with it, kept for ``SPACE_CHANGE_S``, then
+        rewritten settled."""
         last = self._written.get(PERSONAL_SPACE)
         if now is None:
             return None

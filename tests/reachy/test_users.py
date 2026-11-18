@@ -5,8 +5,8 @@ Driven over a real `ReachyMiniBridge` on its `fake` backend, its face detector a
 own confirmation, tracks, departures, pin and personal space, so what is asserted here is what the
 agent would be told about what the bridge actually published. The producer is driven the way the
 lifecycle drives it — `start(deliver)` on a running loop, `stop()` — and the test plays the World,
-recording each `deliver(key, value)`; `personal_space`'s trigger rule is asserted on its own, as
-the World applies it.
+recording each `deliver(key, value)` and, as the World does, which writes wake the agent (each
+entry's `triggers_llm_call` and `trigger_condition_fn`, against the value it replaces).
 
 The bridge runs at real time: a user is confirmed in about 0.3 s and dropped about 2 s after the
 camera stops seeing them, so the waits below are generous timeouts, never sleeps that must be long
@@ -52,6 +52,7 @@ from wica_interaction.reachy.users import (
     side_of,
     tracked_line,
     tracked_user,
+    user_event_wakes,
     users_in_view,
     users_prompt_section,
     users_text,
@@ -74,10 +75,22 @@ class World:
 
     def __init__(self, entries: Sequence[InputEntry]) -> None:
         self.writes: list[tuple[str, Any]] = []
+        self.woke: list[tuple[str, Any]] = []  # the writes that woke the agent
         self._serialize = {e.key: e.serialize_fn for e in entries}
+        self._entries = {e.key: e for e in entries}
 
     def deliver(self, key: str, value: Any) -> None:
+        entry = self._entries[key]
+        old = self.current(key)
+        if entry.triggers_llm_call and (
+            entry.trigger_condition_fn is None or entry.trigger_condition_fn(old, value)
+        ):
+            self.woke.append((key, value))
         self.writes.append((key, value))
+
+    def woken(self, key: str = USER_EVENT) -> list[str]:
+        """The rendered writes of *key* that woke the agent."""
+        return [self.render(k, v) for k, v in self.woke if k == key]
 
     def values(self, key: str) -> list[Any]:
         return [v for k, v in self.writes if k == key]
@@ -143,7 +156,7 @@ def run(coro: Any) -> Any:
 # --- The entries ------------------------------------------------------------------------------------
 
 
-def test_one_entry_per_concept_and_only_events_and_the_personal_space_wake() -> None:
+def test_one_entry_per_concept_and_only_the_events_wake() -> None:
     async def scenario() -> None:
         async with _seeing(ScriptedFaces()) as (_, users, _world):
             by_key = {e.key: e for e in users.entries}
@@ -154,10 +167,9 @@ def test_one_entry_per_concept_and_only_events_and_the_personal_space_wake() -> 
                 TRACKED_USER,
             ]
             assert by_key[USER_EVENT].triggers_llm_call
+            assert by_key[USER_EVENT].trigger_condition_fn is user_event_wakes
             assert by_key[USER_EVENT].ttl == USER_EVENT_TTL
-            assert by_key[PERSONAL_SPACE].triggers_llm_call
-            assert by_key[PERSONAL_SPACE].trigger_condition_fn is personal_space_changed
-            for standing in (USERS_IN_VIEW, TRACKED_USER):
+            for standing in (USERS_IN_VIEW, PERSONAL_SPACE, TRACKED_USER):
                 assert not by_key[standing].triggers_llm_call
                 assert by_key[standing].ttl is None
             # Cleared: omitted from the prompt.
@@ -332,9 +344,10 @@ def test_the_tracked_user_says_whom_the_head_follows() -> None:
 def test_the_personal_space_changes_when_the_followed_user_comes_in_and_steps_out() -> (
     None
 ):
-    """Judged only while the head follows someone: tracking on writes "nobody" (which wakes no one),
-    the followed user coming very close writes them inside (a change: it wakes), stepping back out
-    writes nobody again (a change: it wakes); tracking off omits the entry."""
+    """Judged only while the head follows someone: tracking on writes "nobody", the followed user
+    coming very close writes them inside, saying they just came in, stepping back out writes nobody
+    again, saying they just stepped out — none of it waking the agent; tracking off omits the
+    entry."""
 
     async def scenario() -> None:
         faces = ScriptedFaces()
@@ -361,23 +374,23 @@ def test_the_personal_space_changes_when_the_followed_user_comes_in_and_steps_ou
                 lambda: world.current(PERSONAL_SPACE) == PersonalSpace(None)
             ), world.writes
 
-            # What the World would have woken the agent on: each change of who is inside.
+            assert world.woken(PERSONAL_SPACE) == []  # read, never woken on
+            # Each change of who is inside says what just changed; the settling rewrite does not.
             values = world.values(PERSONAL_SPACE)
-            woken = [
+            changed = [
                 new
                 for old, new in zip([None, *values], values, strict=False)
                 if personal_space_changed(old, new)
             ]
-            assert [v.user for v in woken] == [user, None]
-            # Each waking value says what just changed; the settling rewrite after it does not.
-            assert [(v.change, v.left) for v in woken] == [
+            assert [v.user for v in changed] == [user, None]
+            assert [(v.change, v.left) for v in changed] == [
                 ("came_in", None),
                 ("stepped_out", user),
             ]
-            assert world.render(PERSONAL_SPACE, woken[0]).startswith(
+            assert world.render(PERSONAL_SPACE, changed[0]).startswith(
                 f"User {user} just came into your personal space"
             )
-            assert world.render(PERSONAL_SPACE, woken[1]) == (
+            assert world.render(PERSONAL_SPACE, changed[1]) == (
                 f"User {user} just stepped back out of your personal space; nobody is in it now."
             )
             assert world.current(PERSONAL_SPACE).change is None  # settled
@@ -434,6 +447,129 @@ def test_stop_ends_the_watchers() -> None:
             faces.show(AHEAD)
             await asyncio.sleep(1.0)  # well past a confirmation
             assert len(world.writes) == writes
+
+    run(scenario())
+
+
+# --- What wakes the agent ---------------------------------------------------------------------------
+#
+# Only whom the robot attends to: a user arriving while nobody is tracked, and the tracked user
+# (followed or pinned) leaving. Every other change is written and wakes nothing.
+
+RIGHT = (0.6, 0.2)
+
+
+def _user_on_the_right(world: World) -> int | None:
+    for event in world.events():
+        if m := re.search(
+            r"A user came into view: user (\d+), [^\n]*to your right", event
+        ):
+            return int(m.group(1))
+    return None
+
+
+def test_an_arrival_wakes_the_agent_while_nobody_is_tracked() -> None:
+    async def scenario() -> None:
+        faces = ScriptedFaces()
+        async with _seeing(faces) as (_, users, world):
+            await users.start(world.deliver)
+            faces.show(AHEAD)
+            user = await _arrived(world)
+            assert any(f"user {user}" in e for e in world.woken()), world.woke
+
+    run(scenario())
+
+
+def test_the_automatic_target_grabbing_a_newcomer_still_wakes_the_agent() -> None:
+    """With tracking on and nobody followed, the tracker may follow a newcomer before the report
+    saying they arrived is read: that newcomer is not *somebody tracked* already."""
+
+    async def scenario() -> None:
+        faces = ScriptedFaces()
+        async with _seeing(faces) as (bridge, users, world):
+            await bridge.start_head_tracking()
+            await users.start(world.deliver)
+            faces.show(AHEAD)
+            user = await _arrived(world)
+            assert any(f"user {user}" in e for e in world.woken()), world.woke
+
+    run(scenario())
+
+
+def test_around_the_followed_user_comings_and_goings_wake_nothing() -> None:
+    """The head follows user A: B arriving and B leaving are written, and wake nothing; A leaving
+    wakes the agent, worded as the user it followed."""
+
+    async def scenario() -> None:
+        faces = ScriptedFaces()
+        async with _seeing(faces) as (bridge, users, world):
+            await users.start(world.deliver)
+            faces.show(AHEAD)
+            followed = await _arrived(world)
+            await bridge.start_head_tracking(track_id=followed)
+            assert await _until(
+                lambda: f"following user {followed}" in world.text(TRACKED_USER)
+            ), world.writes
+            woken = len(world.woke)
+
+            faces.show(AHEAD, RIGHT)
+            assert await _until(lambda: _user_on_the_right(world) is not None), (
+                world.writes
+            )
+            other = _user_on_the_right(world)
+            faces.show(AHEAD)
+            assert await _until(
+                lambda: any(
+                    f"User {other} left your view." in e for e in world.events()
+                )
+            ), world.writes
+            assert world.woke[woken:] == [], world.woke[woken:]
+
+            faces.hide()
+            line = f"User {followed}, whom your head was following, left your view."
+            assert await _until(lambda: any(line in e for e in world.woken())), (
+                world.writes
+            )
+
+    run(scenario())
+
+
+def test_an_arrival_wakes_the_agent_once_the_pinned_user_has_left() -> None:
+    """The bridge keeps a pin on a user who left, the head waiting on them: nobody present is
+    followed, so a newcomer wakes the agent."""
+
+    async def scenario() -> None:
+        faces = ScriptedFaces()
+        async with _seeing(faces) as (bridge, users, world):
+            await users.start(world.deliver)
+            faces.show(AHEAD)
+            pinned = await _arrived(world)
+            await bridge.start_head_tracking(track_id=pinned)
+            faces.hide()
+            assert await _until(
+                lambda: any(f"User {pinned}, whom" in e for e in world.woken())
+            ), world.writes
+
+            faces.show(AHEAD)
+            assert await _until(
+                lambda: any(
+                    "came into view" in e and f"user {pinned}," not in e
+                    for e in world.woken()
+                )
+            ), world.writes
+
+    run(scenario())
+
+
+def test_users_in_view_at_start_wake_the_agent() -> None:
+    async def scenario() -> None:
+        faces = ScriptedFaces()
+        faces.show(AHEAD)
+        async with _seeing(faces) as (bridge, users, world):
+            assert await _until(lambda: bool(bridge.users.value.users))
+            await users.start(world.deliver)
+            assert await _until(lambda: bool(world.woken())), world.writes
+            assert world.woken()[0].startswith("A user is in view as you start")
 
     run(scenario())
 
@@ -506,12 +642,27 @@ def test_the_events_are_worded_one_line_each() -> None:
         UserChange("arrived", 3, "front", 0.7),
         UserChange("present", 4, "right", 1.5),
         UserChange("left", 5),
+        UserChange("left", 6, wakes=True),  # the tracked user
     )
     assert events_text(events) == (
         "A user came into view: user 3, about 0.7 m away, in front of you.\n"
         "A user is in view as you start: user 4, about 1.5 m away, to your right.\n"
-        "User 5 left your view."
+        "User 5 left your view.\n"
+        "User 6, whom your head was following, left your view."
     )
+
+
+def test_a_write_wakes_on_a_waking_change_it_brings() -> None:
+    welcome = UserChange("arrived", 3, "front", 0.7, wakes=True)
+    quiet = UserChange("arrived", 4, "right", 0.7)
+    assert user_event_wakes(None, (welcome,))
+    assert not user_event_wakes(None, (quiet,))
+    # A quiet change appended to a waking one already written does not wake again…
+    assert not user_event_wakes((welcome,), (welcome, quiet))
+    # …a waking one appended does.
+    gone = UserChange("left", 5, wakes=True)
+    assert user_event_wakes((quiet,), (quiet, gone))
+    assert not user_event_wakes((welcome,), None)  # the TTL clearing it
 
 
 def test_the_world_holds_whom_the_head_follows_and_the_prompt_words_it() -> None:
@@ -569,7 +720,7 @@ def test_the_personal_space_is_judged_only_while_the_head_follows() -> None:
     assert personal_space_line(PersonalSpace(None, change="stepped_out", left=3)) == (
         "User 3 just stepped back out of your personal space; nobody is in it now."
     )
-    # Settling a change is not a change of who is inside: it wakes no one.
+    # Settling a change is not a change of who is inside.
     assert not personal_space_changed(
         PersonalSpace(3, 0.3, change="came_in"), PersonalSpace(3, 0.3)
     )
@@ -578,7 +729,7 @@ def test_the_personal_space_is_judged_only_while_the_head_follows() -> None:
     )
 
 
-def test_the_personal_space_wakes_on_who_is_inside_changing() -> None:
+def test_the_personal_space_changes_on_who_is_inside() -> None:
     assert personal_space_changed(
         None, PersonalSpace(3, 0.3)
     )  # tracking starts on a user already inside: the agent's first news of it
