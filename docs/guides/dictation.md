@@ -37,6 +37,6 @@ A `trigger_word` passage runs no timer, so it never closes on silence: it ends w
 
 ## Typed text
 
-The text box in the ASR panel is the keyboard way in. Submitting a line, with Enter or the `Send` button, writes it to the agent exactly as a closed segment would, so it flows through the same reason and reply path and shows in the Conversation as something you said. It needs neither the speech recognizer nor its key: with only the agent's key set, the app opens with an `ASR:` banner line and the text box is the way to talk to it ([troubleshooting.md](troubleshooting.md#the-banner)).
+The text box under the camera is the keyboard way in. Submitting a line, with Enter or the `Send` button, writes it to the agent exactly as a closed segment would, so it flows through the same reason and reply path and shows in the Conversation as something you said. It needs neither the speech recognizer nor its key: with only the agent's key set, the app opens with an `ASR:` banner line and the text box is the way to talk to it ([troubleshooting.md](troubleshooting.md#the-banner)).
 
 One difference from speech: an empty or whitespace-only typed line is ignored, while an empty spoken passage is delivered. Typed text shares the agent's one-step-at-a-time rule with speech: a line sent while a step is in flight is dropped, not queued ([limits.md](limits.md)).

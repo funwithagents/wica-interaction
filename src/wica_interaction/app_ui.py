@@ -15,9 +15,9 @@ the components and owns the timer keeping them live. What this module holds:
   transcript without this module knowing the body.
 - ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
   the agent's Events in their constructors, both given ``entry_display(system)``), lays out the page (the
-  debug toggle and the two debug panels side by side on top, then the Conversation beside the
-  body's camera, then the app's ASR (the typed-text hatch in it) beside its Vision, a banner for
-  anything missing), and returns the page. The UI wires nothing into the agent: its presenters
+  Conversation beside the body's camera and the typed-text hatch, then the app's ASR beside its
+  Vision, then the debug toggle and the two debug panels side by side, a banner for anything
+  missing), and returns the page. The UI wires nothing into the agent: its presenters
   subscribe to the agent's Events themselves.
 - ``tick_asr`` — the live view the ASR panel's timer polls; ``tick_view`` — what the camera's
   timer shows of the body (``embodiment.view()``). The app owns these two timers.
@@ -295,23 +295,8 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             "and duration."
         )
 
-        # Debug surface first, on one line: the toggle, then World state and Reaction side by side.
-        # The toggle is visibility only: the contrib panels own their timers and keep ticking while
-        # hidden (see specs/app.md, "Refresh cost").
-        show_debug = gr.Checkbox(label="Show debug panels", value=False)
-        with gr.Row(visible=False, equal_height=False) as debug_panels:
-            with gr.Column():
-                gr.Markdown("### World state (live)")
-                if wica is not None:
-                    world_state_panel(wica.world)
-                else:
-                    gr.Markdown("_No agent — there is no World to show._")
-            with gr.Column():
-                gr.Markdown("### Reaction (prompt + instrumentation)")
-                reaction_panel(reactions)
-
         # The main surface, two rows of two equal columns (specs/app.md, "The layout"): the
-        # Conversation beside the body's camera; then ASR (with the typed-text box) beside Vision.
+        # Conversation beside the body's camera and the typed-text box; then ASR beside Vision.
         with gr.Row(equal_height=False):
             with gr.Column(scale=1):
                 # The contrib transcript: its own timer, pushed only when the transcript changed.
@@ -324,6 +309,15 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                     interactive=False,
                     show_label=False,
                 )
+                with gr.Row():
+                    # gradio's dynamic event methods (.click/.submit/.change/.tick) aren't in the
+                    # stubs, hence the narrow ignores below.
+                    msg = gr.Textbox(
+                        placeholder="Type a turn (works with no mic / no ASR key)…",
+                        show_label=False,
+                        scale=5,
+                    )
+                    send = gr.Button("Send", variant="primary", scale=1)
 
         with gr.Row(equal_height=False):
             with gr.Column(scale=1):
@@ -336,15 +330,6 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                     interactive=False,
                     lines=2,
                 )
-                with gr.Row():
-                    # gradio's dynamic event methods (.click/.submit/.change/.tick) aren't in the
-                    # stubs, hence the narrow ignores below.
-                    msg = gr.Textbox(
-                        placeholder="Type a turn (works with no mic / no ASR key)…",
-                        show_label=False,
-                        scale=5,
-                    )
-                    send = gr.Button("Send", variant="primary", scale=1)
                 stop_dictation = gr.Button("Stop dictation", interactive=False)
             with gr.Column(scale=1):
                 gr.Markdown("### Vision")
@@ -371,6 +356,21 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                         inputs=snapshot_folder,
                         outputs=snapshot_status,
                     )
+
+        # Debug surface last, on one line: the toggle, then World state and Reaction side by side.
+        # The toggle is visibility only: the contrib panels own their timers and keep ticking while
+        # hidden (see specs/app.md, "Refresh cost").
+        show_debug = gr.Checkbox(label="Show debug panels", value=False)
+        with gr.Row(visible=False, equal_height=False) as debug_panels:
+            with gr.Column():
+                gr.Markdown("### World state (live)")
+                if wica is not None:
+                    world_state_panel(wica.world)
+                else:
+                    gr.Markdown("_No agent — there is no World to show._")
+            with gr.Column():
+                gr.Markdown("### Reaction (prompt + instrumentation)")
+                reaction_panel(reactions)
 
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
