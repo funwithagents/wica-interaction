@@ -296,6 +296,21 @@ def preload_mediapipe() -> None:
         pass
 
 
+def preload_transformers() -> None:
+    """Import ``transformers``' ``pipeline`` now, on the calling (main) thread, before any worker
+    starts. The shipped gesture classifier would import it on its stage's thread at the first hand;
+    with the ``mlx-audio`` ASR, the engine's worker imports ``transformers`` too while loading its
+    model, and ``transformers`` resolving its lazy names on two threads at once fails with
+    ``ImportError: cannot import name …`` on either side (2026-11-18, specs/gesture-input.md, "App
+    integration"). A missing ``transformers`` is left to the classifier, which reports it."""
+    try:
+        from transformers import (  # noqa: F401  # pyright: ignore[reportUnusedImport]
+            pipeline,
+        )
+    except ImportError:
+        pass
+
+
 @dataclass(frozen=True)
 class GestureModels:
     """Injectable perception backends (tests); ``None`` for either means the library's shipped
