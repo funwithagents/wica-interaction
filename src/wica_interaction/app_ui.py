@@ -62,6 +62,9 @@ _SAY_COMMAND_NAME = "say"
 
 _NO_LIVE_SPEECH = "(no speech yet)"
 
+# The Conversation's height (px): tall enough to follow a few reactions without scrolling.
+CONVERSATION_HEIGHT = 640
+
 # The World keys of the per-hand sign entries (`hand_gesture_1`, …) — see specs/gesture-input.md.
 _HAND_GESTURE_KEY = re.compile(r"^hand_gesture_(\d+)$")
 
@@ -310,7 +313,7 @@ def build_ui(system: AppSystem) -> gr.Blocks:
         with gr.Row(equal_height=False):
             with gr.Column(scale=1):
                 # The contrib transcript: its own timer, pushed only when the transcript changed.
-                conversation_panel(transcript)
+                conversation_panel(transcript, height=CONVERSATION_HEIGHT)
             with gr.Column(scale=1):
                 # The body's camera, its faces drawn (embodiment.view(); its status is Vision's).
                 camera = gr.Image(
