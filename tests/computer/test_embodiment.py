@@ -437,6 +437,25 @@ def test_webcam_reads_frames_and_paces_them_to_fps() -> None:
         source.close()
 
 
+def test_webcam_waits_before_it_reads_so_the_frame_is_fresh() -> None:
+    """The interval is waited out before the device is polled, not after: the first read returns
+    at once, and the second returns what the device holds when the interval ends, not a frame
+    captured at its start and held back."""
+    inner = FakeOpenCVSource(_FRAME)
+    source = _webcam(inner, fps=2.0)  # a 0.5 s interval
+    later = np.full_like(_FRAME, 7)
+    source.open()
+    try:
+        t0 = time.monotonic()
+        assert source.read() is _FRAME
+        assert time.monotonic() - t0 < 0.25  # the first frame is not paced
+        threading.Timer(0.1, lambda: setattr(inner, "frame", later)).start()
+        assert source.read() is later  # captured at the end of the interval
+        assert time.monotonic() - t0 >= 0.5 * 0.9
+    finally:
+        source.close()
+
+
 def test_a_device_that_cannot_be_opened_is_visible_and_heals() -> None:
     """An unplugged webcam shows on the Vision line and keeps retrying at the poll rate; `open()`
     never raises, and a later success clears the error."""

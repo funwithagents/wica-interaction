@@ -1026,7 +1026,9 @@ def test_vision_max_hands_fps_and_hold_reach_the_gesture_input() -> None:
     system = _build(
         embodiment,
         script=[],
-        vision=VisionConfig(enabled=True, max_hands=1, fps=20.0, hold_s=0.25),
+        vision=VisionConfig(
+            enabled=True, max_hands=1, fps=20.0, hold_s=0.25, release_hold_s=0.75
+        ),
         models=GestureModels(
             detector=_ScriptedDetector(), classifier=_ScriptedClassifier(fist=0.9)
         ),
@@ -1036,6 +1038,7 @@ def test_vision_max_hands_fps_and_hold_reach_the_gesture_input() -> None:
         assert system.gesture.status()["max_hands"] == 1
         assert system.gesture.status()["target_fps"] == 20.0
         assert system.gesture.status()["hold_s"] == 0.25
+        assert system.gesture.status()["release_hold_s"] == 0.75
         # The camera the body handed over was asked for the same rate.
         assert [camera.fps for camera in embodiment.cameras] == [20.0]
     finally:

@@ -39,21 +39,24 @@ Which camera is the body's: the computer's webcam, named by `camera.device` ([co
 | Field | Default | Effect |
 |---|---|---|
 | `threshold` | `0.55` | the confidence a label needs to count; below it the hand reads as no sign and the Vision line shows `below threshold` |
-| `fps` | `5` | the rate of the hand stage and the classifier, and of the webcam poll on the computer; the robot's camera runs at the daemon's own rate and the stages sample it |
+| `fps` | `10` | the rate of the hand stage and the classifier, and of the webcam poll on the computer; the robot's camera runs at the daemon's own rate and the stages sample it |
 | `max_hands` | `2` | how many hands are detected and classified, and how many entries the agent has |
-| `hold_s` | `0.5` | how long a sign must be seen, unbroken, before it is delivered; `0` delivers on the first frame |
+| `hold_s` | `0.3` | how long a sign must be seen, unbroken, before it is delivered; `0` delivers on the first frame |
+| `release_hold_s` | `0.5` | how long a hand must show no sign, unbroken, before its sign counts as gone |
 | `device` | `null` | the classifier's torch device; `null` picks `mps`, then `cuda`, then `cpu` |
 
 Two hands by default because `max_hands` is also the detector's tracking capacity: with one, the detector locks onto the first hand it sees, and a person whose relaxed hand was tracked first can sign with the other and never be seen. The price is up to one more classifier pass per frame; if the classifier's achieved rate on the Vision line falls well below the target on a slow machine, `max_hands: 1` is the fallback.
 
-The hold is what keeps a one-frame flicker of the classifier, between `stop` and `five`, or across the threshold, from waking the agent. It applies to every change, a hand going away included, and the clock restarts on any dissenting frame. Added to the agent's coalescing window of about 200 ms, a `stop` acts about 0.7 s after it is shown; lower `hold_s` if that is felt.
+The hold is what keeps a one-frame flicker of the classifier, between `stop` and `five`, or across the threshold, from waking the agent. It applies to every change, and the clock restarts on any dissenting frame. A sign appearing, or replacing another, waits `hold_s`: that is the delay a person feels, so it is the short one. A sign going away waits `release_hold_s`, which never delays a reaction (a hand relaxing does not wake the agent) and only has to outlast a dip below the threshold, so that the same sign coming back is not delivered twice.
+
+With the stages, the hold and the agent's coalescing window of about 200 ms, a `stop` acts a little over half a second after it is shown. If that is felt, lower `hold_s`; if signs then arrive that nobody showed, raise it again. If the classifier's achieved rate on the Vision line falls well below the target, the machine cannot keep up with `fps`: lower it, since a rate the classifier cannot hold only costs CPU.
 
 ## The Vision line
 
 Under the ASR panel, refreshed with it. Off, it reads `Vision off (vision.enabled is false, or no camera).` On, one line:
 
 ```
-Vision: running · hands (max 2): #1 like (0.91), #2 below threshold (0.40) · signs: #1 like, #2 — · camera: 9.8 fps · hand stage: 4.9 fps (target 5) · classifier: 4.7 fps (target 5)
+Vision: running · hands (max 2): #1 like (0.91), #2 below threshold (0.40) · signs: #1 like, #2 — · camera: 9.8 fps · hand stage: 9.8 fps (target 10) · classifier: 9.5 fps (target 10)
 ```
 
 | Field | Meaning |

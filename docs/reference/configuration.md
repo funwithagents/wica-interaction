@@ -69,7 +69,7 @@ The recognizer does not have to match the microphone: the robot's mic and the co
 ## `vision`: hand signs
 
 ```json
-"vision": { "enabled": true, "threshold": 0.55, "fps": 5, "max_hands": 2, "hold_s": 0.5, "device": null }
+"vision": { "enabled": true, "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null }
 ```
 
 The hand-sign input over whichever camera the body has ([guides/hand-signs.md](../guides/hand-signs.md)). Optional, and **off unless `enabled` is `true`**: an absent section, `null`, `{}` or `enabled: false` opens no camera, downloads no model and registers no hand entry. The app owns this schema.
@@ -78,9 +78,10 @@ The hand-sign input over whichever camera the body has ([guides/hand-signs.md](.
 |---|---|---|
 | `enabled` | `false` | the switch |
 | `threshold` | `0.55` | the classifier's confidence a label needs to count, in `[0, 1]` |
-| `fps` | `5` | one rate for the camera poll (where the body paces it), the hand stage and the classifier |
+| `fps` | `10` | one rate for the camera poll (where the body paces it), the hand stage and the classifier |
 | `max_hands` | `2` | how many hands are detected and classified per frame, and so how many `hand_gesture_<n>` entries the agent has; an integer `>= 1` |
-| `hold_s` | `0.5` | how long a hand's sign must be seen, unbroken, before it reaches the agent; `0` delivers on the first frame |
+| `hold_s` | `0.3` | how long a hand's sign must be seen, unbroken, before it reaches the agent; `0` delivers on the first frame |
+| `release_hold_s` | `0.5` | how long a hand must show no sign, unbroken, before its sign counts as gone; `0` clears it on the first frame |
 | `device` | `null` | the classifier's torch device (`mps`, `cuda`, `cpu`); `null` lets the library pick |
 
 The camera itself is the body's: the computer's `camera` section below, the robot's own camera. The `vision` extra must be installed; its first run downloads the models ([install.md](install.md#first-run-downloads)).
@@ -179,6 +180,6 @@ Everything a loader can raise for a bad file is one `ValueError`, so the app ope
 - a missing `wica` or `asr` section, or an `asr` section without an `engine` block;
 - a top-level key the command does not accept: `reachy` in a computer file; `tts`, `audio_processing` or `camera` in a reachy file; anything misspelt;
 - an engine section its owner rejects, with the owner's own message: an unknown `agent` key, both `system_prompt` and `system_prompt_file`, a `daemon.spawn` on the `fake` backend, `motion.tracking.enabled` with no `face_detection.detector`, a `motion.tracking` written as a boolean;
-- in the app-owned sections, an unknown key, a wrong type, or an out-of-range value, naming the file and the field: `vision.threshold` outside `[0, 1]`, `max_hands` below 1 or not an integer, a negative `hold_s`, a `camera.device` that is neither an int nor a string, a `noise_suppression.level` outside `0` to `3`.
+- in the app-owned sections, an unknown key, a wrong type, or an out-of-range value, naming the file and the field: `vision.threshold` outside `[0, 1]`, `max_hands` below 1 or not an integer, a negative `hold_s` or `release_hold_s`, a `camera.device` that is neither an int nor a string, a `noise_suppression.level` outside `0` to `3`.
 
 A key that is unset, or a provider extra that is not installed, is **not** a load error: the file loads, and the failure lands on that engine's banner line at build time.

@@ -8,9 +8,9 @@ robot's own, a webcam on the computer — specs/embodiment.md): ``GestureInput``
 hand stage + HaGRID gesture classifier over it (up to ``max_hands`` hands per frame) and reduces
 **each hand** to one value of the app's own sign vocabulary — ``SIGNS`` maps the classifier's labels
 onto ``"stop"``, ``"like"``, ``"dislike"``, ``"ok"`` and the counts ``"one"`` … ``"five"``;
-anything unmapped, unconfident or absent is ``None`` — holds each hand's value for ``hold_s`` (a
-per-hand ``HoldFilter``: unbroken on every result for that long, so a one-frame flicker never
-counts) and delivers ``(hand, sign)`` to the injected ``on_gesture`` callback **on change only, per
+anything unmapped, unconfident or absent is ``None`` — holds each hand's value (a per-hand
+``HoldFilter``: unbroken on every result for ``hold_s`` when it is a sign, ``release_hold_s`` when
+it is the sign going away, so a one-frame flicker never counts) and delivers ``(hand, sign)`` to the injected ``on_gesture`` callback **on change only, per
 hand**. The app wires that callback to
 ``world.update(f"hand_gesture_{hand}", sign)`` on entries whose trigger predicate, ``sign_shown``,
 wakes the agent whenever a hand shows a sign (never when one goes away). The vocabulary's persona
@@ -75,8 +75,13 @@ SIGNS: Mapping[str, str] = {
 }
 
 # How often the watcher samples each stage's achieved rate (delta published_count / delta time).
-# One second smooths a 5 fps target into a readable figure; the UI timer (0.2 s) reads the latest.
+# One second smooths a 10 fps target into a readable figure; the UI timer (0.2 s) reads the latest.
 _FPS_WINDOW_S = 1.0
+
+# How often the watcher looks at the classifier's slot. Not the configured `fps`: the read is a
+# lock and a comparison, and a watcher polling at the stages' rate would add up to one more frame
+# period before a result is seen (specs/gesture-input.md, "The reduction").
+_WATCH_INTERVAL_S = 0.01
 
 # How long the feed's `published_count` may stand still before the Vision line calls the camera
 # stalled (specs/gesture-input.md, "Frames come from the embodiment"). A local daemon delivers 10
@@ -211,23 +216,34 @@ class StreamFeed:
 
 
 class HoldFilter:
-    """One hand slot's hold: a value is delivered only once it has been seen, unbroken, for
-    ``hold_s`` seconds (specs/gesture-input.md, "The hold filter").
+    """One hand slot's hold: a value is delivered only once it has been seen, unbroken, for its
+    hold (specs/gesture-input.md, "The hold filter").
+
+    Two holds, by what the candidate is: a **sign** (appearing, or replacing another) waits
+    ``hold_s``; **no sign** (``None`` — the hand relaxing or leaving) waits ``release_hold_s``,
+    which defaults to ``hold_s``. The first is what a person feels as the delay before the agent
+    reacts; the second only has to outlast a dip below the threshold, and a release never wakes
+    the agent, so it can stay long while the first is short.
 
     ``value`` is the last *delivered* value (``None`` to start, matching the World entry).
     ``observe(value, now)`` feeds one classifier result and returns whether ``value`` just became
     the delivered one. A value differing from the delivered one starts a candidate stamped ``now``;
-    each later observation of the same candidate delivers on the first ``now`` at least ``hold_s``
+    each later observation of the same candidate delivers on the first ``now`` at least its hold
     after the stamp; a different value restarts the candidate from scratch (one dissenting frame
     resets the clock — strictly consecutive, no majority vote); the delivered value seen again drops
-    the candidate. Applies to every transition, ``None`` included, and ``hold_s == 0`` delivers on the
-    first observation. Pure — no clock, no thread — so it is tested with explicit times.
+    the candidate. Applies to every transition, and a hold of ``0`` delivers on the first
+    observation. Pure — no clock, no thread — so it is tested with explicit times.
     """
 
-    def __init__(self, hold_s: float) -> None:
+    def __init__(self, hold_s: float, release_hold_s: float | None = None) -> None:
         if hold_s < 0:
             raise ValueError("hold_s must be >= 0")
+        if release_hold_s is None:
+            release_hold_s = hold_s
+        if release_hold_s < 0:
+            raise ValueError("release_hold_s must be >= 0")
         self._hold_s = hold_s
+        self._release_hold_s = release_hold_s
         self.value: str | None = None
         self._candidate: str | None = None
         self._since: float | None = None
@@ -238,7 +254,8 @@ class HoldFilter:
             return False
         if self._since is None or value != self._candidate:
             self._candidate, self._since = value, now
-        if now - self._since < self._hold_s:
+        hold_s = self._release_hold_s if value is None else self._hold_s
+        if now - self._since < hold_s:
             return False
         self.value = value
         self._candidate, self._since = None, None
@@ -294,10 +311,11 @@ class GestureInput:
 
     Graph: ``CameraFeed → HandStage → GestureClassifier``, the feed sampled directly by the hand
     stage (the robot's at the daemon's rate, a webcam's ``StreamFeed`` paced at ``fps``), both
-    stages at ``fps``, plus a watcher thread (also at ``fps``) that reduces each new classifier result to one
+    stages at ``fps``, plus a watcher thread (polling the classifier's slot every few milliseconds,
+    so a result is seen as it lands) that reduces each new classifier result to one
     value per hand slot — ``SIGNS[label]`` for a validated, mapped label, else ``None`` — runs it
-    through that slot's ``HoldFilter`` (the value must hold, unbroken, for ``hold_s`` seconds —
-    ``0`` delivers at once) and calls ``on_gesture(hand, sign)`` only for the hands whose held value
+    through that slot's ``HoldFilter`` (the value must hold, unbroken, for ``hold_s`` seconds when
+    it is a sign, ``release_hold_s`` when it is no sign — ``0`` delivers at once) and calls ``on_gesture(hand, sign)`` only for the hands whose held value
     changed from the last one delivered for *that* hand (all starting at ``None``, matching the
     World entries' initial value). Hand ``n`` is
     the library's ``hands[n-1]``: the same physical hand while it stays in view, but slots are
@@ -320,9 +338,10 @@ class GestureInput:
         *,
         on_gesture: OnGesture,
         threshold: float = 0.55,
-        fps: float = 5.0,
+        fps: float = 10.0,
         max_hands: int = 2,
-        hold_s: float = 0.5,
+        hold_s: float = 0.3,
+        release_hold_s: float = 0.5,
         device: str | None = None,
         models: GestureModels | None = None,
         stall_s: float = _STALL_S,
@@ -332,13 +351,13 @@ class GestureInput:
             raise ValueError("stall_s must be > 0")
         models = models if models is not None else GestureModels()
         self._hold_s = hold_s
+        self._release_hold_s = release_hold_s
         self._stall_s = stall_s
         # One hold per hand slot (hand n is `_holds[n - 1]`); each owns its last delivered value.
-        self._holds = [HoldFilter(hold_s) for _ in range(max_hands)]
+        self._holds = [HoldFilter(hold_s, release_hold_s) for _ in range(max_hands)]
         self._on_gesture = on_gesture
         self._target_fps = fps
         self._max_hands = max_hands
-        self._interval = 1.0 / fps
         self._fps_window_s = fps_window_s
         self._stream_meter = _FpsMeter()
         self._hand_meter = _FpsMeter()
@@ -402,7 +421,7 @@ class GestureInput:
     def status(self) -> dict:
         """What the Vision line renders: every hand's last delivered sign (past the hold), each hand's
         latest label/score (slot order — entry *i* stays the same physical hand while it is in
-        view), the hand cap, the hold, the target rate and each node's achieved rate — the camera stream, the hand stage, the
+        view), the hand cap, the two holds, the target rate and each node's achieved rate — the camera stream, the hand stage, the
         classifier (``None`` until a full sampling window has passed) — the camera's health (the
         feed's own error, else the stall line while it has published nothing for ``stall_s``),
         and the last stage error (the classifier's first — a failed model load lands there),
@@ -428,6 +447,7 @@ class GestureInput:
             ],
             "max_hands": self._max_hands,
             "hold_s": self._hold_s,
+            "release_hold_s": self._release_hold_s,
             "target_fps": self._target_fps,
             "stream_fps": stream_fps,
             "hand_fps": hand_fps,
@@ -500,7 +520,7 @@ class GestureInput:
                 )
                 # One value per slot, whether or not that hand is in the frame: a hand that left
                 # reads `None`, like one showing nothing the vocabulary names. Each slot's value
-                # goes through its hold: only a value seen unbroken for `hold_s` is delivered.
+                # goes through its hold: only a value seen unbroken for its hold is delivered.
                 values = [
                     SIGNS.get(seen_hands[i][0] or "") if i < len(seen_hands) else None
                     for i in range(self._max_hands)
@@ -517,7 +537,7 @@ class GestureInput:
                     ]
                 for hand, value in changes:  # outside the lock: a consumer may be slow
                     self._deliver(hand, value)
-            self._stop_event.wait(max(self._interval - (time.monotonic() - t0), 0.0))
+            self._stop_event.wait(_WATCH_INTERVAL_S)
 
     def _deliver(self, hand: int, value: str | None) -> None:
         try:

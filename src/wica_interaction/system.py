@@ -386,6 +386,7 @@ def build_system(
                 fps=vision.fps,
                 max_hands=vision.max_hands,
                 hold_s=vision.hold_s,
+                release_hold_s=vision.release_hold_s,
                 device=vision.device,
                 models=gesture_models,
             )
