@@ -1,9 +1,7 @@
 """What the page shows of the Reachy Mini: its camera with the detected faces, and its users.
 
 The robot's ``view()`` (specs/reachy-embodiment.md, "The page view"; specs/embodiment.md, "``view()``
-is display-ready"), ported from the bridge's own control panel (``reachy-mini-bridge``'s
-``examples/control_panel``: its camera's face markers and its Users section) without its
-tracking-events log. Everything is read from the bridge's published reports — ``camera``,
+is display-ready"). Everything is read from the bridge's published reports — ``camera``,
 ``faces``, ``users``, ``head_tracking`` — so a tick is a few attribute reads and some numpy, no
 round trip to the robot.
 

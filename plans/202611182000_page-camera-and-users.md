@@ -2,7 +2,7 @@
 
 **Status:** Done
 
-Implements `specs/embodiment.md` (`view()`, "`view()` is display-ready"), `specs/app.md` ("What the user sees": the Camera panel), `specs/computer-embodiment.md` (`view()`: the webcam) and `specs/reachy-embodiment.md` ("The page view"): a Camera panel on the page showing what the body sees — the computer's webcam, the robot's camera with each detected face boxed and labelled `#<id>` — and, on the robot, whom the head follows and the users present. A port of `reachy-mini-bridge`'s control-panel camera and Users section, without its tracking-events log.
+Implements `specs/embodiment.md` (`view()`, "`view()` is display-ready"), `specs/app.md` ("What the user sees": the Camera panel), `specs/computer-embodiment.md` (`view()`: the webcam) and `specs/reachy-embodiment.md` ("The page view"): a Camera panel on the page showing what the body sees — the computer's webcam, the robot's camera with each detected face boxed and labelled `#<id>` — and, on the robot, whom the head follows and the users present.
 
 ## Scope
 
