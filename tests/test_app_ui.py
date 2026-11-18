@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import numpy as np
 from asr_engine.engine import ASREngine
+from asr_engine.vad.gate import VadState
 from wica import CommandExecution
 from wica.contrib.gradio import EntryDisplay
 from wica.world import WorldEntry, WorldEntryVersion
@@ -95,6 +96,7 @@ class _FakeEngine:
         self.on_speech_segment: Any = None
         self.dictating = False
         self.segmentation_mode = "utterance"
+        self.vad_state: VadState | None = None  # no VAD configured
 
     def status(self) -> dict[str, Any]:
         return {"running": True}
@@ -134,12 +136,27 @@ def _system(
 
 def test_asr_status_line_flags_a_dead_mic_stream() -> None:
     """The engine still says "running", but the status line tells the user capture has stalled."""
-    _, healthy, _ = tick_asr(_system_with_mic(None))
+    _, healthy, _, _ = tick_asr(_system_with_mic(None))
     assert "running" in healthy and "capture" not in healthy
 
-    _, stalled, _ = tick_asr(_system_with_mic("mic stream ended"))
+    _, stalled, _, _ = tick_asr(_system_with_mic("mic stream ended"))
     assert "running" in stalled
     assert "capture" in stalled and "mic stream ended" in stalled
+
+
+def test_the_asr_section_says_whether_speech_is_detected() -> None:
+    engine = _FakeEngine()
+    system = _system(
+        bridge=AsrBridge(cast(ASREngine, engine), on_final_segment=lambda _t: None)
+    )
+    assert "no VAD" in tick_asr(system)[3]
+    engine.vad_state = VadState()
+    assert tick_asr(system)[3] == "**Voice activity:** ⚪ no speech"
+    engine.vad_state = VadState(speaking=True)
+    assert tick_asr(system)[3] == "**Voice activity:** 🟢 speech detected"
+    engine.vad_state = VadState(speaking=True, failed_open=True)
+    assert "VAD failed" in tick_asr(system)[3]
+    assert tick_asr(_system())[3] == ""  # no ASR at all: no line
 
 
 # --- The Vision line (specs/app.md, "Vision line"; specs/gesture-input.md) --------------------

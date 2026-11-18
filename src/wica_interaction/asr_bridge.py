@@ -104,13 +104,25 @@ class AsrBridge:
     def status(self) -> dict:
         """Compose the engine's accessors — plus the embodiment's capture health — into the state the
         ASR panel renders. ``capture_error`` is set when the mic stream died even though the engine
-        still reports ``running`` (it is then hearing nothing)."""
+        still reports ``running`` (it is then hearing nothing). ``vad`` is the engine's voice
+        activity: ``"speech"`` while its VAD gate lets audio through to the recognizer,
+        ``"silence"`` otherwise, ``"failed_open"`` when the VAD failed and everything passes
+        ungated, ``None`` with no VAD configured (a module that ends utterances itself)."""
         return {
             "running": self._engine.status()["running"],
             "dictating": self._engine.dictating,
             "segmentation_mode": self._engine.segmentation_mode,
             "capture_error": self._mic_error() if self._mic_error is not None else None,
+            "vad": self._vad(),
         }
+
+    def _vad(self) -> str | None:
+        state = self._engine.vad_state
+        if state is None:
+            return None
+        if state.failed_open:
+            return "failed_open"
+        return "speech" if state.speaking else "silence"
 
     async def start_dictation(self, segmentation_mode: str | None = None) -> str:
         """Switch speech capture to dictation mode for one longer passage.

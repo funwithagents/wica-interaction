@@ -16,7 +16,7 @@ the components and owns the timer keeping them live. What this module holds:
 - ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
   the agent's Events in their constructors, both given ``entry_display(system)``), lays out the page (the
   debug toggle and the two debug panels side by side on top, then the Conversation beside the
-  body's camera and the typed-text hatch, then the app's ASR beside its Vision, a banner for
+  body's camera, then the app's ASR (the typed-text hatch in it) beside its Vision, a banner for
   anything missing), and returns the page. The UI wires nothing into the agent: its presenters
   subscribe to the agent's Events themselves.
 - ``tick_asr`` — the live view the ASR panel's timer polls; ``tick_view`` — what the camera's
@@ -115,12 +115,31 @@ def entry_display(system: AppSystem) -> Callable[[WorldEntry], EntryDisplay | No
 # --- The ASR live view its timer polls --------------------------------------------------------
 
 
-def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
-    """Refresh the ASR panel: live interim text, a status line, and the Stop-dictation button's
-    enabled state (interactive only while dictating)."""
+# The voice-activity line, per `AsrBridge.status()["vad"]`.
+_VAD_LINES = {
+    "speech": "**Voice activity:** 🟢 speech detected",
+    "silence": "**Voice activity:** ⚪ no speech",
+    "failed_open": "**Voice activity:** ⚠️ VAD failed: all audio goes to the recognizer",
+    None: "**Voice activity:** — _no VAD (the recognizer ends utterances itself)_",
+}
+
+
+def vad_line(vad: str | None) -> str:
+    """The ASR section's voice-activity line: whether the engine's VAD hears speech right now."""
+    return _VAD_LINES.get(vad, _VAD_LINES[None])
+
+
+def tick_asr(system: AppSystem) -> tuple[str, str, Any, str]:
+    """Refresh the ASR panel: live interim text, a status line, the Stop-dictation button's
+    enabled state (interactive only while dictating), and the voice-activity line."""
     bridge = system.bridge
     if bridge is None:
-        return _NO_LIVE_SPEECH, "_ASR unavailable._", gr.update(interactive=False)
+        return (
+            _NO_LIVE_SPEECH,
+            "_ASR unavailable._",
+            gr.update(interactive=False),
+            "",
+        )
     display = bridge.display_text or _NO_LIVE_SPEECH
     status = bridge.status()
     mode = "dictation" if status["dictating"] else "conversation"
@@ -131,7 +150,12 @@ def tick_asr(system: AppSystem) -> tuple[str, str, Any]:
     if status["capture_error"]:
         # The engine can still say "running" while its mic stream is dead — say so plainly.
         status_md += f" · ⚠️ **capture:** {status['capture_error']}"
-    return display, status_md, gr.update(interactive=bool(status["dictating"]))
+    return (
+        display,
+        status_md,
+        gr.update(interactive=bool(status["dictating"])),
+        vad_line(status["vad"]),
+    )
 
 
 def _fps(value: float | None) -> str:
@@ -287,7 +311,7 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                 reaction_panel(reactions)
 
         # The main surface, two rows of two equal columns (specs/app.md, "The layout"): the
-        # Conversation beside the body's camera and the typed-text box; then ASR beside Vision.
+        # Conversation beside the body's camera; then ASR (with the typed-text box) beside Vision.
         with gr.Row(equal_height=False):
             with gr.Column(scale=1):
                 # The contrib transcript: its own timer, pushed only when the transcript changed.
@@ -300,6 +324,18 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                     interactive=False,
                     show_label=False,
                 )
+
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1):
+                gr.Markdown("### ASR")
+                asr_status = gr.Markdown("_ASR status…_")
+                asr_vad = gr.Markdown("_Voice activity…_")
+                asr_live = gr.Textbox(
+                    label="Live speech (interim)",
+                    value=_NO_LIVE_SPEECH,
+                    interactive=False,
+                    lines=2,
+                )
                 with gr.Row():
                     # gradio's dynamic event methods (.click/.submit/.change/.tick) aren't in the
                     # stubs, hence the narrow ignores below.
@@ -309,17 +345,6 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                         scale=5,
                     )
                     send = gr.Button("Send", variant="primary", scale=1)
-
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1):
-                gr.Markdown("### ASR")
-                asr_status = gr.Markdown("_ASR status…_")
-                asr_live = gr.Textbox(
-                    label="Live speech (interim)",
-                    value=_NO_LIVE_SPEECH,
-                    interactive=False,
-                    lines=2,
-                )
                 stop_dictation = gr.Button("Stop dictation", interactive=False)
             with gr.Column(scale=1):
                 gr.Markdown("### Vision")
@@ -329,12 +354,12 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                 camera_status = gr.Markdown("_No camera frame yet._")
                 if system.gesture is not None:
                     # As in the vision-modules hand demo: save what each stage last consumed.
+                    snapshot_folder = gr.Textbox(
+                        value=str(_SNAPSHOT_DIR), label="Snapshot folder"
+                    )
                     with gr.Row():
-                        snapshot_folder = gr.Textbox(
-                            value=str(_SNAPSHOT_DIR), label="Snapshot folder", scale=2
-                        )
-                        save_detector = gr.Button("Save detector snapshot", scale=1)
-                        save_classifier = gr.Button("Save classifier snapshot", scale=1)
+                        save_detector = gr.Button("Save detector snapshot")
+                        save_classifier = gr.Button("Save classifier snapshot")
                     snapshot_status = gr.Markdown("")
                     save_detector.click(  # pyright: ignore[reportAttributeAccessIssue]
                         on_save_detector,
@@ -362,7 +387,7 @@ def build_ui(system: AppSystem) -> gr.Blocks:
         asr_timer = gr.Timer(0.2)
         asr_timer.tick(
             lambda: (*tick_asr(system), tick_vision(system)),
-            outputs=[asr_live, asr_status, stop_dictation, vision_status],
+            outputs=[asr_live, asr_status, stop_dictation, asr_vad, vision_status],
         )  # pyright: ignore[reportAttributeAccessIssue]
         view_timer = gr.Timer(0.2)
         view_timer.tick(  # pyright: ignore[reportAttributeAccessIssue]

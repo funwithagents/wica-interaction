@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 from asr_engine.audio import AudioSource
+from asr_engine.vad.gate import VadState
 from vision_modules import Frame
 from wica import Command, Content, OutputStream, TextPart
 from wica.config import WicaConfig
@@ -66,6 +67,7 @@ class FakeASREngine:
         self._raise_on_start = raise_on_start
         self._raise_on_stop = raise_on_stop
         self._hang_on_stop = hang_on_stop
+        self.vad_state: VadState | None = None  # no VAD configured; a test sets one
 
     async def start(self) -> None:
         if self._raise_on_start is not None:

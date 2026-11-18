@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
+from asr_engine.vad.gate import VadState
 
 from wica_interaction.asr_bridge import AsrBridge, DictatedPassage
 
@@ -45,6 +46,7 @@ class FakeASREngine:
         self.stop_dictation_calls = 0
         self.raise_on_start_dictation: str | None = None
         self.raise_on_stop_dictation: str | None = None
+        self.vad_state: VadState | None = None  # no VAD configured; a test sets one
 
     def status(self) -> dict:
         return {"running": self._running, "connected": True}
@@ -181,6 +183,7 @@ def test_start_dictation_wires_engine_and_reports_mode() -> None:
         "dictating": True,
         "segmentation_mode": "timeout",
         "capture_error": None,
+        "vad": None,
     }
 
 
@@ -256,6 +259,7 @@ def test_status_composes_engine_accessors() -> None:
         "dictating": True,
         "segmentation_mode": "trigger_word",
         "capture_error": None,  # no mic_error callable handed to the bridge
+        "vad": None,  # no VAD configured
     }
 
 
@@ -287,3 +291,17 @@ def test_status_reads_the_capture_health_back_from_the_embodiment() -> None:
     status = bridge.status()
     assert status["running"] is True  # the engine still thinks it is capturing …
     assert status["capture_error"] == error  # … while the source says why it is not
+
+
+def test_status_says_whether_the_engines_vad_hears_speech() -> None:
+    """`vad` follows the engine's VAD gate as it is polled: speech while the gate is open, silence
+    while it is shut, failed open when the VAD broke; none when the engine has no VAD at all."""
+    engine = FakeASREngine()
+    bridge, _ = _make_bridge(engine)
+    assert bridge.status()["vad"] is None
+    engine.vad_state = VadState()
+    assert bridge.status()["vad"] == "silence"
+    engine.vad_state = VadState(speaking=True)
+    assert bridge.status()["vad"] == "speech"
+    engine.vad_state = VadState(speaking=True, failed_open=True)
+    assert bridge.status()["vad"] == "failed_open"
