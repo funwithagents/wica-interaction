@@ -208,13 +208,16 @@ def test_vision_line_without_gesture_input_says_off() -> None:
 
 def test_vision_shows_each_hand_slot_as_a_row_and_the_rates_as_a_list() -> None:
     no_hand = tick_vision(_system_with_gesture(_Gesture()))
-    assert no_hand.startswith("#### Hand signs\n\n**Status:** running · up to 2 hands")
+    assert "#### Hand signs\n\n**Status:** running · up to 2 hands" in no_hand
     assert "| #1 | no hand | — |" in no_hand and "| #2 | no hand | — |" in no_hand
     # Before the first sampling window the achieved rates are a placeholder; the stages show their
     # target, the camera (which runs at its own rate) none.
     assert "- **camera:** — fps\n" in no_hand
     assert "- **hand stage:** — fps (target 5)" in no_hand
     assert "- **classifier:** — fps (target 5)" in no_hand
+    # The rates come first, above the hand signs' subheading.
+    assert no_hand.startswith("- **camera:**")
+    assert no_hand.index("- **classifier:**") < no_hand.index("#### Hand signs")
 
     rates = tick_vision(
         _system_with_gesture(

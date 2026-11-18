@@ -53,30 +53,31 @@ With the stages, the hold and the agent's coalescing window of about 200 ms, a `
 
 ## The Vision line
 
-At the top of the Vision section, beside the ASR one, refreshed with it. Off, it reads `Vision off (vision.enabled is false, or no camera).` On, a few lines under a **Hand signs** subheading:
+At the top of the Vision section, beside the ASR one, refreshed with it. Off, it reads `Vision off (vision.enabled is false, or no camera).` On, the rates first, then a few lines under a **Hand signs** subheading:
 
 ```
+- camera: 9.8 fps
+- hand stage: 9.8 fps (target 10)
+- classifier: 9.5 fps (target 10)
+
+Hand signs
 Status: running · up to 2 hands
 
 | hand | seen                       | sign |
 | #1   | like (0.91)                | like |
 | #2   | below threshold (0.40)     | —    |
-
-- camera: 9.8 fps
-- hand stage: 9.8 fps (target 10)
-- classifier: 9.5 fps (target 10)
 ```
 
 | Field | Meaning |
 |---|---|
-| `Status:` | whether the pipeline runs, and how many hands it follows at most (`max_hands`) |
-| `seen` | what the detector currently publishes in that hand slot, with its validated label and raw score; `below threshold (0.40)` for a hand whose top class missed the threshold, `no crop` for a hand at the frame's edge, `no hand` with none |
-| `sign` | the last sign delivered for that hand slot, `—` for none |
 | `camera:` | the rate the camera actually delivered frames at: the daemon's on the robot, the paced webcam's on the computer |
 | `hand stage:`, `classifier:` | each stage's achieved rate next to the configured target; a starved classifier shows here |
 | `— fps` | no rate yet: the first sampling window has not passed |
+| `Status:` | whether the pipeline runs, and how many hands it follows at most (`max_hands`) |
+| `seen` | what the detector currently publishes in that hand slot, with its validated label and raw score; `below threshold (0.40)` for a hand whose top class missed the threshold, `no crop` for a hand at the frame's edge, `no hand` with none |
+| `sign` | the last sign delivered for that hand slot, `—` for none |
 
-Two lines appear on trouble, each on its own: `⚠️ camera:` with the feed's own failure (a webcam that cannot be opened), or the stall line `no camera frame for 3 s` when frames stop arriving from any camera, cleared the moment one lands; and `⚠️ error:` with the last exception a stage recorded, a model that failed to download or load among them ([troubleshooting.md](troubleshooting.md#no-camera-frame-or-no-sign)).
+Two lines appear on trouble, each on its own, after the table: `⚠️ camera:` with the feed's own failure (a webcam that cannot be opened), or the stall line `no camera frame for 3 s` when frames stop arriving from any camera, cleared the moment one lands; and `⚠️ error:` with the last exception a stage recorded, a model that failed to download or load among them ([troubleshooting.md](troubleshooting.md#no-camera-frame-or-no-sign)).
 
 ## Snapshots
 

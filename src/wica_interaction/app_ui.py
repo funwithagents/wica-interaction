@@ -172,11 +172,11 @@ def _hand(label: str | None, confidence: float) -> str:
 
 
 def tick_vision(system: AppSystem) -> str:
-    """Refresh the hand signs' part of the Vision section, as a few readable lines: whether the
-    gesture input runs; one table row per hand slot under the configured cap — the hand's raw top
-    label and score (or "no hand") and its last delivered sign; the camera feed's achieved rate (its
-    own — the robot's daemon-paced feed, or the paced webcam) and each stage's next to the
-    configured target (the hand demo's readout); then any camera (a failure, a stall) or stage
+    """Refresh the pipeline's part of the Vision section, as a few readable lines: first the camera
+    feed's achieved rate (its own — the robot's daemon-paced feed, or the paced webcam) and each
+    stage's next to the configured target (the hand demo's readout); then, under a "Hand signs"
+    subheading, whether the gesture input runs and one table row per hand slot under the configured cap — the hand's raw top label and score (or "no
+    hand") and its last delivered sign; then any camera (a failure, a stall) or stage
     error, each on its own line."""
     gesture = system.gesture
     if gesture is None:
@@ -195,17 +195,17 @@ def tick_vision(system: AppSystem) -> str:
         rows.append(f"| #{i + 1} | {seen} | {sign} |")
     target = status["target_fps"]
     lines = [
+        (
+            f"- **camera:** {_fps(status['stream_fps'])}\n"
+            f"- **hand stage:** {_fps(status['hand_fps'])} (target {target:g})\n"
+            f"- **classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
+        ),
         "#### Hand signs",
         (
             f"**Status:** {'running' if status['running'] else 'stopped'} · "
             f"up to {status['max_hands']} hands"
         ),
         "\n".join(rows),
-        (
-            f"- **camera:** {_fps(status['stream_fps'])}\n"
-            f"- **hand stage:** {_fps(status['hand_fps'])} (target {target:g})\n"
-            f"- **classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
-        ),
     ]
     if status["capture_error"]:
         lines.append(f"⚠️ **camera:** {status['capture_error']}")
