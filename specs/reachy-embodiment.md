@@ -255,7 +255,7 @@ The standing entries — `users_in_view`, `tracked_user` and `personal_space` �
 
 ## The page view
 
-What the page's Camera panel shows of the robot ([app.md](app.md), "What the user sees"), from `reachy/view.py` — the app's port of the bridge's own control panel (`reachy-mini-bridge/examples/control_panel`, its camera's face markers and its Users section), without its tracking-events log. One read of the bridge's published reports per tick, no round trip to the robot:
+What the page's Vision block shows of the robot ([app.md](app.md), "What the user sees"), from `reachy/view.py` — the app's port of the bridge's own control panel (`reachy-mini-bridge/examples/control_panel`, its camera's face markers and its Users section), without its tracking-events log. One read of the bridge's published reports per tick, no round trip to the robot:
 
 ```python
 def robot_view(bridge: ReachyMiniBridge) -> EmbodimentView: ...

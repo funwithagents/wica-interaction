@@ -75,5 +75,5 @@ The banner reads `Reachy Mini: …`. The message is the bridge's or upstream's, 
 
 - **Typing raises `World is not running`.** The agent was not built (see the banner) or the app is shutting down.
 - **The World panel shows a note instead of a table.** No agent: the banner says why.
-- **The Camera panel says `No camera frame yet`.** On the computer the webcam opens only with `vision.enabled`; with it on, the Vision line's `⚠️ camera:` tail says why no frame came. On the robot, the session has not published a frame yet, or the body is absent (the banner says why).
+- **The Vision block says `No camera frame yet`.** On the computer the webcam opens only with `vision.enabled`; with it on, the Vision line's `⚠️ camera:` tail says why no frame came. On the robot, the session has not published a frame yet, or the body is absent (the banner says why).
 - **Closing.** Stop the command with Ctrl-C: the app closes the agent, stops vision and the recognizer, exits the body (the robot goes to sleep, a daemon the bridge spawned is stopped) and ends. A step that hangs is given five seconds and skipped, so a stuck device cannot strand the process.

@@ -15,10 +15,11 @@ the components and owns the timer keeping them live. What this module holds:
   transcript without this module knowing the body.
 - ``build_ui(system)`` — builds the presenters (``TranscriptLog`` / ``ReactionLog``, subscribed to
   the agent's Events in their constructors, both given ``entry_display(system)``), lays out the page (the
-  three contrib panels, the app's ASR panel, the Camera panel, the typed-text hatch, a banner for
-  anything missing, the debug toggle), and returns the page. The UI wires nothing into the agent: its presenters
+  debug toggle and the two debug panels side by side on top, then the Conversation with the
+  typed-text hatch beside the app's ASR and Vision blocks, a banner for anything missing), and
+  returns the page. The UI wires nothing into the agent: its presenters
   subscribe to the agent's Events themselves.
-- ``tick_asr`` — the live view the ASR panel's timer polls; ``tick_view`` — what the Camera panel's
+- ``tick_asr`` — the live view the ASR panel's timer polls; ``tick_view`` — what the Vision block's camera
   timer shows of the body (``embodiment.view()``). The app owns these two timers.
 
 The only dependency on ``system`` is the ``AppSystem`` *type* (for annotations), imported under
@@ -179,11 +180,11 @@ def tick_vision(system: AppSystem) -> str:
     return status_md
 
 
-# --- What the Camera panel shows of the body --------------------------------------------------
+# --- What the Vision block shows of the body --------------------------------------------------
 
 
 def tick_view(system: AppSystem) -> tuple[npt.NDArray[np.uint8] | None, str]:
-    """Refresh the Camera panel from ``embodiment.view()``: the frame (``None`` clears the image)
+    """Refresh the Vision block's camera from ``embodiment.view()``: the frame (``None`` clears the image)
     and the Markdown under it — the body's status, after a one-line note when there is no frame. A
     body whose view fails shows the failure; the page never breaks on it."""
     body = system.embodiment
@@ -270,8 +271,23 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             "and duration."
         )
 
-        with gr.Row():
-            with gr.Column(scale=3):
+        # Debug surface first, on one line: the toggle, then World state and Reaction side by side.
+        # The toggle is visibility only: the contrib panels own their timers and keep ticking while
+        # hidden (see specs/app.md, "Refresh cost").
+        show_debug = gr.Checkbox(label="Show debug panels", value=False)
+        with gr.Row(visible=False, equal_height=False) as debug_panels:
+            with gr.Column():
+                gr.Markdown("### World state (live)")
+                if wica is not None:
+                    world_state_panel(wica.world)
+                else:
+                    gr.Markdown("_No agent — there is no World to show._")
+            with gr.Column():
+                gr.Markdown("### Reaction (prompt + instrumentation)")
+                reaction_panel(reactions)
+
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1):
                 # The contrib transcript: its own timer, pushed only when the transcript changed.
                 conversation_panel(transcript)
                 with gr.Row():
@@ -284,61 +300,50 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                     )
                     send = gr.Button("Send", variant="primary", scale=1)
 
-                gr.Markdown("### ASR")
-                asr_status = gr.Markdown("_ASR status…_")
-                asr_live = gr.Textbox(
-                    label="Live speech (interim)",
-                    value=_NO_LIVE_SPEECH,
-                    interactive=False,
-                    lines=2,
-                )
-                stop_dictation = gr.Button("Stop dictation", interactive=False)
-
-            with gr.Column(scale=2):
-                # What the body sees and knows (specs/app.md, "What the user sees", Camera).
-                gr.Markdown("### Camera")
-                camera = gr.Image(
-                    label="Camera (mirrored)",
-                    type="numpy",
-                    interactive=False,
-                    show_label=False,
-                )
-                camera_status = gr.Markdown("_No camera frame yet._")
-
-                # The hand signs read this same camera (specs/app.md, "What the user sees").
-                gr.Markdown("### Vision")
-                vision_status = gr.Markdown("_Vision status…_")
-                if system.gesture is not None:
-                    # As in the vision-modules hand demo: save what each stage last consumed.
-                    snapshot_folder = gr.Textbox(
-                        value=str(_SNAPSHOT_DIR), label="Snapshot folder"
+            # What the body hears and sees, as two blocks of the same shape: a heading, the status
+            # line, then what it perceives (specs/app.md, "What the user sees").
+            with gr.Column(scale=1):
+                with gr.Group():
+                    gr.Markdown("### ASR", padding=True)
+                    asr_status = gr.Markdown("_ASR status…_", padding=True)
+                    asr_live = gr.Textbox(
+                        label="Live speech (interim)",
+                        value=_NO_LIVE_SPEECH,
+                        interactive=False,
+                        lines=2,
                     )
-                    with gr.Row():
-                        save_detector = gr.Button("Save detector snapshot")
-                        save_classifier = gr.Button("Save classifier snapshot")
-                    snapshot_status = gr.Markdown("")
-                    save_detector.click(  # pyright: ignore[reportAttributeAccessIssue]
-                        on_save_detector,
-                        inputs=snapshot_folder,
-                        outputs=snapshot_status,
-                    )
-                    save_classifier.click(  # pyright: ignore[reportAttributeAccessIssue]
-                        on_save_classifier,
-                        inputs=snapshot_folder,
-                        outputs=snapshot_status,
-                    )
+                    stop_dictation = gr.Button("Stop dictation", interactive=False)
 
-                show_debug = gr.Checkbox(label="Show debug panels", value=False)
-                # The toggle is visibility only: the contrib panels own their timers and keep
-                # ticking while hidden (see specs/app.md, "Refresh cost").
-                with gr.Column(visible=False) as debug_panels:
-                    gr.Markdown("### World state (live)")
-                    if wica is not None:
-                        world_state_panel(wica.world)
-                    else:
-                        gr.Markdown("_No agent — there is no World to show._")
-                    gr.Markdown("### Reaction (prompt + instrumentation)")
-                    reaction_panel(reactions)
+                with gr.Group():
+                    gr.Markdown("### Vision", padding=True)
+                    vision_status = gr.Markdown("_Vision status…_", padding=True)
+                    # The body's camera, its faces and its users (embodiment.view()).
+                    camera = gr.Image(
+                        label="Camera (mirrored)",
+                        type="numpy",
+                        interactive=False,
+                        show_label=False,
+                    )
+                    camera_status = gr.Markdown("_No camera frame yet._", padding=True)
+                    if system.gesture is not None:
+                        # As in the vision-modules hand demo: save what each stage last consumed.
+                        snapshot_folder = gr.Textbox(
+                            value=str(_SNAPSHOT_DIR), label="Snapshot folder"
+                        )
+                        with gr.Row():
+                            save_detector = gr.Button("Save detector snapshot")
+                            save_classifier = gr.Button("Save classifier snapshot")
+                        snapshot_status = gr.Markdown("", padding=True)
+                        save_detector.click(  # pyright: ignore[reportAttributeAccessIssue]
+                            on_save_detector,
+                            inputs=snapshot_folder,
+                            outputs=snapshot_status,
+                        )
+                        save_classifier.click(  # pyright: ignore[reportAttributeAccessIssue]
+                            on_save_classifier,
+                            inputs=snapshot_folder,
+                            outputs=snapshot_status,
+                        )
 
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
@@ -349,8 +354,8 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             outputs=debug_panels,
         )
 
-        # The app's two timers: the ASR panel reads the bridge and the Vision line reads the
-        # gesture input; the Camera reads the body's view, on its own so a frame's encoding never
+        # The app's two timers: one reads the ASR bridge and the gesture input (the status lines
+        # and the live text), the other the body's view, on its own so a frame's encoding never
         # delays the live text (the contrib panels above each own theirs).
         asr_timer = gr.Timer(0.2)
         asr_timer.tick(
