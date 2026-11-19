@@ -36,13 +36,13 @@ from wica_interaction.embodiment import (
     EmbodimentView,
     Input,
     Voice,
-    speakable,
 )
 from wica_interaction.gesture_input import CameraFeed
 from wica_interaction.reachy.config import ReachyConfig
 from wica_interaction.reachy.robot_control import RobotControl, emotions_prompt_section
 from wica_interaction.reachy.users import UsersInput, users_prompt_section
 from wica_interaction.reachy.view import robot_view
+from wica_interaction.sayable import speakable
 
 logger = logging.getLogger(__name__)
 

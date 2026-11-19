@@ -9,7 +9,7 @@ import asyncio
 import pytest
 
 from tests.fakes import utterance
-from wica_interaction.embodiment import speakable
+from wica_interaction.sayable import speakable
 
 SPLITS = (0, 1, 4)
 
