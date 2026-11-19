@@ -15,7 +15,7 @@ imports neither. See specs/embodiment.md for who calls each member and when.
 from __future__ import annotations
 
 import math
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
@@ -36,30 +36,6 @@ Voice = Callable[[OutputStream], Awaitable[str]]
 
 # What a voice answers for a tag with nothing to say in it (empty, or only whitespace).
 EMPTY_UTTERANCE = "TTS error: text must not be empty"
-
-
-async def speakable(text: OutputStream) -> AsyncIterator[str] | None:
-    """*text* as a stream a TTS can take, once it holds something to say: ``None`` when it ends
-    with nothing but whitespace, so an empty utterance never reaches the engine or the robot.
-
-    Waits only for the first piece that is not blank — the first words — then returns a stream of
-    every piece, those already read included, so nothing is lost and speech still starts early."""
-    pieces = text.__aiter__()
-    lead: list[str] = []
-    async for piece in pieces:
-        lead.append(piece)
-        if piece.strip():
-            break
-    else:
-        return None
-
-    async def stream() -> AsyncIterator[str]:
-        for piece in lead:
-            yield piece
-        async for piece in pieces:
-            yield piece
-
-    return stream()
 
 
 # The widest frame the page is sent: a camera's full frame is subsampled down to this, so a tick

@@ -40,9 +40,9 @@ from wica_interaction.embodiment import (
     Input,
     Voice,
     display_frame,
-    speakable,
 )
 from wica_interaction.gesture_input import CameraFeed, StreamFeed
+from wica_interaction.sayable import speakable
 
 logger = logging.getLogger(__name__)
 

@@ -18,7 +18,7 @@ Two things are often meant by barge-in. **Echo** is handled, per body: the robot
 
 ## Speech streams, the page does not
 
-`say` speaks a `<say>` tag from its first words, while the model is still writing the rest, on both bodies, and stays `running` until playback ends. WICA holds back the first 80 characters (or a shorter tag whole) to check them for garbled text, a model degenerating into dots or repetition, so that is the earliest speech can start. A reply that turns garbled mid-speech is cut off and retried. The page does not follow along: the transcript shows the 🗣️ say item with its whole text once the tag is complete. After a cut (a new reply, a stop), the model remembers the whole text it wrote, not only the part that was heard.
+`say` speaks a `<say>` tag from its first words, while the model is still writing the rest, on both bodies, and stays `running` until playback ends. WICA holds back the first 80 characters (or a shorter tag whole) to check them for garbled text, a model degenerating into dots or repetition, so that is the earliest speech can start. A reply that turns garbled mid-speech is cut off and retried. What is short of garbled is cleaned before the voice says it: runs of ellipses become one, tag fragments, Markdown, emoji and blank lines are dropped, and a tag with nothing sayable left is not spoken at all. Symbols are not turned into words (`3:20`, `%`, `&`); the persona asks the model to spell them out. The transcript shows what the model wrote, not the cleaned text. The page does not follow along: the transcript shows the 🗣️ say item with its whole text once the tag is complete. After a cut (a new reply, a stop), the model remembers the whole text it wrote, not only the part that was heard.
 
 ## No persistence
 

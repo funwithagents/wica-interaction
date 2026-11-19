@@ -327,7 +327,7 @@ def test_say_starts_speaking_before_the_tag_closes() -> None:
     async def scenario() -> tuple[list[str], bool, str]:
         text = utterance("Hello,", close=False)
         speaking = asyncio.create_task(embodiment.say(text))
-        while engine.streaming != ["Hello,"]:
+        while engine.streaming != ["Hello"]:
             await asyncio.sleep(0.01)
         early, done_early = list(engine.streaming), speaking.done()
         text.push(" how are you?")
@@ -335,12 +335,14 @@ def test_say_starts_speaking_before_the_tag_closes() -> None:
         return early, done_early, await speaking
 
     early, done_early, result = run(asyncio.wait_for(scenario(), timeout=2.0))
-    assert early == ["Hello,"] and not done_early  # spoken before the tag closed
+    assert early == ["Hello"] and not done_early  # spoken before the tag closed
     assert result == "OK"
     assert engine.said == ["Hello, how are you?"]
 
 
-@pytest.mark.parametrize("pieces", [(), ("",), ("  ", "\n")])
+@pytest.mark.parametrize(
+    "pieces", [(), ("",), ("  ", "\n"), ("… ", "...\n", "…"), ("</", "say>")]
+)
 def test_an_empty_utterance_is_guarded_without_calling_the_engine(
     pieces: tuple[str, ...],
 ) -> None:
@@ -353,14 +355,15 @@ def test_an_empty_utterance_is_guarded_without_calling_the_engine(
     assert engine.said == []
 
 
-def test_leading_whitespace_is_kept_once_there_are_words() -> None:
-    """Waiting for the first words drops nothing: the blank pieces read before them still reach
-    the engine, in order."""
+def test_the_engine_receives_the_cleaned_text() -> None:
+    """What the model wrote reaches the engine as sayable text: the ellipsis run collapsed, the
+    blank lines and leading whitespace gone (specs/embodiment.md, "What reaches a TTS is
+    sayable")."""
     engine = FakeTTSEngine()
     embodiment = _entered(_config(), engine=engine)
 
-    assert run(embodiment.say(utterance(" ", "hi", "!"))) == "OK"
-    assert engine.streaming == [" ", "hi", "!"]
+    assert run(embodiment.say(utterance(" ", "Sorry… ", "… \n we", " …\n"))) == "OK"
+    assert engine.said == ["Sorry… we…"]
 
 
 def test_a_synthesis_failure_is_mapped_not_raised() -> None:
