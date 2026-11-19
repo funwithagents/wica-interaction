@@ -285,7 +285,7 @@ def test_say_starts_speaking_before_the_tag_closes() -> None:
     async def scenario() -> tuple[list[str], bool, str]:
         text = utterance("Hello,", close=False)
         speaking = asyncio.create_task(embodiment.say(text))
-        while bridge.streaming != ["Hello,"]:
+        while bridge.streaming != ["Hello"]:
             await asyncio.sleep(0.01)
         early, done_early = list(bridge.streaming), speaking.done()
         text.push(" nice to see you.")
@@ -293,12 +293,14 @@ def test_say_starts_speaking_before_the_tag_closes() -> None:
         return early, done_early, await speaking
 
     early, done_early, result = run(asyncio.wait_for(scenario(), timeout=2.0))
-    assert early == ["Hello,"] and not done_early
+    assert early == ["Hello"] and not done_early
     assert result == "OK"
     assert bridge.said == ["Hello, nice to see you."]
 
 
-@pytest.mark.parametrize("pieces", [(), ("",), ("   ",), (" ", "\n")])
+@pytest.mark.parametrize(
+    "pieces", [(), ("",), ("   ",), (" ", "\n"), ("… ", "...\n", "…"), ("</", "say>")]
+)
 def test_empty_text_is_guarded_without_calling_the_robot(
     pieces: tuple[str, ...],
 ) -> None:
