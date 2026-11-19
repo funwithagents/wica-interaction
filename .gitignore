@@ -27,3 +27,6 @@ dist/
 
 # OS cruft
 .DS_Store
+
+# Working analyses (AGENTS.md project map): local only, never committed
+analysis/
