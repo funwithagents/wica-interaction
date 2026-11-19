@@ -19,13 +19,13 @@
       },
       "vad": {
         "type": "silero",
-        "min_silence_duration_ms": 700
+        "min_silence_duration_ms": 300
       }
     }
   },
   "vision": {
     "enabled": true,
-    "threshold": 0.55,
+    "threshold": 0.65,
     "fps": 10,
     "max_hands": 2,
     "hold_s": 0.3,
@@ -57,7 +57,7 @@
     "face_detection": {
       "detector": "yunet",
       "enabled": true,
-      "width": 640,
+      "width": 1280,
       "score_threshold": 0.6,
       "target_fps": null
     },

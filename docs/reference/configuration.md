@@ -76,7 +76,7 @@ Every field, the providers and their notes (Gemini thinks by default, Mistral's 
     },
     "vad": {
       "type": "silero",
-      "min_silence_duration_ms": 700
+      "min_silence_duration_ms": 300
     }
   }
 }
@@ -87,7 +87,7 @@ The `engine` block is an asr-engine engine block, handed to `ASREngineConfig.fro
 | Field | What it does |
 |---|---|
 | `module.type` | the speech recognizer: `deepgram-v2` (Deepgram's Flux models, turn-based) or `deepgram-v1` (Nova models), the `asr-deepgram` extra; `mistral-realtime` (`asr-mistral`); `openai-realtime-compatible` and `openai-transcriptions-compatible` (`asr-openai-compatible`); `mlx-audio`, local on Apple silicon, the templates' choice (`asr-mlx-audio`). Other fields of `module` are the module's own: `api_key_env`, `model`, `language`, mlx-audio's `interim_interval_s` (how often the live text is refreshed while you speak). The names written with an underscore (`deepgram_v2`) still load, with a deprecation warning |
-| `vad` | a voice-activity gate in front of the recognizer, on in both templates: `{"type": "silero"}`, with the `asr-silero` extra (its 2.3 MB model is downloaded on first use). Only speech reaches the recognizer, so a billed one is not sent the room's silence. `min_silence_duration_ms` is how long the gate keeps forwarding after the person stops (default `500`); with `mlx-audio` it is the pause that ends an utterance, `700` in the templates. With `deepgram-v2` (Flux), set it higher (`1500`) so the recognizer still ends the turn itself. Optional: remove the block, or set it to `null`, to send the recognizer everything. **Required** by the batch recognizers (`mlx-audio`, `openai-transcriptions-compatible`), which have no other end-of-utterance signal |
+| `vad` | a voice-activity gate in front of the recognizer, on in both templates: `{"type": "silero"}`, with the `asr-silero` extra (its 2.3 MB model is downloaded on first use). Only speech reaches the recognizer, so a billed one is not sent the room's silence. `min_silence_duration_ms` is how long the gate keeps forwarding after the person stops (default `500`); with `mlx-audio` it is the pause that ends an utterance, `300` in the templates. With `deepgram-v2` (Flux), set it higher (`1500`) so the recognizer still ends the turn itself. Optional: remove the block, or set it to `null`, to send the recognizer everything. **Required** by the batch recognizers (`mlx-audio`, `openai-transcriptions-compatible`), which have no other end-of-utterance signal |
 | `audio_source` | where the audio comes from; absent in the templates. **On the computer**, `{"type": "input-device", "device": …}`, the default: the microphone, a name, an index, or `null` for the system default. **On the robot**, the mic is the robot's: leave the block out (the app hands the engine the robot's mic), or write `{"type": "custom"}`, which takes no other field. The older `audio` block is refused at load, with a message naming this one |
 | `dictation_default_segmentation_mode` | how a dictated passage ends: `timeout` (a pause) or `trigger_word` (a word from `segmentation.trigger_words`, the default) ([guides/dictation.md](../guides/dictation.md)) |
 | `segmentation.trigger_words`, `segmentation.end_of_speech_timeout_s`, `segmentation.initial_silence_timeout_s` | the words and the silences the two dictation modes use |
@@ -99,7 +99,7 @@ The recognizer does not have to match the microphone: the robot's mic and the co
 ```json
 "vision": {
   "enabled": true,
-  "threshold": 0.55,
+  "threshold": 0.65,
   "fps": 10,
   "max_hands": 2,
   "hold_s": 0.3,
@@ -108,7 +108,7 @@ The recognizer does not have to match the microphone: the robot's mic and the co
 }
 ```
 
-The hand-sign input over whichever camera the body has ([guides/hand-signs.md](../guides/hand-signs.md)). Optional, and **off unless `enabled` is `true`**: an absent section, `null`, `{}` or `enabled: false` opens no camera, downloads no model and registers no hand entry. The app owns this schema; the templates turn it on and spell out every other field at its default, so the knobs are in front of you.
+The hand-sign input over whichever camera the body has ([guides/hand-signs.md](../guides/hand-signs.md)). Optional, and **off unless `enabled` is `true`**: an absent section, `null`, `{}` or `enabled: false` opens no camera, downloads no model and registers no hand entry. The app owns this schema; the templates turn it on, raise `threshold` to `0.65` so a sign is read only when the classifier is sure, and spell out every other field at its default, so the knobs are in front of you.
 
 | Field | Default | What it does |
 |---|---|---|
@@ -205,7 +205,7 @@ Computer only, optional: absent means device `0`, which is why the template leav
   "face_detection": {
     "detector": "yunet",
     "enabled": true,
-    "width": 640,
+    "width": 1280,
     "score_threshold": 0.6,
     "target_fps": null
   },
