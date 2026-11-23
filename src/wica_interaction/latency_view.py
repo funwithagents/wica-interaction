@@ -67,9 +67,10 @@ TABLE_HEADERS = [
     "#",
     "trigger",
     "heard / seen",
-    "input",
-    "wait",
-    "agent",
+    "input: wait",
+    "input: work",
+    "agent: wait",
+    "agent: work",
     "output",
     "total",
     "flags",
@@ -222,8 +223,10 @@ def glance(snapshot: LatencySnapshot) -> str:
         if stats is not None
         else ""
     )
+    waits_of = {"input": shares.input_wait, "agent": shares.agent_wait, "output": 0.0}
     key = " ".join(
         f'<span style="color:{c}">■</span> {name} {getattr(shares, name):.2f}'
+        + (f" (wait {waits_of[name]:.2f})" if waits_of[name] > 0 else "")
         for name, c in _SHARE_COLOURS.items()
     )
     return (
@@ -288,20 +291,22 @@ def summary(snapshot: LatencySnapshot) -> str:
             "_No reaction counted yet: the first one is cold, follow-ups are left out._"
         )
     lines = [
-        "| trigger | count | median | p90 | input | wait | agent | output |",
-        "|---|---|---|---|---|---|---|---|",
+        "| trigger | count | median | p90 | input: wait | input: work | agent: wait | agent: work | output |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for k in snapshot.statistics:
         s = k.shares
         lines.append(
-            f"| {k.trigger} | {k.count} | {k.median:.2f} s | {k.p90:.2f} s | {s.input:.2f} | "
-            f"{s.wait:.2f} | {s.agent:.2f} | {s.output:.2f} |"
+            f"| {k.trigger} | {k.count} | {k.median:.2f} s | {k.p90:.2f} s | "
+            f"{s.input_wait:.2f} | {s.input_work:.2f} | {s.agent_wait:.2f} | "
+            f"{s.agent_work:.2f} | {s.output:.2f} |"
         )
     return "\n".join(lines)
 
 
 def ordered(records: Sequence[ReactionRecord]) -> list[tuple[ReactionRecord, int]]:
-    """The records newest first, each follow-up right under its parent, with its depth."""
+    """The records in the order they happened, top to bottom, each follow-up right under its
+    parent, with its depth."""
     ids = {r.reaction_id for r in records}
     children: dict[int, list[ReactionRecord]] = {}
     for record in records:
@@ -316,15 +321,15 @@ def ordered(records: Sequence[ReactionRecord]) -> list[tuple[ReactionRecord, int
         ):
             visit(child, depth + 1)
 
-    for record in records:
+    for record in sorted(records, key=lambda r: r.reaction_id):
         if record.parent_reaction_id not in ids:
             visit(record, 0)
     return out
 
 
 def table_rows(snapshot: LatencySnapshot) -> list[list[str]]:
-    """One row per record (``TABLE_HEADERS``), newest first, follow-ups indented under their
-    parent. Plain text: the table is a Dataframe."""
+    """One row per record (``TABLE_HEADERS``), in the order they happened, follow-ups indented
+    under their parent, as plain text (``table`` escapes it)."""
     rows: list[list[str]] = []
     for record, depth in ordered(snapshot.records):
         shares = record.shares
@@ -334,9 +339,10 @@ def table_rows(snapshot: LatencySnapshot) -> list[list[str]]:
                 str(record.reaction_id),
                 indent + record.trigger,
                 record.label,
-                seconds(shares.input if shares else None),
-                seconds(shares.wait if shares else None),
-                seconds(shares.agent if shares else None),
+                seconds(shares.input_wait if shares else None),
+                seconds(shares.input_work if shares else None),
+                seconds(shares.agent_wait if shares else None),
+                seconds(shares.agent_work if shares else None),
                 seconds(shares.output if shares else None),
                 seconds(record.total),
                 ", ".join(record.flags),
@@ -345,7 +351,79 @@ def table_rows(snapshot: LatencySnapshot) -> list[list[str]]:
     return rows
 
 
+def table(snapshot: LatencySnapshot, selected: int | None) -> str:
+    """The table of reactions as markup: a **Latest** button, then the rows of ``table_rows``
+    under their header. Each row carries its reaction's number (``data-id``) for the page's
+    browser code to select it, the newest ``data-last``; the selected row — the newest when
+    *selected* is ``None`` — is marked ``lv-selected``. Every cell is escaped."""
+    rows = table_rows(snapshot)
+    newest = max((r.reaction_id for r in snapshot.records), default=None)
+    chosen = selected if selected is not None else newest
+    head = "".join(f"<th>{html.escape(h)}</th>" for h in TABLE_HEADERS)
+    body = []
+    for row in rows:
+        rid = int(row[0])
+        marks = (' data-last=""' if rid == newest else "") + (
+            ' class="lv-selected"' if rid == chosen else ""
+        )
+        cells = "".join(f"<td>{html.escape(cell)}</td>" for cell in row)
+        body.append(f'<tr data-id="{rid}"{marks}>{cells}</tr>')
+    empty = (
+        f'<tr><td colspan="{len(TABLE_HEADERS)}" style="opacity:0.7">No reaction yet.</td></tr>'
+        if not body
+        else ""
+    )
+    return (
+        '<div class="lv-toolbar"><button class="lv-latest" type="button">Latest ↓</button></div>'
+        f'<div class="lv-scroll"><table><thead><tr>{head}</tr></thead>'
+        f"<tbody>{''.join(body)}{empty}</tbody></table></div>"
+    )
+
+
 # --- The waterfall ----------------------------------------------------------------------------
+
+
+def signals(snapshot: LatencySnapshot, axis: _Axis) -> tuple[list[str], list[str]]:
+    """Everything perceived and everything done on *axis*, whichever reaction it belongs to: the
+    inputs are the person's speech and every delivered perception (a sign, a user), the outputs
+    every Command's effect (the voice heard, the robot moving, an action running). Each bar has
+    its lane's colour, so overlapping reactions read apart."""
+    now = snapshot.now
+    steps = [s for r in snapshot.records for s in r.steps] + list(snapshot.running)
+
+    def on_axis(start: datetime, end: datetime) -> bool:
+        return end >= axis.start and start <= axis.end
+
+    inputs = [
+        _bar(
+            axis, a, b or now, _fill("work", _LANE_COLOURS["You"]), title="you speaking"
+        )
+        for a, b in snapshot.speech
+        if on_axis(a, b or now)
+    ]
+    inputs += [
+        _bar(
+            axis,
+            s.started_at,
+            _end(s, now),
+            _fill("work", _LANE_COLOURS["Seeing"]),
+            title=step_name(s),
+        )
+        for s in steps
+        if s.lane == "Seeing" and on_axis(s.started_at, _end(s, now))
+    ]
+    outputs = [
+        _bar(
+            axis,
+            s.started_at,
+            _end(s, now),
+            _fill("effect", _LANE_COLOURS[s.lane]),
+            title=f"{s.command or s.lane}: {s.name}",
+        )
+        for s in steps
+        if s.kind == "effect" and on_axis(s.started_at, _end(s, now))
+    ]
+    return inputs, outputs
 
 
 def waterfall(record: ReactionRecord | None, snapshot: LatencySnapshot) -> str:
@@ -357,15 +435,22 @@ def waterfall(record: ReactionRecord | None, snapshot: LatencySnapshot) -> str:
     starts = [s.started_at for s in record.steps] + [record.origin_at]
     ends = [_end(s, now) for s in record.steps] + [record.effect_at or record.origin_at]
     axis = _Axis(min(starts), max(ends))
-    title = (
-        f"reaction {record.reaction_id} · {html.escape(record.trigger)} · "
-        + (
-            f"{record.total:.2f} s to {html.escape(record.effect_note or 'the effect')}"
-            if record.total is not None
-            else "no effect"
+    if record.total is not None:
+        command = (
+            f" ({html.escape(record.effect_command)})" if record.effect_command else ""
         )
-        + (" · origin not measured" if not record.origin_measured else "")
+        measure = (
+            f"<b>{record.total:.2f} s</b> from <i>{html.escape(record.origin_label or 'the input')}</i>"
+            f" to <i>{html.escape(record.effect_label or 'the effect')}</i>{command}"
+        )
+    else:
+        measure = "no effect"
+    title = f"reaction {record.reaction_id} · {html.escape(record.trigger)} · {measure}"
+    notes = (
+        [record.effect_note] if record.total is not None and record.effect_note else []
     )
+    if not record.origin_measured:
+        notes.append("where the input really ended is not measured")
     origin_x = axis.x(record.origin_at)
     marks = [
         (
@@ -391,19 +476,10 @@ def waterfall(record: ReactionRecord | None, snapshot: LatencySnapshot) -> str:
             min_px=6 if step.kind == "not_measured" else 1,
         )
         rows.append(_track(label, [bar, *marks], width=_WATERFALL_LABEL))
-    speaking = [
-        _bar(axis, a, b or now, _fill("work", _LANE_COLOURS["You"]))
-        for a, b in snapshot.speech
-        if (b or now) >= axis.start and a <= axis.end
-    ]
-    heard = [
-        _bar(axis, s.started_at, _end(s, now), _fill("effect", _LANE_COLOURS["Voice"]))
-        for s in record.steps
-        if s.kind == "effect" and s.lane == "Voice"
-    ]
-    signals = _track(
-        "signal · you speaking", speaking, height=6, width=_WATERFALL_LABEL
-    ) + _track("signal · voice heard", heard, height=6, width=_WATERFALL_LABEL)
+    inputs, outputs = signals(snapshot, axis)
+    signal_rows = _track(
+        "signal · inputs", inputs, height=6, width=_WATERFALL_LABEL
+    ) + _track("signal · outputs", outputs, height=6, width=_WATERFALL_LABEL)
     scale = (
         f'<div style="display:flex;font-size:0.75em;opacity:0.7"><div style="width:{_WATERFALL_LABEL}"></div>'
         f'<div style="flex:1;display:flex;justify-content:space-between"><span>0</span>'
@@ -415,9 +491,14 @@ def waterfall(record: ReactionRecord | None, snapshot: LatencySnapshot) -> str:
         else ""
     )
     return (
-        f"<div><b>{title}</b></div>{flags}<div>“{html.escape(record.label)}”</div>"
+        f"<div>{title}</div>"
+        + "".join(
+            f'<div style="font-size:0.85em;opacity:0.8">{html.escape(n)}</div>'
+            for n in notes
+        )
+        + f"{flags}<div>“{html.escape(record.label)}”</div>"
         + scale
         + "".join(rows)
-        + signals
+        + signal_rows
         + legend()
     )

@@ -59,7 +59,9 @@ def record(
         ),
         effect_at=at(effect) if effect is not None else None,
         effect_command="say",
-        effect_note="the first sound",
+        effect_note="the audio device started, plus the latency it reports",
+        origin_label="your last word",
+        effect_label="the first sound",
         effect_command_started_at=at(1.5),
         flags=flags,
         outcome="ok",
@@ -96,7 +98,12 @@ def test_the_waterfall_puts_each_step_where_it_happened() -> None:
     assert (0.0, 10.0) in bars(markup)
     # The model 0.7 → 1.5 s.
     assert (23.3, 26.7) in bars(markup)
-    assert "2.00 s to the first sound" in markup
+    # The title says where the measure starts and ends; the effect's note is a line of its own.
+    assert (
+        "<b>2.00 s</b> from <i>your last word</i> to <i>the first sound</i> (say)"
+        in markup
+    )
+    assert ">the audio device started, plus the latency it reports</div>" in markup
 
 
 def test_the_kinds_are_told_apart_by_pattern() -> None:
@@ -143,21 +150,17 @@ def test_the_table_indents_a_follow_up_under_its_parent() -> None:
     rows = table_rows(
         snap(other, follow, parent)
     )  # newest first, as the collector gives them
-    assert [r[0] for r in rows] == ["3", "1", "2"]
-    assert rows[2][1] == "  ↳ follow-up"
+    # Top to bottom as they happened, the follow-up right under the reaction it follows.
+    assert [r[0] for r in rows] == ["1", "2", "3"]
+    assert rows[1][1] == "  ↳ follow-up"
     assert len(rows[0]) == len(TABLE_HEADERS)
-    assert rows[1][3:8] == [
-        "0.50",
-        "0.30",
-        "1.00",
-        "0.50",
-        "2.00",
-    ]  # input, wait, agent, output, total
-    assert rows[2][7] == "—"  # no effect, no total
+    # input: wait, input: work, agent: wait, agent: work, output, total
+    assert rows[0][3:9] == ["0.30", "0.20", "0.00", "1.00", "0.50", "2.00"]
+    assert rows[1][8] == "—"  # no effect, no total
 
 
 def test_the_glance_line_shows_the_last_total_and_its_kinds_statistics() -> None:
-    stats = KindStatistics("speech", 4, 1.42, 2.31, Shares(0.5, 0.7, 0.2, 0.3))
+    stats = KindStatistics("speech", 4, 1.42, 2.31, Shares(0.3, 0.2, 0.2, 0.5, 0.2))
     markup = glance(snap(record(), statistics=(stats,)))
     assert "last: 2.00 s" in markup
     assert "speech median 1.42 s · p90 2.31 s" in markup
@@ -170,8 +173,11 @@ def test_the_glance_line_waits_for_a_measured_reaction() -> None:
 
 
 def test_the_summary_lists_each_trigger_kind() -> None:
-    stats = KindStatistics("hand sign", 3, 1.05, 1.4, Shares(0.4, 0.5, 0.15, 0.3))
-    assert "| hand sign | 3 | 1.05 s | 1.40 s |" in summary(snap(statistics=(stats,)))
+    stats = KindStatistics("hand sign", 3, 1.05, 1.4, Shares(0.3, 0.1, 0.2, 0.3, 0.15))
+    assert (
+        "| hand sign | 3 | 1.05 s | 1.40 s | 0.30 | 0.10 | 0.20 | 0.30 | 0.15 |"
+        in summary(snap(statistics=(stats,)))
+    )
     assert "No reaction counted yet" in summary(snap())
 
 
@@ -193,4 +199,23 @@ def test_a_librarys_event_is_said_in_plain_words_with_its_raw_name_on_hover() ->
     )
     assert "Hearing · waiting for end of turn · silence 300 ms" in waterfall(
         record(steps=steps), snap()
+    )
+
+
+def test_the_signal_rows_carry_every_input_and_output_on_the_axis() -> None:
+    mine = record(1)
+    # Another reaction on the same span of time: its sign was seen, its emotion moved the robot.
+    other = record(
+        2,
+        trigger="hand sign",
+        steps=(
+            Step("holding the sign", "Seeing", at(0.5), at(0.8), "wait"),
+            Step("moving", "Actions", at(1.2), at(2.5), "effect", "play_emotion"),
+        ),
+    )
+    markup = waterfall(mine, snap(mine, other, speech=((at(-1.0), at(0.0)),)))
+    signals = markup[markup.index("signal · inputs") :]
+    assert 'title="you speaking"' in signals and 'title="holding the sign"' in signals
+    assert (
+        'title="say: effect"' in signals and 'title="play_emotion: moving"' in signals
     )

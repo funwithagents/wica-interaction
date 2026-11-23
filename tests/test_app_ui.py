@@ -365,23 +365,31 @@ def test_the_latency_panel_sends_only_what_changed() -> None:
     panel = LatencyPanel(_collector_with(1, 2))
     first = panel.tick(True)
     assert all(not isinstance(part, type(gr.skip())) for part in first)
-    assert [row[0] for row in first[3]] == ["2", "1"]
+    # The table, oldest first: every row is in the markup, the newest marked and selected.
+    assert first[3].index('data-id="1"') < first[3].index('data-id="2"')
+    assert '<tr data-id="2" data-last="" class="lv-selected">' in first[3]
     # Nothing new: nothing is sent. The timeline's window slides, so it alone may change.
     again = panel.tick(True)
     assert [again[i] == gr.skip() for i in (0, 2, 3, 4)] == [True] * 4
 
 
-def test_the_detail_is_not_read_while_the_debug_row_is_hidden() -> None:
+def test_the_detail_is_not_read_while_its_tab_is_closed() -> None:
     panel = LatencyPanel(_collector_with(1))
     hidden = panel.tick(False)
     assert hidden[2:] == (gr.skip(), gr.skip(), gr.skip())
 
 
-def test_a_selected_row_picks_the_waterfall() -> None:
+def test_a_selected_reaction_picks_the_waterfall_and_a_negative_one_follows_the_newest() -> (
+    None
+):
     panel = LatencyPanel(_collector_with(1, 2, 3))
     assert "reaction 3 " in panel.tick(True)[4]  # none picked: the newest
-    assert "reaction 2 " in panel.select(1)  # the table's second row, newest first
-    assert panel.selected == 2
+    panel.select_reaction(2)
+    table, waterfall = panel.tick(True)[3:]
+    assert "reaction 2 " in waterfall
+    assert '<tr data-id="2" class="lv-selected">' in table
+    panel.select_reaction(-1)  # "Latest", or a click on the newest row
+    assert panel.selected is None and "reaction 3 " in panel.tick(True)[4]
 
 
 def test_with_no_agent_the_latency_parts_say_so() -> None:
@@ -409,3 +417,11 @@ def test_a_follow_ups_label_names_the_command_that_woke_it() -> None:
     entry = _command_entry("c2", "play_emotion", {"name": "happy"})
     assert _label(display_entry, entry).startswith("🦾 play_emotion: ")
     assert "CommandExecution" not in _label(display_entry, entry)
+
+
+def test_the_page_has_an_interaction_tab_and_a_latency_tab() -> None:
+    config = build_ui(_system()).get_config_file()
+    tabs = [
+        c["props"].get("label") for c in config["components"] if c["type"] == "tabitem"
+    ]
+    assert tabs[0] == "Interaction" and tabs[-1] == "Latency"

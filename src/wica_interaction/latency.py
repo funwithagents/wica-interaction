@@ -107,8 +107,10 @@ class EffectStart:
     latency_attribute: str | None = None
     # A delay the body knows, in seconds, added to its time.
     latency_s: float | None = None
-    # Shown with the step: what this moment is, what it leaves out.
+    # What leaves out or adds to this moment, shown under the waterfall's title.
     note: str = ""
+    # The moment in a few words, ending the waterfall's title ("the first sound").
+    label: str = ""
 
 
 @dataclass(frozen=True)
@@ -127,13 +129,24 @@ class Step:
 
 @dataclass(frozen=True)
 class Shares:
-    """A total split at the World write and at the effect's Command start; ``wait`` is the
-    configured waits inside it, drawn lighter within the three."""
+    """A total split into its phases — input (origin → the World write), agent (→ the effect
+    Command's start), output (→ the effect) — and the input and the agent each into the
+    configured wait inside it and the work around it, so the end of turn or a sign's hold is
+    told apart from the agent gathering its inputs. The five sum to the total."""
 
-    input: float
-    agent: float
+    input_wait: float
+    input_work: float
+    agent_wait: float
+    agent_work: float
     output: float
-    wait: float
+
+    @property
+    def input(self) -> float:
+        return self.input_wait + self.input_work
+
+    @property
+    def agent(self) -> float:
+        return self.agent_wait + self.agent_work
 
 
 @dataclass(frozen=True)
@@ -154,6 +167,9 @@ class ReactionRecord:
     outcome: ReactionOutcome
     complete: bool  # every Command of the reaction has ended
     counted: bool = False  # enters the statistics (see Statistics)
+    # Where the measure starts and where it ends, in a few words, for the waterfall's title.
+    origin_label: str = ""
+    effect_label: str = ""
 
     @property
     def total(self) -> float | None:
@@ -168,16 +184,25 @@ class ReactionRecord:
         boundary = max(
             self.written_at, min(self.effect_command_started_at, self.effect_at)
         )
-        wait = sum(
-            _overlap(s.started_at, s.ended_at, self.origin_at, self.effect_at)
-            for s in self.steps
-            if s.kind == "wait" and not s.context
-        )
+        written = max(self.written_at, self.origin_at)
+
+        def waited(lo: datetime, hi: datetime) -> float:
+            return sum(
+                _overlap(s.started_at, s.ended_at, lo, hi)
+                for s in self.steps
+                if s.kind == "wait" and not s.context
+            )
+
+        input_total = max(0.0, (written - self.origin_at).total_seconds())
+        agent_total = max(0.0, (boundary - written).total_seconds())
+        input_wait = min(waited(self.origin_at, written), input_total)
+        agent_wait = min(waited(written, boundary), agent_total)
         return Shares(
-            input=max(0.0, (self.written_at - self.origin_at).total_seconds()),
-            agent=max(0.0, (boundary - self.written_at).total_seconds()),
+            input_wait=input_wait,
+            input_work=input_total - input_wait,
+            agent_wait=agent_wait,
+            agent_work=agent_total - agent_wait,
             output=max(0.0, (self.effect_at - boundary).total_seconds()),
-            wait=wait,
         )
 
 
@@ -309,10 +334,11 @@ class Statistics:
                     median=statistics.median(totals),
                     p90=nearest_rank(totals, 0.9),
                     shares=Shares(
-                        input=statistics.median(s.input for _, s in rows),
-                        agent=statistics.median(s.agent for _, s in rows),
+                        input_wait=statistics.median(s.input_wait for _, s in rows),
+                        input_work=statistics.median(s.input_work for _, s in rows),
+                        agent_wait=statistics.median(s.agent_wait for _, s in rows),
+                        agent_work=statistics.median(s.agent_work for _, s in rows),
                         output=statistics.median(s.output for _, s in rows),
-                        wait=statistics.median(s.wait for _, s in rows),
                     ),
                 )
             )
@@ -562,13 +588,18 @@ class LatencyCollector:
         return out
 
     def _head_span(self, reaction_span: int | None) -> _Node | None:
-        """The nearest ancestor that is a recognizer segment or a perception of this app."""
+        """The nearest ancestor that is a recognizer segment or a perception of this app — and
+        none past an earlier reaction or Command: a Command's completion is written from inside
+        that Command's span, so the reaction it wakes descends from the one before, whose input
+        is not its own."""
         node = self._node(reaction_span)
         for _ in range(8):
             if node is None:
                 return None
             node = self._node(node.parent_id)
-            if node is not None and node.name in (asr_names.SPAN_NAME, SPAN_PERCEPTION):
+            if node is None or node.name in (_WICA_REACTION, _WICA_COMMAND):
+                return None
+            if node.name in (asr_names.SPAN_NAME, SPAN_PERCEPTION):
                 return node
         return None
 
@@ -617,7 +648,46 @@ class LatencyCollector:
             complete=complete,
         )
         cold = reaction.reaction_id == self._cold_id
-        return replace(record, counted=Statistics.counts(record, cold=cold))
+        return replace(
+            record,
+            counted=Statistics.counts(record, cold=cold),
+            origin_label=self._origin_label(kind, measured, trigger),
+            effect_label=self._effect_label(effect_command),
+        )
+
+    def _origin_label(self, kind: str, measured: bool, trigger: TriggerTrace) -> str:
+        """Where a record's measure starts, in a few words."""
+        if kind == "follow-up":
+            if trigger.key == _NEXT_NOTE_KEY:
+                return "the agent's note to go on"
+            command = self._commands.get(trigger.key[len(COMMAND_KEY_PREFIX) :])
+            return (
+                f"the end of {command.name}"
+                if command is not None
+                else "a command's end"
+            )
+        if not measured:
+            return (
+                "the final transcript"
+                if kind == "speech"
+                else "its delivery to the agent"
+            )
+        return {
+            "speech": "your last word",
+            "typed": "the message sent",
+            "hand sign": "the first frame showing the sign",
+            "user event": "the first frame that saw the person",
+        }.get(kind, "its delivery to the agent")
+
+    def _effect_label(self, command: str | None) -> str:
+        """Where a record's measure ends, in a few words: the body's label for that Command's
+        effect, or the Command starting."""
+        if command is None:
+            return ""
+        declared = self._effects.get(command)
+        if declared is not None and declared.label:
+            return declared.label
+        return f"{command} starting"
 
     def _head(
         self, reaction: ReactionTrace, trigger: TriggerTrace, head: _Node | None
@@ -913,7 +983,13 @@ class LatencyCollector:
             steps.append(
                 Step(perceived, lane, effect, ended, "effect", name, detail=note)
             )
-        elif ended is not None:
+        elif ended is None:
+            # Running, its effect not stamped yet (the bridge places an emotion's motion on its
+            # span only when the call ends): the Command is still under way, drawn up to now.
+            steps.append(
+                Step("in progress", lane, previous, None, "work", name, detail=note)
+            )
+        else:
             steps.append(
                 Step(
                     "never perceived",

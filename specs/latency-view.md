@@ -114,7 +114,7 @@ A reaction with several attempts has its *model* steps from the first attempt's 
 - One step per event on the spans nested under the Command's span, in time order, each named after its event (the first occurrence of a name wins), from the previous moment (the Command's start, then each event) to the event. Only the events up to the effect start count. *work*.
 - **device latency** (*work*), from the last event to the effect start, when a delay is added to the declared event.
 - **heard** (the voice), **moving** (a declared action), **running** (an action with no declaration), kind *effect*, from the effect start to the Command's end.
-- A Command with no declaration has its effect at its start, so its tail is the one effect step. One that ended without its declared event has a **never perceived** step (*not measured*) over its run.
+- A Command with no declaration has its effect at its start, so its tail is the one effect step. One still running whose declared event has not come yet has an **in progress** step (*work*) from its last event, growing to now: the bridge places an emotion's motion on its span only when the call ends. One that ended without its declared event has a **never perceived** step (*not measured*) over its run.
 
 A step named after a library's event is named after where it **ends**: `first_audio` closes the time spent producing the first audio. The page therefore says each event in plain words, by what the step ending there did (`latency_view.EVENT_NAMES`), and keeps the raw name in the hover text; an event not listed shows under its own name, so nothing is hardcoded for a Command:
 
@@ -144,8 +144,10 @@ class EffectStart:
     latency_attribute: str | None = None
     # A delay the body knows, in seconds, added to its time.
     latency_s: float | None = None
-    # Shown with the effect: what this moment is, what it leaves out.
+    # What this moment leaves out or adds, shown under the waterfall's title.
     note: str = ""
+    # The moment in a few words, ending the waterfall's title.
+    label: str = ""
 ```
 
 The `Embodiment` protocol has one member for it, read once, at wiring, with the output Command's name ([embodiment.md](embodiment.md)):
@@ -154,12 +156,12 @@ The `Embodiment` protocol has one member for it, read once, at wiring, with the 
 def effects(self) -> Mapping[str, EffectStart]: ...
 ```
 
-| Body | Command | `span` / `event` | Added delay |
-|---|---|---|---|
-| Computer, the engine's own player | `say` | `tts_engine.utterance` / `playback_started` | the event's `tts_engine.output_latency_seconds` |
-| Computer, echo cancellation on | `say` | `tts_engine.utterance` / `first_audio` | the app's stream's reported output latency (`AudioProcessingCoordinator.output_latency`), when it gives one |
-| Reachy Mini | `say` | `reachy_mini_bridge.say` / `first_push` | none: the delay from the push to the sound is not measured |
-| Reachy Mini | `play_emotion` | `reachy_mini_bridge.play_emotion` / `motion_started` | none |
+| Body | Command | `span` / `event` | Added delay | `label` |
+|---|---|---|---|---|
+| Computer, the engine's own player | `say` | `tts_engine.utterance` / `playback_started` | the event's `tts_engine.output_latency_seconds` | the first sound |
+| Computer, echo cancellation on | `say` | `tts_engine.utterance` / `first_audio` | the app's stream's reported output latency (`AudioProcessingCoordinator.output_latency`), when it gives one | the first sound |
+| Reachy Mini | `say` | `reachy_mini_bridge.say` / `first_push` | none: the delay from the push to the sound is not measured, which its `note` says | the first audio sent to the robot |
+| Reachy Mini | `play_emotion` | `reachy_mini_bridge.play_emotion` / `motion_started` | none | the robot moving |
 
 The names are the published contract of `tts-engine` (`specs/utterance-timing.md` there) and `reachy-mini-bridge` (`specs/core/tracing.md` there), and the embodiments use the constants those packages export. Echo cancellation's declaration assumes the app's always-open stream adds no opening delay.
 
@@ -181,7 +183,7 @@ or wica_interaction.perception   (this app: a root span)
          └─ tts_engine.utterance, reachy_mini_bridge.<verb>, …
 ```
 
-- **The join is by span parentage**, never by time or order. A reaction's head is the nearest `asr_engine.segment` or `wica_interaction.perception` ancestor of its `wica.agent.reaction` span. A Command's steps come from the descendants of its `wica.agent.command` span, and the Commands of a reaction are its `command_call_ids` plus any command span started under its reaction span.
+- **The join is by span parentage**, never by time or order. A reaction's head is the nearest `asr_engine.segment` or `wica_interaction.perception` ancestor of its `wica.agent.reaction` span, and none past an earlier `wica.agent.reaction` or `wica.agent.command`: a Command's completion is written from inside that Command's span, so the reaction it wakes descends from the one before, whose input is not its own. A Command's steps come from the descendants of its `wica.agent.command` span, and the Commands of a reaction are its `command_call_ids` plus any command span started under its reaction span.
 - The collector keeps every span from its start, so a running span's events are read while it runs, and the span it becomes at its end replaces it.
 
 ### The perception span: this app's own inputs
@@ -250,6 +252,8 @@ class ReactionRecord:
     outcome: ReactionOutcome
     complete: bool  # every Command of the reaction has ended
     counted: bool = False  # it enters the statistics
+    origin_label: str = ""  # where the measure starts, in a few words
+    effect_label: str = ""  # where it ends: the effect's label, or "<command> starting"
 
     @property
     def total(self) -> float | None: ...  # effect_at - origin_at
@@ -258,7 +262,7 @@ class ReactionRecord:
     def shares(self) -> Shares | None: ...
 ```
 
-- **The shares** split a total at the World write and at the effect Command's start: **input** (origin → write), **agent** (write → that Command's start), **output** (→ the effect). **wait** is the time of the *wait* steps inside the total, context steps aside, drawn lighter within the three.
+- **The shares** split a total into its phases, at the World write and at the effect Command's start: **input** (origin → write), **agent** (write → that Command's start), **output** (→ the effect). The input and the agent are each split again into their **wait** (the time of the *wait* steps inside them, context steps aside) and their **work** (the rest), so the end of turn or a sign's hold is told apart from the agent gathering its inputs. The five (`input_wait`, `input_work`, `agent_wait`, `agent_work`, `output`) sum to the total. Columns per stage (the voice detector, the recognizer, detection) were considered and left out: each trigger kind has its own stages, so most cells would be empty; the waterfall gives that detail.
 - A record exists once its reaction ends and is **completed in place** as its Commands progress: the effect start appears while the voice still speaks. Once it is complete and nothing under its reaction still runs, it is kept as it is.
 - A reaction that has not ended shows on the timeline only: its head, a **the agent so far** step from its span's start to now, and the tails of the Commands under it.
 - The collector keeps the last 200 records and a bounded window of spans.
@@ -289,18 +293,18 @@ class ReactionRecord:
 
 Four parts, drawn by pure functions from a `LatencySnapshot` to markup (`latency_view.py`). Bars are positioned `div`s with inline styles. Everything in a record that came from a person or the model is HTML-escaped.
 
-On the main surface, full width under the Conversation and Camera row, under a **Latency** heading:
+First on the page, full width above the Conversation and Camera row, under a **Latency** heading:
 
-1. **The glance line.** For the newest record with a total: the total, one bar split into input, agent and output, the waits lighter, the three shares in seconds, and the median and 90th percentile of its trigger kind.
+1. **The glance line.** For the newest record with a total: the total, one bar split into input, agent and output, the waits lighter, the three phases in seconds with the input's and the agent's waits, and the median and 90th percentile of its trigger kind.
 2. **The live timeline.** The last 30 seconds, one row per lane, named after who does what: `You` (the person speaking, from the recognizer's speech stamps, the first interim opening a stretch and the final ending it), `Hearing` (the recognizer), `Seeing` (the hand pipeline, the robot's users), `Agent`, `Voice`, `Actions`. A step still running is drawn up to now and grows. A dropped input is a red mark on the `Agent` row. A legend names the kinds.
 
-Behind the existing debug toggle, in a full-width row of its own:
+On the page's **Latency** tab, next to the **Interaction** tab that holds everything else:
 
-3. **The summary and the table.** The statistics as a table per trigger kind, a **Reset statistics** button, then one row per record, newest first: number, trigger, label, the input, wait, agent and output shares, the total, the flags. A follow-up is indented under its parent with `↳`, a follow-up of a follow-up further. The table is a `gr.Dataframe`; selecting a row selects its waterfall. With none selected, the newest record's is shown.
-4. **The waterfall** of the selected record: every step on one time axis, one row each, grouped by lane and labelled `<lane> · <plain name> · <detail>`, the origin dashed and the effect start in red with its note, then two thin signal rows on the same axis: the person speaking, and the voice heard.
+3. **The summary and the table.** The statistics as a table per trigger kind, a **Reset statistics** button, then one row per record, top to bottom in the order they happened: number, trigger, label, `input: wait`, `input: work`, `agent: wait`, `agent: work`, `output`, the total, the flags. A follow-up sits right under its parent, indented with `↳`, a follow-up of a follow-up further. The table is the app's own markup (`latency_view.table`) in a `gr.HTML` with browser code of its own, not a `gr.Dataframe`: a Dataframe draws only the rows in view, measured from its size, so rows added while that size stays put did not show until the frame was resized. The table is redrawn whole on each change, scrolls inside a fixed height (360 px) under its pinned header row, and its browser code (`js_on_load`) keeps the reader's place across redraws. It **follows the newest row** while the newest is the one selected and the table is scrolled to the bottom; a click on a row selects it, through the server function `select_reaction`; the **Latest ↓** button scrolls down and selects the newest. With none selected, the newest record's waterfall is shown and followed.
+4. **The waterfall** of the selected record, titled with both ends of its measure — `reaction 9 · hand sign · 1.77 s from the first frame showing the sign to the first audio sent to the robot (say)`, the origin's label by trigger kind (`your last word`, `the message sent`, `the first frame showing the sign`, `the first frame that saw the person`, `the end of <command>`, `the agent's note to go on`; `the final transcript` or `its delivery to the agent` when the origin is unknown) — with the effect's `note` and an unknown origin each on a line of their own under it: every step on one time axis, one row each, grouped by lane and labelled `<lane> · <plain name> · <detail>`, the origin dashed and the effect start in red with its note, then two thin signal rows on the same axis, whichever reaction each bar belongs to: **inputs** (the person speaking, every delivered perception) and **outputs** (every Command's effect: the voice heard, the robot moving, an action running), each bar in its lane's colour. The inputs row lacks what woke nothing (a sign held and released, a user the robot does not attend to): the app does not record those yet.
 
 - **The kinds are told apart by pattern as well as colour**: work solid, a wait light, not measured hatched (drawn at a minimum width when it has no length), an effect darkest.
-- **Refresh.** `LatencyPanel.tick`, on a timer of its own at 0.2 s, returns each part, or `gr.skip()` when it is what was last sent: an idle page sends nothing, and an idle timeline renders constant markup. The summary, the table and the waterfall are read only while the debug row shows.
+- **Refresh.** `LatencyPanel.tick`, on a timer of its own at 0.2 s, returns each part, or `gr.skip()` when it is what was last sent: an idle page sends nothing, and an idle timeline renders constant markup. The summary, the table and the waterfall are read only while the Latency tab is open.
 - **With no agent** the glance line says so in one line and the other parts stay empty.
 
 ### The Vision panel's readout

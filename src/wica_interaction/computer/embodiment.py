@@ -350,7 +350,8 @@ class ComputerEmbodiment:
                     UTTERANCE_SPAN,
                     EVENT_FIRST_AUDIO,
                     latency_s=coordinator.output_latency,
-                    note="the first audio on the echo canceller's open stream, plus its latency",
+                    label="the first sound",
+                    note="the first audio queued on the echo canceller's open stream, plus its reported latency",
                 )
             }
         return {
@@ -358,7 +359,8 @@ class ComputerEmbodiment:
                 UTTERANCE_SPAN,
                 EVENT_PLAYBACK_STARTED,
                 latency_attribute=ATTR_OUTPUT_LATENCY_SECONDS,
-                note="the first sound: the device started, plus its reported latency",
+                label="the first sound",
+                note="the audio device started, plus the latency it reports",
             )
         }
 

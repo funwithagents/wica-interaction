@@ -328,10 +328,11 @@ class ReachyEmbodiment:
             "say": EffectStart(
                 SPAN_SAY,
                 EVENT_FIRST_PUSH,
-                note="the first audio handed to the robot's speaker; the delay to the sound is not measured",
+                label="the first audio sent to the robot",
+                note="the delay from there to the sound is not measured",
             ),
             "play_emotion": EffectStart(
-                SPAN_PLAY_EMOTION, EVENT_MOTION_STARTED, note="the robot begins to move"
+                SPAN_PLAY_EMOTION, EVENT_MOTION_STARTED, label="the robot moving"
             ),
         }
 

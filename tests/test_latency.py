@@ -57,7 +57,8 @@ SAY = EffectStart(
     "tts_engine.utterance",
     "playback_started",
     latency_attribute="tts_engine.output_latency_seconds",
-    note="the first sound",
+    note="the device started",
+    label="the first sound",
 )
 EMOTE = EffectStart("reachy_mini_bridge.play_emotion", "motion_started", note="moves")
 
@@ -258,7 +259,7 @@ def test_a_spoken_turn_runs_from_the_end_of_speech_to_the_first_sound(
     assert record.origin_at == at(0) and record.origin_measured
     # The first sound: playback started at 1.5 s, plus the device's reported 20 ms.
     assert record.total == pytest.approx(1.52)
-    assert record.effect_command == "say" and record.effect_note == "the first sound"
+    assert record.effect_command == "say" and record.effect_note == "the device started"
     assert (
         seconds(step(record, "waiting for end of turn")),
         step(record, "waiting for end of turn").kind,
@@ -288,9 +289,9 @@ def test_a_spoken_turn_runs_from_the_end_of_speech_to_the_first_sound(
         round(shares.agent, 3),
         round(shares.output, 3),
     ) == (0.52, 0.68, 0.32)
-    assert (
-        round(shares.wait, 3) == 0.5
-    )  # the endpointing wait and the coalescing window
+    # The two waits apart: the end of turn in the input, the gathering of inputs in the agent.
+    assert (round(shares.input_wait, 3), round(shares.agent_wait, 3)) == (0.3, 0.2)
+    assert (round(shares.input_work, 3), round(shares.agent_work, 3)) == (0.22, 0.48)
     assert record.complete and record.counted is False  # the first reaction is cold
 
 
@@ -735,8 +736,88 @@ def test_a_streaming_recognizer_transcribes_as_the_person_speaks(
     assert (bar.started_at, bar.ended_at, bar.context) == (at(-0.4), at(0.5), True)
     shares = record.shares
     # Context: it overlaps the speech and the end of turn, and counts in no share.
-    assert shares is not None and round(shares.wait, 3) == 0.5
+    assert shares is not None
+    assert (round(shares.input_wait, 3), round(shares.agent_wait, 3)) == (0.3, 0.2)
     assert (
         step(record, "final transcript").detail
         == "what was left to transcribe after the end of turn"
+    )
+
+
+# --- The timeline while things run ----------------------------------------------------------------
+
+
+def test_a_running_command_whose_effect_is_not_stamped_yet_is_drawn_up_to_now(
+    collector: LatencyCollector, wica: FakeWica
+) -> None:
+    update = span("wica.world.update", 0, end=0)
+    reaction = span(
+        "wica.agent.reaction", 0.21, parent=update, attributes={"wica.reaction_id": 1}
+    )
+    emote = span(
+        "wica.agent.command",
+        0.9,
+        parent=reaction,
+        attributes={"wica.call_id": "e", "wica.command.name": "play_emotion"},
+    )
+    # The bridge stamps `queued` live; the motion only when the call ends.
+    span("reachy_mini_bridge.play_emotion", 0.9, parent=emote, events={"queued": 0.95})
+    reaction.end(end_time=ns(1.0))
+    wica.on_agent_reaction_ended.emit(reaction_trace(1, written=0, calls=("e",)))
+    record = only(collector)
+    actions = [(s.name, s.ended_at) for s in record.steps if s.lane == "Actions"]
+    assert actions == [("queued", at(0.95)), ("in progress", None)]
+
+
+def test_a_follow_up_does_not_borrow_the_input_of_the_reaction_before(
+    collector: LatencyCollector, wica: FakeWica
+) -> None:
+    spoken_turn(wica, rid=1, say_ends=None)
+    # The say's completion is written from inside its span: the next reaction descends from it.
+    command = collector._spans[collector._command_span["c1"]].span  # pyright: ignore[reportPrivateUsage]
+    completion = span("wica.world.update", 3.0, parent=command, end=3.0)
+    span(
+        "wica.agent.reaction",
+        3.2,
+        parent=completion,
+        attributes={"wica.reaction_id": 2},
+    )
+    running = collector.snapshot().running
+    assert running and not any(s.lane == "Hearing" for s in running)
+
+
+def test_a_record_says_where_its_measure_starts_and_ends(
+    collector: LatencyCollector, wica: FakeWica
+) -> None:
+    spoken_turn(wica, rid=1)
+    wica.on_agent_reaction_ended.emit(
+        reaction_trace(2, key="agent:command:c1", written=3.0)
+    )
+    records = {r.reaction_id: r for r in collector.snapshot().records}
+    assert (records[1].origin_label, records[1].effect_label) == (
+        "your last word",
+        "the first sound",
+    )
+    assert records[2].origin_label == "the end of say"
+    # A Command with no declaration ends the measure as it starts.
+    update = span("wica.world.update", 10, end=10)
+    reaction = span(
+        "wica.agent.reaction", 10.2, parent=update, attributes={"wica.reaction_id": 3}
+    )
+    span(
+        "wica.agent.command",
+        10.5,
+        parent=reaction,
+        attributes={"wica.call_id": "w", "wica.command.name": "wave"},
+        end=10.9,
+    )
+    reaction.end(end_time=ns(10.6))
+    wica.on_agent_reaction_ended.emit(reaction_trace(3, written=10, calls=("w",)))
+    wica.on_agent_command_ended.emit(
+        CommandTrace("w", "wave", 3, at(10.5), at(10.9), "complete")
+    )
+    typed = next(r for r in collector.snapshot().records if r.reaction_id == 3)
+    assert (typed.origin_label, typed.effect_label) == (
+        "the message sent",
+        "wave starting",
     )

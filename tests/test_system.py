@@ -678,7 +678,7 @@ def test_shutdown_stops_asr_before_the_body_exits() -> None:
 class _NeverLaunched:
     """Stands in for the built page in `_serve`: something raises first, so `launch` must never run."""
 
-    def launch(self) -> None:
+    def launch(self, **_options: object) -> None:
         raise AssertionError("launch() must not be reached when an earlier step raises")
 
 

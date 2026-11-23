@@ -31,10 +31,10 @@ A reaction that speaks and acts ends at whichever comes first. A reaction that d
 
 ## Reading the page
 
-### Under the conversation
+### At the top of the page
 
-- **The glance line**: the last reaction's total, as one bar split into input (to the World write), agent (to the start of the command that took effect) and output (to its effect). Configured waits are lighter. The median and 90th percentile of its kind of trigger sit beside it.
-- **The timeline**: the last 30 seconds, one row per lane. *You* is the person speaking, *Hearing* the speech recognizer, *Seeing* the hand pipeline and the robot's users, *Agent* the model, *Voice* and *Actions* what the body did. A step still running grows. A red mark on the *Agent* row is an input dropped because the agent was busy.
+- **The glance line**: the last reaction's total, as one bar split into input (to the World write), agent (to the start of the command that took effect) and output (to its effect). Configured waits are lighter, and the input's and the agent's waits are given apart: the end of turn or a sign's hold is not the agent gathering its inputs. The median and 90th percentile of its kind of trigger sit beside it.
+- **The timeline**: the last 30 seconds, one row per lane. *You* is the person speaking, *Hearing* the speech recognizer, *Seeing* the hand pipeline and the robot's users, *Agent* the model, *Voice* and *Actions* what the body did. A step still running grows, a command whose effect is not known yet included (shown *in progress*). A red mark on the *Agent* row is an input dropped because the agent was busy.
 
 Each step is drawn as one of three kinds:
 
@@ -60,13 +60,23 @@ In the waterfall each row reads `<lane> · <step> · <detail>`:
 | Voice · waiting for the first sentence, synthesis, opening the audio device, device latency | the voice: waiting until the model has written a first sentence, turning it into audio, starting the sound device, and the latency the device reports |
 | Voice · heard | from the first sound to the end of the utterance |
 
+### What a hand sign's steps mean
+
+| Row | What happens |
+|---|---|
+| Seeing · waiting for hand detection | the frame waits for the hand stage to pick it up: the stage runs at `vision.fps` (10 by default) and samples the newest frame on each turn, so a frame waits up to one period, or longer while the stage is still busy with the previous frame. A configured wait: a higher `vision.fps` shortens it, at a CPU cost |
+| Seeing · hand detection | MediaPipe finding the hand and cropping it |
+| Seeing · waiting for classification, classification | the same for the gesture classifier, on that hand's crop |
+| Seeing · read by the app | the app's watcher reading the classifier's result (it looks every 10 ms) |
+| Seeing · holding the sign | the sign must stay unbroken for `vision.hold_s` (0.3 s) before it counts, so a flicker never wakes the agent |
+
 A step named after a library's event is shown in plain words; the hover text keeps its raw name (`synthesis [first_audio]`).
 
-### Behind "Show debug panels"
+### On the Latency tab
 
-- **The statistics**: per kind of trigger, the count, the median and the 90th percentile of the total, and the median of each share. The first reaction of the run is cold and left out, and so are follow-ups, reactions whose start is unknown and reactions that failed. **Reset statistics** starts them over.
-- **The table**: one row per reaction, newest first, a follow-up indented under the reaction it follows. Its columns are the shares in seconds, the total and the flags.
-- **The waterfall** of the row you select, the newest by default: every step on one time axis, one row each, the start dashed and the effect in red. Under it, two signal rows on the same axis, the person speaking and the voice heard, so a bar can be checked by eye against them.
+- **The statistics**: per kind of trigger, the count, the median and the 90th percentile of the total, and the median of each phase. The first reaction of the run is cold and left out, and so are follow-ups, reactions whose start is unknown and reactions that failed. **Reset statistics** starts them over.
+- **The table**: one row per reaction, top to bottom in the order they happened, scrolling under its header row, a follow-up right under the reaction it follows, indented. Its columns, in seconds: *input: wait* (the end of turn, a sign's hold, the stages' pacing), *input: work* (the final transcript, detection and classification), *agent: wait* (gathering inputs), *agent: work* (the prompt and the model), *output* (the voice or the action up to its effect), then the total and the flags. While the newest row is selected and the table is scrolled to the bottom, it follows each new reaction; select an older row and it stays put while you read. **Latest ↓** scrolls down and selects the newest again.
+- **The waterfall** of the row you select, the newest by default: every step on one time axis, one row each, the start dashed and the effect in red. Under it, two signal rows on the same axis: *inputs*, your speech and every sign or user the app delivered, and *outputs*, every effect (the voice heard, the robot moving), whichever reaction they belong to. A bar can be checked by eye against them, and a reaction overlapping another shows. What woke nothing is not on them yet.
 
 ### The flags
 
