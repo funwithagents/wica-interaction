@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
+from datetime import UTC, datetime
 from typing import Any, cast
 
+from asr_engine import SegmentTiming
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
 from asr_engine.vad.gate import VadState
@@ -305,3 +307,42 @@ def test_status_says_whether_the_engines_vad_hears_speech() -> None:
     assert bridge.status()["vad"] == "speech"
     engine.vad_state = VadState(speaking=True, failed_open=True)
     assert bridge.status()["vad"] == "failed_open"
+
+
+# --- The person's speech, for the latency timeline ------------------------------------------------
+
+
+def _timed(
+    *, is_final: bool, start: datetime | None, end: datetime | None
+) -> SpeechSegment:
+    now = datetime.now(UTC)
+    return SpeechSegment(
+        transcript="hi",
+        is_final=is_final,
+        end_reason="utterance" if is_final else None,
+        timing=SegmentTiming(
+            start, end if is_final else None, None, None, now, now if is_final else None
+        ),
+    )
+
+
+def test_the_speech_is_reported_from_its_first_interim_to_its_final() -> None:
+    engine = FakeASREngine()
+    spoken: list[tuple[datetime, datetime | None, datetime | None]] = []
+    AsrBridge(
+        cast(ASREngine, engine),
+        on_final_segment=lambda _t: None,
+        on_speech=lambda s, e, p: spoken.append((s, e, p)),
+    )
+    start, end = (
+        datetime(2026, 11, 23, 12, 0, tzinfo=UTC),
+        datetime(2026, 11, 23, 12, 0, 2, tzinfo=UTC),
+    )
+    assert engine.on_speech_segment is not None
+    asyncio.run(engine.on_speech_segment(_timed(is_final=False, start=start, end=None)))
+    asyncio.run(engine.on_speech_segment(_timed(is_final=True, start=start, end=end)))
+    # Without a VAD there is no speech stamp, and nothing is reported.
+    asyncio.run(engine.on_speech_segment(_timed(is_final=True, start=None, end=None)))
+    assert [(s, e) for s, e, _ in spoken] == [(start, None), (start, end)]
+    # An interim says when its partial was emitted; the final does not.
+    assert spoken[0][2] is not None and spoken[1][2] is None

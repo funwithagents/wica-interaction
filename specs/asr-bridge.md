@@ -33,6 +33,8 @@ So partial speech is *visible but inert* — it streams into the ASR panel chara
 
 **Every** final fires the callback — including one whose transcript is empty or whitespace (e.g. a `timeout`-mode segment that closes on `initial_silence_timeout` with no speech). The bridge does not filter these: a closed-on-silence segment writes an empty `speech_input`, so the agent can react to the user saying *nothing* after dictation starts. What an empty utterance *means* is the consumer's decision ([app.md](app.md), "The input funnel"), and both personas tell the model.
 
+**The person's speech, for the latency timeline.** An optional `on_speech(started_at, ended_at, partial_at)` is called with the stamps the engine put on each segment's `timing`: on an interim, the start of speech and when its partial transcript was emitted (`ended_at` `None`); on the final, the start and the end (`partial_at` `None`). A segment with no speech stamp (no VAD) reports nothing, and a failing callback is logged, never propagated ([latency-view.md](latency-view.md)).
+
 The `on_final_segment` callback is **injected**, not the World itself, so the bridge is decoupled from WICA and can be unit-tested with a recording callback and a fake engine (no `Wica`, no model).
 
 ## The mic is the embodiment's

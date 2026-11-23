@@ -39,12 +39,13 @@ One extra per body, per optional feature, per provider, named after the sibling'
 
 | Extra | Pulls | For |
 |---|---|---|
-| *(base)* | `wica[gradio]`, `asr-engine`, `vision-modules` (its numpy-only core), `gradio`, `numpy` | the lifecycle, the page, speech in, the vision plumbing |
+| *(base)* | `wica[gradio]`, `asr-engine`, `vision-modules` (its numpy-only core), `gradio`, `numpy`, `opentelemetry-sdk` | the lifecycle, the page, speech in, the vision plumbing, the latency view |
 | `computer` | `tts-engine` | the computer embodiment's voice |
 | `audio-processing` | `aec-audio-processing`, `samplerate` | the computer's echo cancellation and noise suppression |
 | `reachy` | `reachy-mini-bridge` | the Reachy Mini embodiment (pulls the upstream `reachy-mini` SDK), the robot itself |
 | `reachy-sim` | `reachy-mini-bridge[sim]` | the MuJoCo simulator the `sim` backend runs on, what the reachy template targets; a real robot needs none of it |
 | `vision` | `vision-modules[hand,opencv]` | the hand-sign input, either body: MediaPipe, the torch classifier, OpenCV for the webcam and the snapshots |
+| `otlp` | `opentelemetry-exporter-otlp-proto-http` | sending the app's traces to a tracing backend (`WICA_INTERACTION_TRACES=otlp`, [../guides/latency.md](../guides/latency.md)); the page's latency view needs none of it |
 | `wica-anthropic` | `wica[anthropic]` | the Anthropic agent provider |
 | `wica-openai` | `wica[openai]` | the OpenAI agent provider |
 | `wica-gemini` | `wica[gemini]` | the Gemini agent provider (Gemini Developer API) |

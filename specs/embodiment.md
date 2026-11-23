@@ -105,6 +105,9 @@ class Embodiment(Protocol):
         self,
     ) -> str: ...  # persona text appended at startup ("" for none)
 
+    # When each Command's effect is first perceived, by Command name.
+    def effects(self) -> Mapping[str, EffectStart]: ...
+
     def view(
         self,
     ) -> EmbodimentView: ...  # the camera and the body's state, for the page
@@ -160,6 +163,8 @@ It streams: a piece is passed on as soon as nothing that follows can change how 
 - **Config loading.** Each embodiment's package parses its own sections and constructs the embodiment from them ([configuration.md](configuration.md)); the shared code only ever sees the shared `AppConfig` (`wica`, `asr`, `vision`).
 - **The World.** `speech_input` and `hand_gesture_<n>` are the app's ([app.md](app.md), [gesture-input.md](gesture-input.md)). An embodiment adds entries of its own only through `inputs()`, described and delivered, never written directly: registration, the running guard and the order stay the lifecycle's.
 - **Gradio.** The page is shared ([app.md](app.md), "What the user sees"); what a body adds to it is data — `view()`'s frame and Markdown — which `app_ui` places, so no embodiment imports Gradio and a body is tested without a page.
+
+**`effects()` says when a Command is perceived.** The latency view measures a reaction up to the moment it can first be perceived, and only the body knows what plays its Commands: the engine's own player, the app's echo-cancelling stream, the robot. So each body declares, per Command name, an `EffectStart`: an event on a span nested under the Command's span, plus a delay to add (an attribute of that event, or a value the body knows). A Command left out starts its effect when it starts. The computer declares its voice's first sound; the robot its voice's first push to the speaker and an emotion's first motion. Read once, at wiring ([latency-view.md](latency-view.md), "`EffectStart`").
 
 **`view()` is display-ready.** The body owns what its camera shows and what it knows about it, so the frame comes out as the page shows it: RGB, at most `VIEW_MAX_WIDTH` (640) pixels wide (`display_frame`, a whole-number subsample of the BGR image a feed publishes, shared by both bodies), and **mirrored** like a selfie — the person facing the camera sees themselves as in a mirror. Mirroring is display only: what the agent is told keeps the camera's own left and right (the robot's `to your left`). An overlay is drawn by the body before the flip, and any text on it after, so it reads the right way round.
 - **The entry point.** Which embodiment runs is decided by the command you launch (`wica-interaction-computer`, `wica-interaction-reachy`), not by a config key: each entry point imports only its own package, so a computer-only install never imports the robot SDK ([project.md](project.md), "Extras"). A reachy config handed to the computer command fails on its unknown `reachy` section — a clearer error than a discriminator could give.

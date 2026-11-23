@@ -10,15 +10,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import gradio as gr
 import numpy as np
 from asr_engine.engine import ASREngine
 from asr_engine.vad.gate import VadState
 from wica import CommandExecution
 from wica.contrib.gradio import EntryDisplay
+from wica.events import Event
 from wica.world import WorldEntry, WorldEntryVersion
 
 from tests.fakes import FakeEmbodiment
+from tests.test_latency import reaction_trace
 from wica_interaction.app_ui import (
+    LatencyPanel,
+    _label,
     build_ui,
     display_entry,
     entry_display,
@@ -29,6 +34,7 @@ from wica_interaction.app_ui import (
 from wica_interaction.asr_bridge import AsrBridge
 from wica_interaction.embodiment import EmbodimentView
 from wica_interaction.gesture_input import GestureInput
+from wica_interaction.latency import LatencyCollector
 from wica_interaction.system import AppSystem
 
 
@@ -332,3 +338,74 @@ def test_a_failing_view_is_a_line_on_the_page_not_a_crash() -> None:
     frame, status = tick_view(_system(embodiment=Broken()))
     assert frame is None
     assert status == "⚠️ _View unavailable: camera &lt;gone&gt;_"
+
+
+# --- The latency view (specs/latency-view.md, "What the page shows") ------------------------------
+
+
+def _collector_with(*rids: int) -> LatencyCollector:
+    """A collector that has seen typed reactions *rids*, each speaking from 0.5 s after its write."""
+    collector = LatencyCollector()
+    wica = _Events()
+    collector.attach(wica)  # type: ignore[arg-type]
+    for rid in rids:
+        wica.on_agent_reaction_ended.emit(reaction_trace(rid, written=float(rid)))
+    return collector
+
+
+class _Events:
+    def __init__(self) -> None:
+        self.on_agent_reaction_ended: Event[Any] = Event()
+        self.on_agent_command_ended: Event[Any] = Event()
+        self.on_agent_trigger: Event[Any] = Event()
+        self.on_agent_trigger_dropped: Event[Any] = Event()
+
+
+def test_the_latency_panel_sends_only_what_changed() -> None:
+    panel = LatencyPanel(_collector_with(1, 2))
+    first = panel.tick(True)
+    assert all(not isinstance(part, type(gr.skip())) for part in first)
+    assert [row[0] for row in first[3]] == ["2", "1"]
+    # Nothing new: nothing is sent. The timeline's window slides, so it alone may change.
+    again = panel.tick(True)
+    assert [again[i] == gr.skip() for i in (0, 2, 3, 4)] == [True] * 4
+
+
+def test_the_detail_is_not_read_while_the_debug_row_is_hidden() -> None:
+    panel = LatencyPanel(_collector_with(1))
+    hidden = panel.tick(False)
+    assert hidden[2:] == (gr.skip(), gr.skip(), gr.skip())
+
+
+def test_a_selected_row_picks_the_waterfall() -> None:
+    panel = LatencyPanel(_collector_with(1, 2, 3))
+    assert "reaction 3 " in panel.tick(True)[4]  # none picked: the newest
+    assert "reaction 2 " in panel.select(1)  # the table's second row, newest first
+    assert panel.selected == 2
+
+
+def test_with_no_agent_the_latency_parts_say_so() -> None:
+    glance, *_ = LatencyPanel(None).tick(True)
+    assert "No agent" in glance
+
+
+def test_the_vision_panel_shows_the_newest_results_age_and_stage_times() -> None:
+    line = tick_vision(
+        _system_with_gesture(
+            _Gesture(
+                frame_age_s=0.123,
+                stage_ms=[("hand detection", 34.6), ("classification", 18.2)],
+            )
+        )
+    )
+    assert (
+        "- **newest result:** frame 123 ms old · hand detection 35 ms · classification 18 ms"
+        in line
+    )
+    assert "newest result" not in tick_vision(_system_with_gesture(_Gesture()))
+
+
+def test_a_follow_ups_label_names_the_command_that_woke_it() -> None:
+    entry = _command_entry("c2", "play_emotion", {"name": "happy"})
+    assert _label(display_entry, entry).startswith("🦾 play_emotion: ")
+    assert "CommandExecution" not in _label(display_entry, entry)

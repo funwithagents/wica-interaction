@@ -15,6 +15,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+import tts_engine.utterance as tts_utterance
 from asr_engine.config import ASREngineConfig
 from tts_engine.config import ConfigError as TTSConfigError
 from tts_engine.config import TTSEngineConfig
@@ -25,6 +26,7 @@ from wica.text_output import output_signature
 import wica_interaction.computer.embodiment as embodiment_module
 from tests.computer.fakes import FakeCoordinator, FakeOpenCVSource, FakeTTSEngine
 from tests.fakes import utterance
+from wica_interaction import latency
 from wica_interaction.computer.audio_processing import AudioProcessingCoordinator
 from wica_interaction.computer.config import (
     AudioProcessingConfig,
@@ -620,3 +622,36 @@ def test_a_non_positive_fps_is_rejected() -> None:
         WebcamSource(
             0, fps=0.0, opener=lambda _d: cast(FrameSource, FakeOpenCVSource())
         )
+
+
+# --- The latency view's declaration (specs/latency-view.md, "`EffectStart`") --------------------
+
+
+def test_the_voices_effect_is_the_first_sound_of_the_engines_player() -> None:
+    effect = _entered(_config()).effects()["say"]
+    assert (effect.span, effect.event) == (
+        tts_utterance.SPAN_NAME,
+        tts_utterance.EVENT_PLAYBACK_STARTED,
+    )
+    assert effect.latency_attribute == tts_utterance.ATTR_OUTPUT_LATENCY_SECONDS
+
+
+def test_with_echo_cancellation_the_effect_is_the_first_audio_on_the_apps_stream() -> (
+    None
+):
+    coordinator = FakeCoordinator()
+    embodiment = _entered(
+        _config(aec=True),
+        factory=lambda _c: cast(AudioProcessingCoordinator, coordinator),
+    )
+    effect = embodiment.effects()["say"]
+    assert (effect.span, effect.event) == (
+        tts_utterance.SPAN_NAME,
+        tts_utterance.EVENT_FIRST_AUDIO,
+    )
+    assert effect.latency_s == 0.03  # the app's stream's reported latency
+
+
+def test_the_collectors_queued_flag_reads_the_engines_published_names() -> None:
+    assert latency.TTS_UTTERANCE_SPAN == tts_utterance.SPAN_NAME
+    assert latency.TTS_ADMITTED_EVENT == tts_utterance.EVENT_ADMITTED

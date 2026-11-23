@@ -40,9 +40,12 @@ from vision_modules import (
     ImageClassifier,
     Pipeline,
     Stage,
+    StageTiming,
     StreamProvider,
     save_input,
 )
+
+from wica_interaction.latency import PerceptionStep, perception, wall_clock_ns
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +236,10 @@ class HoldFilter:
     resets the clock — strictly consecutive, no majority vote); the delivered value seen again drops
     the candidate. Applies to every transition, and a hold of ``0`` delivers on the first
     observation. Pure — no clock, no thread — so it is tested with explicit times.
+
+    ``observe`` may carry a *stamp* (any value: the latency view's ``FrameStamp``): the stamp of the
+    observation that started the candidate is kept with it, and ``delivered_stamp`` is that stamp
+    once the candidate is delivered — the first frame of the unbroken run, not the last.
     """
 
     def __init__(self, hold_s: float, release_hold_s: float | None = None) -> None:
@@ -245,21 +252,69 @@ class HoldFilter:
         self._hold_s = hold_s
         self._release_hold_s = release_hold_s
         self.value: str | None = None
+        self.delivered_stamp: Any = None
         self._candidate: str | None = None
         self._since: float | None = None
+        self._stamp: Any = None
 
-    def observe(self, value: str | None, now: float) -> bool:
+    def observe(self, value: str | None, now: float, stamp: Any = None) -> bool:
         if value == self.value:
-            self._candidate, self._since = None, None
+            self._candidate, self._since, self._stamp = None, None, None
             return False
         if self._since is None or value != self._candidate:
-            self._candidate, self._since = value, now
+            self._candidate, self._since, self._stamp = value, now, stamp
         hold_s = self._release_hold_s if value is None else self._hold_s
         if now - self._since < hold_s:
             return False
-        self.value = value
-        self._candidate, self._since = None, None
+        self.value, self.delivered_stamp = value, self._stamp
+        self._candidate, self._since, self._stamp = None, None, None
         return True
+
+
+@dataclass(frozen=True)
+class FrameStamp:
+    """When one classifier result's frame was captured (``ts``), when each stage worked on it
+    (``timings``), and when the watcher read it — all on ``time.perf_counter()``."""
+
+    ts: float
+    timings: tuple[StageTiming, ...]
+    read_at: float
+
+
+# What the latency view calls the shipped stages' work (specs/latency-view.md).
+_STAGE_STEPS: Mapping[str, str] = {
+    "HandStage": "hand detection",
+    "GestureClassifier": "classification",
+}
+
+
+def sign_steps(
+    stamp: FrameStamp, delivered_ns: int
+) -> tuple[int, list[PerceptionStep]]:
+    """A delivered sign's origin (its first frame, as wall-clock nanoseconds) and its steps: per
+    stage, its wait (the stage's pacing) and its work, then the app reading the result, then the
+    hold."""
+    origin = wall_clock_ns(stamp.ts)
+    steps: list[PerceptionStep] = []
+    previous = origin
+    for timing in stamp.timings:
+        name = _STAGE_STEPS.get(timing.name, timing.name)
+        started, computed = (
+            wall_clock_ns(timing.started_at),
+            wall_clock_ns(timing.computed_at),
+        )
+        # A first gap a few microseconds negative is the clock's resolution: floored at zero.
+        started = max(started, previous)
+        computed = max(computed, started)
+        steps.append(PerceptionStep(f"waiting for {name}", "wait", previous, started))
+        steps.append(PerceptionStep(name, "work", started, computed))
+        previous = computed
+    read = max(wall_clock_ns(stamp.read_at), previous)
+    steps.append(PerceptionStep("read by the app", "work", previous, read))
+    steps.append(
+        PerceptionStep("holding the sign", "wait", read, max(read, delivered_ns))
+    )
+    return origin, steps
 
 
 class _FpsMeter:
@@ -400,6 +455,8 @@ class GestureInput:
         self._feed_advanced_at = 0.0
         # Every hand of the latest result, in the library's slot order: (validated label, top score).
         self._seen: tuple[tuple[str | None, float], ...] = ()
+        # The newest result's frame and stage stamps, for the Vision panel's readout.
+        self._latest_stamp: FrameStamp | None = None
 
     def start(self) -> None:
         """Open the feed, start the stages (upstream-first) and the watcher. A second call is a
@@ -443,6 +500,7 @@ class GestureInput:
         ``None`` when healthy."""
         with self._lock:
             signs, seen = [hold.value for hold in self._holds], self._seen
+            latest = self._latest_stamp
             stream_fps = self._stream_meter.fps
             hand_fps, classifier_fps = self._hand_meter.fps, self._classifier_meter.fps
             advanced_at = self._feed_advanced_at
@@ -469,6 +527,17 @@ class GestureInput:
             "classifier_fps": classifier_fps,
             "capture_error": capture_error,
             "error": str(error) if error is not None else None,
+            # The newest classifier result: how old its frame is, and each stage's time on it.
+            "frame_age_s": (
+                time.perf_counter() - latest.ts if latest is not None else None
+            ),
+            "stage_ms": [
+                (
+                    _STAGE_STEPS.get(t.name, t.name),
+                    (t.computed_at - t.started_at) * 1000,
+                )
+                for t in (latest.timings if latest is not None else ())
+            ],
         }
 
     # --- Snapshots: what each stage last consumed, saved from the caller's thread -------------
@@ -541,21 +610,39 @@ class GestureInput:
                     for i in range(self._max_hands)
                 ]
                 now = time.monotonic()
+                stamp = FrameStamp(
+                    result.ts,
+                    tuple(getattr(result, "timings", ())),
+                    time.perf_counter(),
+                )
                 with self._lock:
                     self._seen = seen_hands
+                    self._latest_stamp = stamp
                     changes = [
-                        (i + 1, value)
+                        (i + 1, value, hold.delivered_stamp)
                         for i, (hold, value) in enumerate(
                             zip(self._holds, values, strict=True)
                         )
-                        if hold.observe(value, now)
+                        if hold.observe(value, now, stamp)
                     ]
-                for hand, value in changes:  # outside the lock: a consumer may be slow
-                    self._deliver(hand, value)
+                for (
+                    hand,
+                    value,
+                    first,
+                ) in changes:  # outside the lock: a consumer may be slow
+                    self._deliver(hand, value, first)
             self._stop_event.wait(_WATCH_INTERVAL_S)
 
-    def _deliver(self, hand: int, value: str | None) -> None:
+    def _deliver(
+        self, hand: int, value: str | None, first: FrameStamp | None = None
+    ) -> None:
         try:
-            self._on_gesture(hand, value)
+            if value is None or first is None:
+                # A release wakes nobody: no span (specs/latency-view.md).
+                self._on_gesture(hand, value)
+                return
+            origin, steps = sign_steps(first, time.time_ns())
+            with perception("hand sign", origin, steps):
+                self._on_gesture(hand, value)
         except Exception:  # the watcher must survive a failing consumer
             logger.exception("on_gesture(%d, %r) failed", hand, value)

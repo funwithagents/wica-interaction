@@ -15,7 +15,7 @@ from typing import Any, cast
 
 import pytest
 from asr_engine.audio import AudioFormat
-from reachy_mini_bridge import ReachyMiniBridge
+from reachy_mini_bridge import ReachyMiniBridge, tracing
 from reachy_mini_bridge.config import ReachyMiniConfig
 from wica import Command
 from wica.text_output import output_signature
@@ -597,3 +597,24 @@ def test_a_sign_on_the_robots_feed_reaches_the_gesture_input() -> None:
     finally:
         gesture.stop()
     assert (bridge.camera.starts, bridge.camera.stops) == (0, 0)
+
+
+# --- The latency view's declaration (specs/latency-view.md, "`EffectStart`") --------------------
+
+
+def test_the_voice_ends_at_the_first_push_and_an_emotion_at_its_first_motion() -> None:
+    effects = _entered(FakeReachyMiniBridge()).effects()
+    assert (effects["say"].span, effects["say"].event) == (
+        tracing.SPAN_SAY,
+        tracing.EVENT_FIRST_PUSH,
+    )
+    assert (effects["play_emotion"].span, effects["play_emotion"].event) == (
+        tracing.SPAN_PLAY_EMOTION,
+        tracing.EVENT_MOTION_STARTED,
+    )
+    # The Command names the declarations are keyed by are the ones the agent registers.
+    names = {
+        getattr(c, "name", getattr(c, "__name__", ""))
+        for c in _entered(FakeReachyMiniBridge()).commands()
+    }
+    assert "play_emotion" in names

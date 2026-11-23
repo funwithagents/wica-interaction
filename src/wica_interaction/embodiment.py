@@ -15,7 +15,7 @@ imports neither. See specs/embodiment.md for who calls each member and when.
 from __future__ import annotations
 
 import math
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Protocol
@@ -26,6 +26,7 @@ from asr_engine.audio import AudioSource
 from wica import Command, Content, OutputStream
 
 from wica_interaction.gesture_input import CameraFeed
+from wica_interaction.latency import EffectStart
 
 # The `say` output Command: the model speaks by writing `<say>…</say>` in its text, and WICA calls
 # this at the tag's first words with an `OutputStream` of its body, so the voice starts speaking
@@ -157,6 +158,13 @@ class Embodiment(Protocol):
     @property
     def prompt_addendum(self) -> str:
         """Persona text appended to the resolved prompt at startup (``""`` for none)."""
+        ...
+
+    def effects(self) -> Mapping[str, EffectStart]:
+        """When each Command's effect can first be perceived, by Command name, for those whose
+        effect starts later than the Command itself: the first sound for the voice, the robot
+        beginning to move for an emotion (specs/latency-view.md, "`EffectStart`"). Read once, at
+        wiring; a Command left out starts its effect when it starts."""
         ...
 
     def view(self) -> EmbodimentView:

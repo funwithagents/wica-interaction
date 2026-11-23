@@ -13,6 +13,7 @@ The documentation of WICA Interaction, by what you want to do. The [README](../R
 | run it on my computer: devices, echo, noise, the webcam | [guides/computer.md](guides/computer.md) |
 | run it on a Reachy Mini: the simulator, a Lite over USB, the voice, the people it sees and follows | [guides/reachy-mini.md](guides/reachy-mini.md) |
 | show the agent hand signs | [guides/hand-signs.md](guides/hand-signs.md): the vocabulary, the hold, the Vision line, the snapshots |
+| see how long the agent takes to react, and where the time goes | [guides/latency.md](guides/latency.md): what is measured, the glance line, the timeline, the table and the waterfall, the flags, exporting the traces |
 | dictate a longer passage | [guides/dictation.md](guides/dictation.md): the two modes, how a passage ends, the stop button |
 | change what the agent is, says or does | [guides/personas.md](guides/personas.md): the prompt files, what is appended at startup, the robot's action rules |
 | know what the model sees and can do | [reference/agent.md](reference/agent.md): the World entries, the Commands per body, the persona sections, the transcript's reading of each |

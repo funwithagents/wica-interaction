@@ -48,10 +48,13 @@ from wica.contrib.gradio import (
     world_state_panel,
 )
 
+from wica_interaction import latency_view
+
 if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
+    from wica_interaction.latency import LatencyCollector, ReactionRecord
     from wica_interaction.system import AppSystem
 
 logger = logging.getLogger(__name__)
@@ -97,6 +100,20 @@ def display_entry(entry: WorldEntry) -> EntryDisplay | None:
         # The voice: title it by channel and show what the agent set out to say as the body.
         return EntryDisplay("🗣️ say", str(value.args.get("text", "")))
     return None
+
+
+def _label(
+    display: Callable[[WorldEntry], EntryDisplay | None], entry: WorldEntry
+) -> str:
+    """An entry's one-line label, as the transcript shows it (the generic default otherwise)."""
+    shown = display(entry)
+    if shown is not None:
+        return shown.label
+    value = entry.current.value
+    if isinstance(value, CommandExecution):
+        # A Command's completion waking a follow-up: which Command, and how it ended.
+        return f"🦾 {value.name}: {value.state}"
+    return f"⚡ {entry.key} = {value}"
 
 
 def entry_display(system: AppSystem) -> Callable[[WorldEntry], EntryDisplay | None]:
@@ -174,6 +191,20 @@ def _hand(label: str | None, confidence: float) -> str:
     return f"{label if label is not None else 'below threshold'} ({confidence:.2f})"
 
 
+def _stage_times(status: dict) -> str:
+    """The newest classifier result's line (specs/latency-view.md, "The Vision panel's readout"):
+    how old its frame is, and each stage's time on it; nothing before the first result."""
+    age = status.get("frame_age_s")
+    if age is None:
+        return ""
+    stages = " · ".join(
+        f"{name} {ms:.0f} ms" for name, ms in status.get("stage_ms", [])
+    )
+    return f"\n- **newest result:** frame {age * 1000:.0f} ms old" + (
+        f" · {stages}" if stages else ""
+    )
+
+
 def tick_vision(system: AppSystem) -> str:
     """Refresh the pipeline's part of the Vision section, as a few readable lines: first the camera
     feed's achieved rate (its own — the robot's daemon-paced feed, or the paced webcam) and each
@@ -202,6 +233,7 @@ def tick_vision(system: AppSystem) -> str:
             f"- **camera:** {_fps(status['stream_fps'])}\n"
             f"- **hand stage:** {_fps(status['hand_fps'])} (target {target:g})\n"
             f"- **classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
+            + _stage_times(status)
         ),
         "#### Hand signs",
         (
@@ -238,6 +270,82 @@ def tick_view(system: AppSystem) -> tuple[npt.NDArray[np.uint8] | None, str]:
     return view.frame, view.status
 
 
+# --- The latency view (specs/latency-view.md, "What the page shows") ---------------------------
+
+_NO_LATENCY = (
+    '<div style="opacity:0.7">No agent: there is no reaction to measure.</div>'
+)
+
+
+class LatencyPanel:
+    """What the page's latency parts show, read from the collector on the page's timer.
+
+    ``tick`` returns the glance line, the timeline, the summary, the table rows and the waterfall,
+    each as ``gr.skip()`` when it is what was last sent — an idle page sends nothing — and the
+    three debug parts skipped while the debug row is hidden. ``select`` picks the waterfall's
+    reaction by its table row; with none picked, the newest is shown."""
+
+    def __init__(self, collector: LatencyCollector | None) -> None:
+        self._collector = collector
+        self._sent: dict[str, Any] = {}
+        self._rows: list[list[str]] = []
+        self.selected: int | None = None
+
+    def _changed(self, name: str, value: Any) -> Any:
+        if self._sent.get(name) == value:
+            return gr.skip()
+        self._sent[name] = value
+        return value
+
+    def _waterfall(self, snapshot: Any) -> str:
+        records: tuple[ReactionRecord, ...] = snapshot.records
+        chosen = next((r for r in records if r.reaction_id == self.selected), None)
+        if chosen is None and records:
+            chosen = records[0]
+        return latency_view.waterfall(chosen, snapshot)
+
+    def tick(self, show_debug: bool = True) -> tuple[Any, Any, Any, Any, Any]:
+        collector = self._collector
+        if collector is None:
+            values = (_NO_LATENCY, "", "", [], "")
+            return tuple(
+                self._changed(n, v) for n, v in zip(_PARTS, values, strict=True)
+            )  # type: ignore[return-value]
+        snapshot = collector.snapshot()
+        main = (
+            self._changed("glance", latency_view.glance(snapshot)),
+            self._changed("timeline", latency_view.timeline(snapshot)),
+        )
+        if not show_debug:
+            return (*main, gr.skip(), gr.skip(), gr.skip())
+        rows = latency_view.table_rows(snapshot)
+        self._rows = rows
+        return (
+            *main,
+            self._changed("summary", latency_view.summary(snapshot)),
+            self._changed("table", rows),
+            self._changed("waterfall", self._waterfall(snapshot)),
+        )
+
+    def select(self, row: int) -> str:
+        """The waterfall of the reaction on table row *row*."""
+        if 0 <= row < len(self._rows):
+            self.selected = int(self._rows[row][0])
+        if self._collector is None:
+            return ""
+        markup = self._waterfall(self._collector.snapshot())
+        self._sent["waterfall"] = markup
+        return markup
+
+    def reset(self) -> None:
+        if self._collector is not None:
+            self._collector.reset_statistics()
+        self._sent.pop("summary", None)
+
+
+_PARTS = ("glance", "timeline", "summary", "table", "waterfall")
+
+
 # --- Layout ------------------------------------------------------------------------------------
 
 
@@ -256,6 +364,10 @@ def build_ui(system: AppSystem) -> gr.Blocks:
     display = entry_display(system)
     transcript = TranscriptLog(wica, display)
     reactions = ReactionLog(wica, display)
+    if system.latency is not None:
+        # The table's "heard / seen" reads like the transcript's labels.
+        system.latency.describe = lambda entry: _label(display, entry)
+    latency = LatencyPanel(system.latency)
 
     def on_send(user_text: str) -> str:
         system.submit_speech(user_text)  # empty/whitespace is ignored inside
@@ -332,6 +444,12 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                     )
                     send = gr.Button("Send", variant="primary", scale=1)
 
+        # The latency view's main surface: the last reaction at a glance, and the last 30 s live.
+        with gr.Row(), gr.Column():
+            gr.Markdown("### Latency")
+            latency_glance = gr.HTML(latency_view.legend())
+            latency_timeline = gr.HTML("")
+
         with gr.Row(equal_height=False):
             with gr.Column(scale=1):
                 gr.Markdown("### ASR")
@@ -384,14 +502,50 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             with gr.Column():
                 gr.Markdown("### Reaction (prompt + instrumentation)")
                 reaction_panel(reactions)
+        # The latency view's detail, behind the same toggle, full width: the statistics, one row per
+        # reaction, and the selected reaction's waterfall.
+        with gr.Row(visible=False) as latency_panels, gr.Column():
+            gr.Markdown("### Latency, reaction by reaction")
+            with gr.Row():
+                latency_summary = gr.Markdown("")
+                latency_reset = gr.Button("Reset statistics", scale=0)
+            latency_table = gr.Dataframe(
+                headers=latency_view.TABLE_HEADERS,
+                value=[],
+                interactive=False,
+                wrap=True,
+            )
+            latency_waterfall = gr.HTML("")
 
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         stop_dictation.click(on_stop_dictation)  # pyright: ignore[reportAttributeAccessIssue]
         show_debug.change(  # pyright: ignore[reportAttributeAccessIssue]
-            lambda show: gr.update(visible=show),
+            lambda show: (gr.update(visible=show), gr.update(visible=show)),
             inputs=show_debug,
-            outputs=debug_panels,
+            outputs=[debug_panels, latency_panels],
+        )
+
+        def on_select(evt: gr.SelectData) -> str:
+            index = evt.index
+            row = index[0] if isinstance(index, list | tuple) else index
+            return latency.select(int(row))
+
+        latency_table.select(on_select, outputs=latency_waterfall)  # pyright: ignore[reportAttributeAccessIssue]
+        latency_reset.click(latency.reset)  # pyright: ignore[reportAttributeAccessIssue]
+        # The latency view's own timer: the glance line and the timeline always, the detail only
+        # while the debug row shows; an unchanged part is not sent.
+        latency_timer = gr.Timer(0.2)
+        latency_timer.tick(  # pyright: ignore[reportAttributeAccessIssue]
+            latency.tick,
+            inputs=show_debug,
+            outputs=[
+                latency_glance,
+                latency_timeline,
+                latency_summary,
+                latency_table,
+                latency_waterfall,
+            ],
         )
 
         # The app's two timers: one reads the ASR bridge and the gesture input (the status lines

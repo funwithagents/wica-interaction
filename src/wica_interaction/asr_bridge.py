@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from datetime import datetime
 
 from asr_engine.engine import ASREngine
 from asr_engine.segmenter import SpeechSegment
@@ -34,6 +35,9 @@ class DictatedPassage(str):
 
 # The embodiment's capture health, read on every status() poll (specs/embodiment.md, `mic_error`).
 MicError = Callable[[], str | None]
+# The person's speech as the engine stamped it: its start, its end (on a final), and when an
+# interim's partial transcript was emitted (on an interim).
+OnSpeech = Callable[[datetime, datetime | None, datetime | None], None]
 
 
 class AsrBridge:
@@ -56,8 +60,10 @@ class AsrBridge:
         on_final_segment: OnFinalSegment,
         mic_error: MicError | None = None,
         trigger_words: Sequence[str] = (),
+        on_speech: OnSpeech | None = None,
     ) -> None:
         self._engine = engine
+        self._on_speech = on_speech
         self._on_final_segment = on_final_segment
         self._mic_error = mic_error
         self._trigger_words = tuple(trigger_words)
@@ -86,6 +92,7 @@ class AsrBridge:
         clears the display text back to ``""``. Only in-memory
         state is mutated and the callback is synchronous, so this never blocks the ASR loop.
         """
+        self._report_speech(segment)
         if not segment.is_final:
             self._display_text = segment.transcript
             return
@@ -95,6 +102,24 @@ class AsrBridge:
         text = segment.transcript
         self._on_final_segment(DictatedPassage(text) if dictated else text)
         self._display_text = ""
+
+    def _report_speech(self, segment: SpeechSegment) -> None:
+        """The person's speech as the engine stamped it — its start from the first interim, its end
+        on the final, and each interim's emission, when the recognizer was transcribing as the
+        person spoke — for the latency timeline (specs/latency-view.md). Nothing without a VAD."""
+        timing = segment.timing
+        if (
+            self._on_speech is None
+            or timing is None
+            or timing.speech_started_at is None
+        ):
+            return
+        ended = timing.speech_ended_at if segment.is_final else None
+        partial = None if segment.is_final else timing.emitted_at
+        try:
+            self._on_speech(timing.speech_started_at, ended, partial)
+        except Exception:  # the recognizer's loop must survive a failing consumer
+            logger.exception("on_speech failed")
 
     @property
     def display_text(self) -> str:

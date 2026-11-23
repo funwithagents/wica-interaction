@@ -28,8 +28,9 @@ import pytest
 from asr_engine.audio import AudioFormat
 from asr_engine.config import ASREngineConfig
 from asr_engine.segmenter import SpeechSegment
+from opentelemetry import trace
 from vision_modules.hand import DetectedHand
-from wica import Content, TextPart
+from wica import Content, OutputStream, TextPart
 from wica.config import WicaConfig
 from wica.contrib.gradio import ReactionLog, TranscriptLog
 
@@ -46,6 +47,7 @@ from wica_interaction.asr_bridge import DictatedPassage
 from wica_interaction.config import AppConfig, VisionConfig
 from wica_interaction.embodiment import Embodiment, InputEntry
 from wica_interaction.gesture_input import GestureModels
+from wica_interaction.latency import EffectStart
 from wica_interaction.system import (
     HAND_GESTURE_TTL,
     SPEECH_INPUT_TTL,
@@ -1264,3 +1266,91 @@ def test_shutdown_stops_the_inputs_right_after_the_agent() -> None:
 
     assert body_input.stopped == 1
     assert log == ["input.stop", "asr.stop", "embodiment.exit"]
+
+
+# --- The latency view's collection (specs/latency-view.md) --------------------------------------
+
+
+class _SoundingBody(FakeEmbodiment):
+    """A body whose voice opens a span of its own with a `sound` event a moment after it starts,
+    and declares that event as the voice's effect start."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            effects={"say": EffectStart("fake.voice", "sound", latency_s=0.01)}
+        )
+
+    async def say(self, text: OutputStream) -> str:
+        with trace.get_tracer("tests").start_as_current_span("fake.voice") as span:
+            await asyncio.sleep(0.05)
+            span.add_event("sound")
+            self.said.append(await text.read())
+        return "OK"
+
+
+def test_a_typed_turn_is_measured_from_its_write_to_the_voices_declared_sound() -> None:
+    embodiment = _SoundingBody()
+    system = _build(embodiment, script=_say_once("hello there"))
+    try:
+        assert system.latency is not None
+        _wire(system)
+        _start(system)
+        system.submit_speech("hi")
+        latency = system.latency
+
+        def complete() -> bool:
+            records = latency.snapshot().records
+            return bool(records) and records[0].complete
+
+        assert _wait_until(complete)
+        (record,) = latency.snapshot().records
+        assert record.trigger == "typed" and record.origin_measured
+        assert record.effect_command == "say"
+        say = next(s for s in record.steps if s.lane == "Voice")
+        # The effect is the voice's own `sound`, 50 ms into the Command, plus its declared 10 ms.
+        assert record.effect_at is not None
+        assert (record.effect_at - say.started_at).total_seconds() >= 0.06
+        names = {s.name for s in record.steps}
+        assert {
+            "reaching the agent",
+            "gathering inputs",
+            "building the prompt",
+        } <= names
+        assert (
+            "first (cold)" in record.flags
+        )  # the run's first reaction that called the model
+    finally:
+        _shutdown(system)
+
+
+def test_an_exporter_that_cannot_be_had_is_a_banner_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WICA_INTERACTION_TRACES", "zipkin")
+    system = _build(FakeEmbodiment(), script=_noop_script())
+    try:
+        assert any("WICA_INTERACTION_TRACES" in line for line in system.missing)
+        assert system.latency is not None  # collection itself goes on
+    finally:
+        _shutdown(system)
+
+
+def test_with_no_agent_there_is_nothing_to_measure(tmp_path: Path) -> None:
+    wica = WicaConfig.from_dict(
+        {
+            "agent": {
+                "provider": "fake",
+                "model": "scripted",
+                "system_prompt_file": str(tmp_path / "no-such-prompt.md"),
+            }
+        }
+    )
+    system = build_system(
+        AppConfig(wica=wica, asr_engine=_asr_config()),
+        FakeEmbodiment(),
+        asr_engine_factory=asr_factory(FakeASREngine()),
+    )
+    try:
+        assert system.wica is None and system.latency is None
+    finally:
+        _shutdown(system)

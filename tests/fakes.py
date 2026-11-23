@@ -21,6 +21,7 @@ from wica.config import WicaConfig
 
 from wica_interaction.embodiment import Deliver, EmbodimentView, Input, InputEntry
 from wica_interaction.gesture_input import CameraFeed
+from wica_interaction.latency import EffectStart
 
 
 def scripted_wica_config(
@@ -296,8 +297,10 @@ class FakeEmbodiment:
         raise_on_enter: str | None = None,
         log: list[str] | None = None,
         view: EmbodimentView | None = None,
+        effects: dict[str, EffectStart] | None = None,
     ) -> None:
         self.said: list[str] = []
+        self._effects = dict(effects or {})
         self.waved = 0
         self.entered = False
         self.exited = False
@@ -371,6 +374,9 @@ class FakeEmbodiment:
     @property
     def prompt_addendum(self) -> str:
         return self._prompt_addendum
+
+    def effects(self) -> dict[str, EffectStart]:
+        return self._effects
 
     def view(self) -> EmbodimentView:
         return self.shown

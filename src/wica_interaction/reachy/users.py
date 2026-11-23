@@ -45,9 +45,11 @@ from reachy_mini_bridge import (
     User,
     UsersReport,
 )
+from reachy_mini_bridge.tracing import wall_clock
 from wica import Content, TextPart
 
 from wica_interaction.embodiment import Deliver, InputEntry
+from wica_interaction.latency import PerceptionStep, perception
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +484,8 @@ class UsersInput:
             ids = {u.track_id for u in present.users}
             wakes = self._nobody_tracked_but(ids, present=ids)
             self._events(
-                tuple(change("present", u, wakes=wakes) for u in present.users)
+                tuple(change("present", u, wakes=wakes) for u in present.users),
+                present,
             )
         async for report in self._bridge.users.changes(every=True):
             self._on_users(report)
@@ -516,7 +519,7 @@ class UsersInput:
             if d.reason == "left"
         ]
         if events:
-            self._events(tuple(events))
+            self._events(tuple(events), report)
         # A departure judged, the departed user is no longer kept as tracked.
         self._tracked -= {d.track_id for d in report.left}
         self._refresh()
@@ -527,7 +530,7 @@ class UsersInput:
         empty spot, and a newcomer is worth waking for."""
         return not ((self._tracked & present) - set(users))
 
-    def _events(self, events: tuple[UserChange, ...]) -> None:
+    def _events(self, events: tuple[UserChange, ...], report: UsersReport) -> None:
         """Write the changes of *events* that wake the agent as the user event — appended to the
         previous ones when they landed less than ``EVENT_JOIN_S`` ago, so a step woken by both
         reads both. A change that does not wake is not an event: written, it would sit in the
@@ -540,7 +543,24 @@ class UsersInput:
         if self._event and now - self._event_at < EVENT_JOIN_S:
             events = self._event + events
         self._event, self._event_at = events, now
-        self._write(USER_EVENT, events)
+        # The latency view's origin (specs/latency-view.md): an arrival's first sighting, before the
+        # bridge confirmed it, else the frame of this report; the write happens inside its span.
+        observed = _ns(report.ts)
+        arrivals = [
+            u.first_seen_ts
+            for u in report.users
+            if u.track_id in report.arrived
+            and any(e.kind == "arrived" and e.user == u.track_id for e in events)
+        ]
+        steps: list[PerceptionStep] = []
+        origin = observed
+        if arrivals:
+            origin = min(observed, _ns(min(arrivals)))
+            steps.append(
+                PerceptionStep("confirming the person", "wait", origin, observed)
+            )
+        with perception("user event", origin, steps):
+            self._write(USER_EVENT, events)
 
     def _refresh(self) -> None:
         """Re-render the standing entries from the bridge's current reports, noting who is tracked;
@@ -593,3 +613,8 @@ class UsersInput:
     def _write(self, key: str, value: Any) -> None:
         if self._deliver is not None:
             self._deliver(key, value)
+
+
+def _ns(ts: float) -> int:
+    """A stamp on the bridge's clock as wall-clock nanoseconds."""
+    return int(wall_clock(ts).timestamp() * 1e9)

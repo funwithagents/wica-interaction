@@ -60,7 +60,7 @@ Wraps [`aec-audio-processing`](https://pypi.org/project/aec-audio-processing/) (
 
 ### `AudioProcessingCoordinator` — bridges TTS sink → ASR source
 
-Holds the processor, a `Resampler` for the reference, a thread-safe **far-end ring buffer** (int16 samples @16 kHz under a lock), and builds the real audio endpoints (its `ContinuousPlayer`, `asr_engine.audio.AudioCapture`). Exposes `.sink` and `.source`, and `close()` for the player's stream.
+Holds the processor, a `Resampler` for the reference, a thread-safe **far-end ring buffer** (int16 samples @16 kHz under a lock), and builds the real audio endpoints (its `ContinuousPlayer`, `asr_engine.audio.AudioCapture`). Exposes `.sink` and `.source`, `close()` for the player's stream, and `output_latency`: the player's stream's reported output latency in seconds (`None` before `bind_far_rate`, or when the stream reports none), which the latency view adds to the voice's first audio ([computer-embodiment.md](computer-embodiment.md), "`effects()`").
 
 ```python
 class AudioProcessingCoordinator:

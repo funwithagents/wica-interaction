@@ -19,13 +19,19 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
 from asr_engine.audio import AudioSource
 from tts_engine.engine import TTSEngine
 from tts_engine.modules.base import TTSError
+from tts_engine.utterance import (
+    ATTR_OUTPUT_LATENCY_SECONDS,
+    EVENT_FIRST_AUDIO,
+    EVENT_PLAYBACK_STARTED,
+)
+from tts_engine.utterance import SPAN_NAME as UTTERANCE_SPAN
 from vision_modules import FrameSource, OpenCVSource
 from wica import Command, OutputStream
 
@@ -42,6 +48,7 @@ from wica_interaction.embodiment import (
     display_frame,
 )
 from wica_interaction.gesture_input import CameraFeed, StreamFeed
+from wica_interaction.latency import EffectStart
 from wica_interaction.sayable import speakable
 
 logger = logging.getLogger(__name__)
@@ -327,6 +334,33 @@ class ComputerEmbodiment:
             WebcamSource(self._config.camera.device, fps=fps, opener=OpenCVSource)
         )
         return self._feed
+
+    def effects(self) -> Mapping[str, EffectStart]:
+        """The voice's first sound (specs/latency-view.md, "`EffectStart`"). Through the engine's
+        own player, the moment it started the device plus the latency the device reports. With echo
+        cancellation the voice plays through the app's always-open stream instead, which the engine
+        does not stamp: the first audio it queued there, plus that stream's reported latency."""
+        coordinator = self._coordinator
+        if (
+            coordinator is not None
+            and self._config.audio_processing.echo_cancellation.enabled
+        ):
+            return {
+                "say": EffectStart(
+                    UTTERANCE_SPAN,
+                    EVENT_FIRST_AUDIO,
+                    latency_s=coordinator.output_latency,
+                    note="the first audio on the echo canceller's open stream, plus its latency",
+                )
+            }
+        return {
+            "say": EffectStart(
+                UTTERANCE_SPAN,
+                EVENT_PLAYBACK_STARTED,
+                latency_attribute=ATTR_OUTPUT_LATENCY_SECONDS,
+                note="the first sound: the device started, plus its reported latency",
+            )
+        }
 
     def view(self) -> EmbodimentView:
         """The webcam on the page: the newest frame of the feed `camera()` built — the one the
