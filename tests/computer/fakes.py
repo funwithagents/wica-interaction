@@ -50,6 +50,7 @@ class FakeCoordinator:
         self.bound: list[int] = []
         self.closed = 0
         self.capture_error: str | None = None
+        self.output_latency: float | None = 0.03
 
     def bind_far_rate(self, rate: int) -> None:
         self.bound.append(rate)

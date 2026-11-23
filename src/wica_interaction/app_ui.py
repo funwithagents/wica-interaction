@@ -48,10 +48,13 @@ from wica.contrib.gradio import (
     world_state_panel,
 )
 
+from wica_interaction import latency_view
+
 if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
+    from wica_interaction.latency import LatencyCollector, ReactionRecord
     from wica_interaction.system import AppSystem
 
 logger = logging.getLogger(__name__)
@@ -97,6 +100,20 @@ def display_entry(entry: WorldEntry) -> EntryDisplay | None:
         # The voice: title it by channel and show what the agent set out to say as the body.
         return EntryDisplay("🗣️ say", str(value.args.get("text", "")))
     return None
+
+
+def _label(
+    display: Callable[[WorldEntry], EntryDisplay | None], entry: WorldEntry
+) -> str:
+    """An entry's one-line label, as the transcript shows it (the generic default otherwise)."""
+    shown = display(entry)
+    if shown is not None:
+        return shown.label
+    value = entry.current.value
+    if isinstance(value, CommandExecution):
+        # A Command's completion waking a follow-up: which Command, and how it ended.
+        return f"🦾 {value.name}: {value.state}"
+    return f"⚡ {entry.key} = {value}"
 
 
 def entry_display(system: AppSystem) -> Callable[[WorldEntry], EntryDisplay | None]:
@@ -174,6 +191,20 @@ def _hand(label: str | None, confidence: float) -> str:
     return f"{label if label is not None else 'below threshold'} ({confidence:.2f})"
 
 
+def _stage_times(status: dict) -> str:
+    """The newest classifier result's line (specs/latency-view.md, "The Vision panel's readout"):
+    how old its frame is, and each stage's time on it; nothing before the first result."""
+    age = status.get("frame_age_s")
+    if age is None:
+        return ""
+    stages = " · ".join(
+        f"{name} {ms:.0f} ms" for name, ms in status.get("stage_ms", [])
+    )
+    return f"\n- **newest result:** frame {age * 1000:.0f} ms old" + (
+        f" · {stages}" if stages else ""
+    )
+
+
 def tick_vision(system: AppSystem) -> str:
     """Refresh the pipeline's part of the Vision section, as a few readable lines: first the camera
     feed's achieved rate (its own — the robot's daemon-paced feed, or the paced webcam) and each
@@ -202,6 +233,7 @@ def tick_vision(system: AppSystem) -> str:
             f"- **camera:** {_fps(status['stream_fps'])}\n"
             f"- **hand stage:** {_fps(status['hand_fps'])} (target {target:g})\n"
             f"- **classifier:** {_fps(status['classifier_fps'])} (target {target:g})"
+            + _stage_times(status)
         ),
         "#### Hand signs",
         (
@@ -238,6 +270,145 @@ def tick_view(system: AppSystem) -> tuple[npt.NDArray[np.uint8] | None, str]:
     return view.frame, view.status
 
 
+# --- The latency view (specs/latency-view.md, "What the page shows") ---------------------------
+
+# The table of reactions is the app's own markup (`latency_view.table`) in a `gr.HTML`, not a
+# Dataframe: redrawn whole on each change, so a new row shows at once, and with browser code of its
+# own for what a Dataframe does not do — follow the newest row, keep the place while an older one
+# is read, select a row by a click (specs/latency-view.md, "What the page shows").
+LATENCY_TABLE_CSS = """
+.lv-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.lv-latest { padding: 2px 10px; border: 1px solid var(--border-color-primary); border-radius: 4px;
+    background: var(--button-secondary-background-fill); cursor: pointer; font-size: 0.85em; }
+.lv-scroll { max-height: 360px; overflow: auto; border: 1px solid var(--border-color-primary);
+    border-radius: 4px; }
+.lv-scroll table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.85em; }
+.lv-scroll thead th { position: sticky; top: 0; z-index: 1; text-align: left; padding: 4px 8px;
+    background: var(--background-fill-secondary); white-space: nowrap; }
+.lv-scroll td { padding: 3px 8px; border-top: 1px solid var(--border-color-primary);
+    white-space: pre-wrap; vertical-align: top; }
+.lv-scroll tr[data-id] { cursor: pointer; }
+.lv-scroll tr.lv-selected td { background: var(--color-accent-soft); }
+"""
+
+# Follows the newest row while it is the one selected and the table is scrolled to the bottom;
+# otherwise keeps the reader's place across redraws. A click selects a row (the newest one means
+# "follow the newest"); "Latest" scrolls down and selects the newest.
+LATENCY_TABLE_JS = """
+let following = true;
+let place = 0;
+const scroller = () => element.querySelector('.lv-scroll');
+element.addEventListener('scroll', (event) => {
+    const box = scroller();
+    if (!box || event.target !== box) return;
+    place = box.scrollTop;
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 4;
+    const newest = box.querySelector('tr[data-last]');
+    following = atBottom && newest !== null && newest.classList.contains('lv-selected');
+}, true);
+const settle = () => {
+    const box = scroller();
+    if (!box) return;
+    box.scrollTop = following ? box.scrollHeight : place;
+};
+const choose = (row) => {
+    element.querySelectorAll('tr.lv-selected').forEach((r) => r.classList.remove('lv-selected'));
+    if (row) row.classList.add('lv-selected');
+};
+element.addEventListener('click', (event) => {
+    if (event.target.closest('.lv-latest')) {
+        following = true;
+        choose(element.querySelector('tr[data-last]'));
+        settle();
+        server.select_reaction(-1);
+        return;
+    }
+    const row = event.target.closest('tr[data-id]');
+    if (!row) return;
+    const newest = row.hasAttribute('data-last');
+    choose(row);
+    following = newest && (() => {
+        const box = scroller();
+        return box !== null && box.scrollHeight - box.scrollTop - box.clientHeight < 4;
+    })();
+    server.select_reaction(newest ? -1 : Number(row.dataset.id));
+});
+watch('value', settle);
+settle();
+"""
+
+_NO_LATENCY = (
+    '<div style="opacity:0.7">No agent: there is no reaction to measure.</div>'
+)
+
+
+class LatencyPanel:
+    """What the page's latency parts show, read from the collector on the page's timer.
+
+    ``tick`` returns the glance line, the timeline, the summary, the table rows and the waterfall,
+    each as ``gr.skip()`` when it is what was last sent — an idle page sends nothing — and the
+    Latency tab's three parts skipped while that tab is closed. ``select_reaction`` picks the
+    waterfall's reaction; with none picked, the newest is shown and followed."""
+
+    def __init__(self, collector: LatencyCollector | None) -> None:
+        self._collector = collector
+        self._sent: dict[str, Any] = {}
+        self.selected: int | None = None
+
+    def _changed(self, name: str, value: Any) -> Any:
+        if self._sent.get(name) == value:
+            return gr.skip()
+        self._sent[name] = value
+        return value
+
+    def _waterfall(self, snapshot: Any) -> str:
+        records: tuple[ReactionRecord, ...] = snapshot.records
+        chosen = next((r for r in records if r.reaction_id == self.selected), None)
+        if chosen is None and records:
+            chosen = records[0]
+        return latency_view.waterfall(chosen, snapshot)
+
+    def tick(self, tab_open: bool = True) -> tuple[Any, Any, Any, Any, Any]:
+        collector = self._collector
+        if collector is None:
+            values = (_NO_LATENCY, "", "", "", "")
+            return tuple(
+                self._changed(n, v) for n, v in zip(_PARTS, values, strict=True)
+            )  # type: ignore[return-value]
+        snapshot = collector.snapshot()
+        main = (
+            self._changed("glance", latency_view.glance(snapshot)),
+            self._changed("timeline", latency_view.timeline(snapshot)),
+        )
+        if not tab_open:
+            return (*main, gr.skip(), gr.skip(), gr.skip())
+        return (
+            *main,
+            self._changed("summary", latency_view.summary(snapshot)),
+            self._changed("table", latency_view.table(snapshot, self.selected)),
+            self._changed("waterfall", self._waterfall(snapshot)),
+        )
+
+    def select_reaction(self, reaction_id: int | None) -> str:
+        """Pick the waterfall's reaction (the table's browser code calls this on a click): its
+        number, or ``None`` or a negative one to follow the newest. The page shows it on the next
+        tick."""
+        self.selected = (
+            int(reaction_id)
+            if reaction_id is not None and int(reaction_id) >= 0
+            else None
+        )
+        return "ok"
+
+    def reset(self) -> None:
+        if self._collector is not None:
+            self._collector.reset_statistics()
+        self._sent.pop("summary", None)
+
+
+_PARTS = ("glance", "timeline", "summary", "table", "waterfall")
+
+
 # --- Layout ------------------------------------------------------------------------------------
 
 
@@ -256,6 +427,10 @@ def build_ui(system: AppSystem) -> gr.Blocks:
     display = entry_display(system)
     transcript = TranscriptLog(wica, display)
     reactions = ReactionLog(wica, display)
+    if system.latency is not None:
+        # The table's "heard / seen" reads like the transcript's labels.
+        system.latency.describe = lambda entry: _label(display, entry)
+    latency = LatencyPanel(system.latency)
 
     def on_send(user_text: str) -> str:
         system.submit_speech(user_text)  # empty/whitespace is ignored inside
@@ -297,93 +472,128 @@ def build_ui(system: AppSystem) -> gr.Blocks:
                 "wired (the agent reasons but cannot speak or act); with a body but no voice, `say` "
                 "stays wired and reports a TTS error."
             )
-        gr.Markdown(
-            "Speak (or type) a turn; the agent reasons over the World and replies with its **🗣️ "
-            "say** voice. It handles **one reasoning call at a time** (v1): input arriving mid-step is "
-            "dropped, not queued. On the left, each step is one collapsible **💬 reaction**; inside it, "
-            "items are labelled by channel — **🗣️ say** (what you heard), **💭 private text** (what "
-            "the model wrote outside its `<say>` tag, never heard), **🦾** commands, **🚫 noop** (it "
-            "chose not to react). Every command item shows its **execution state "
-            "live**: a spinner while it runs, then ✅ complete / ❌ failed / ⏹ cancelled with its result "
-            "and duration."
-        )
-
-        # The main surface, two rows of two equal columns (specs/app.md, "The layout"): the
-        # Conversation beside the body's camera and the typed-text box; then ASR beside Vision.
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1):
-                # The contrib transcript: its own timer, pushed only when the transcript changed.
-                conversation_panel(transcript, height=CONVERSATION_HEIGHT)
-            with gr.Column(scale=1):
-                # The body's camera, its faces drawn (embodiment.view(); its status is Vision's).
-                camera = gr.Image(
-                    label="Camera (mirrored)",
-                    type="numpy",
-                    interactive=False,
-                    show_label=False,
+        # Two tabs (specs/app.md, "The layout"): the interaction and everything live around it,
+        # then the latency view's detail — the statistics, one row per reaction, the selected
+        # reaction's waterfall — on a tab of its own, read only while it is open.
+        with gr.Tabs():
+            with gr.Tab("Interaction") as interaction_tab:
+                gr.Markdown(
+                    "Speak (or type) a turn; the agent reasons over the World and replies with its **🗣️ "
+                    "say** voice. It handles **one reasoning call at a time** (v1): input arriving mid-step is "
+                    "dropped, not queued. On the left, each step is one collapsible **💬 reaction**; inside it, "
+                    "items are labelled by channel — **🗣️ say** (what you heard), **💭 private text** (what "
+                    "the model wrote outside its `<say>` tag, never heard), **🦾** commands, **🚫 noop** (it "
+                    "chose not to react). Every command item shows its **execution state "
+                    "live**: a spinner while it runs, then ✅ complete / ❌ failed / ⏹ cancelled with its result "
+                    "and duration."
                 )
+
+                # The latency view's main surface, first on the page: the last reaction at a glance, and the
+                # last 30 s live (specs/latency-view.md, "What the page shows").
+                with gr.Row(), gr.Column():
+                    gr.Markdown("### Latency")
+                    latency_glance = gr.HTML(latency_view.legend())
+                    latency_timeline = gr.HTML("")
+
+                # The main surface, two rows of two equal columns (specs/app.md, "The layout"): the
+                # Conversation beside the body's camera and the typed-text box; then ASR beside Vision.
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=1):
+                        # The contrib transcript: its own timer, pushed only when the transcript changed.
+                        conversation_panel(transcript, height=CONVERSATION_HEIGHT)
+                    with gr.Column(scale=1):
+                        # The body's camera, its faces drawn (embodiment.view(); its status is Vision's).
+                        camera = gr.Image(
+                            label="Camera (mirrored)",
+                            type="numpy",
+                            interactive=False,
+                            show_label=False,
+                        )
+                        with gr.Row():
+                            # gradio's dynamic event methods (.click/.submit/.change/.tick) aren't in the
+                            # stubs, hence the narrow ignores below.
+                            msg = gr.Textbox(
+                                placeholder="Type a turn (works with no mic / no ASR key)…",
+                                show_label=False,
+                                scale=5,
+                            )
+                            send = gr.Button("Send", variant="primary", scale=1)
+
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=1):
+                        gr.Markdown("### ASR")
+                        asr_status = gr.Markdown("_ASR status…_")
+                        asr_vad = gr.Markdown("_Voice activity…_")
+                        asr_live = gr.Textbox(
+                            label="Live speech (interim)",
+                            value=_NO_LIVE_SPEECH,
+                            interactive=False,
+                            lines=2,
+                        )
+                        stop_dictation = gr.Button("Stop dictation", interactive=False)
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Vision")
+                        vision_status = gr.Markdown("_Vision status…_")
+                        # What the body knows of what it sees: on the robot, whom the head follows and
+                        # the users present.
+                        camera_status = gr.Markdown("_No camera frame yet._")
+                        if system.gesture is not None:
+                            # As in the vision-modules hand demo: save what each stage last consumed.
+                            snapshot_folder = gr.Textbox(
+                                value=str(_SNAPSHOT_DIR), label="Snapshot folder"
+                            )
+                            with gr.Row():
+                                save_detector = gr.Button("Save detector snapshot")
+                                save_classifier = gr.Button("Save classifier snapshot")
+                            snapshot_status = gr.Markdown("")
+                            save_detector.click(  # pyright: ignore[reportAttributeAccessIssue]
+                                on_save_detector,
+                                inputs=snapshot_folder,
+                                outputs=snapshot_status,
+                            )
+                            save_classifier.click(  # pyright: ignore[reportAttributeAccessIssue]
+                                on_save_classifier,
+                                inputs=snapshot_folder,
+                                outputs=snapshot_status,
+                            )
+
+                # Debug surface last, on one line: the toggle, then World state and Reaction side by side.
+                # The toggle is visibility only: the contrib panels own their timers and keep ticking while
+                # hidden (see specs/app.md, "Refresh cost").
+                show_debug = gr.Checkbox(label="Show debug panels", value=False)
+                with gr.Row(visible=False, equal_height=False) as debug_panels:
+                    with gr.Column():
+                        gr.Markdown("### World state (live)")
+                        if wica is not None:
+                            world_state_panel(wica.world)
+                        else:
+                            gr.Markdown("_No agent — there is no World to show._")
+                    with gr.Column():
+                        gr.Markdown("### Reaction (prompt + instrumentation)")
+                        reaction_panel(reactions)
+            with gr.Tab("Latency") as latency_tab:
+                gr.Markdown("### Latency, reaction by reaction")
                 with gr.Row():
-                    # gradio's dynamic event methods (.click/.submit/.change/.tick) aren't in the
-                    # stubs, hence the narrow ignores below.
-                    msg = gr.Textbox(
-                        placeholder="Type a turn (works with no mic / no ASR key)…",
-                        show_label=False,
-                        scale=5,
-                    )
-                    send = gr.Button("Send", variant="primary", scale=1)
+                    latency_summary = gr.Markdown("")
+                    latency_reset = gr.Button("Reset statistics", scale=0)
 
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1):
-                gr.Markdown("### ASR")
-                asr_status = gr.Markdown("_ASR status…_")
-                asr_vad = gr.Markdown("_Voice activity…_")
-                asr_live = gr.Textbox(
-                    label="Live speech (interim)",
-                    value=_NO_LIVE_SPEECH,
-                    interactive=False,
-                    lines=2,
+                # A plain function: Gradio marks a server function with an attribute, which a bound
+                # method cannot carry. Its name is the one the table's browser code calls.
+                def select_reaction(reaction_id: int | None) -> str:
+                    return latency.select_reaction(reaction_id)
+
+                latency_table = gr.HTML(
+                    "",
+                    css_template=LATENCY_TABLE_CSS,
+                    js_on_load=LATENCY_TABLE_JS,
+                    server_functions=[select_reaction],
+                    elem_id="latency-table",
                 )
-                stop_dictation = gr.Button("Stop dictation", interactive=False)
-            with gr.Column(scale=1):
-                gr.Markdown("### Vision")
-                vision_status = gr.Markdown("_Vision status…_")
-                # What the body knows of what it sees: on the robot, whom the head follows and
-                # the users present.
-                camera_status = gr.Markdown("_No camera frame yet._")
-                if system.gesture is not None:
-                    # As in the vision-modules hand demo: save what each stage last consumed.
-                    snapshot_folder = gr.Textbox(
-                        value=str(_SNAPSHOT_DIR), label="Snapshot folder"
-                    )
-                    with gr.Row():
-                        save_detector = gr.Button("Save detector snapshot")
-                        save_classifier = gr.Button("Save classifier snapshot")
-                    snapshot_status = gr.Markdown("")
-                    save_detector.click(  # pyright: ignore[reportAttributeAccessIssue]
-                        on_save_detector,
-                        inputs=snapshot_folder,
-                        outputs=snapshot_status,
-                    )
-                    save_classifier.click(  # pyright: ignore[reportAttributeAccessIssue]
-                        on_save_classifier,
-                        inputs=snapshot_folder,
-                        outputs=snapshot_status,
-                    )
-
-        # Debug surface last, on one line: the toggle, then World state and Reaction side by side.
-        # The toggle is visibility only: the contrib panels own their timers and keep ticking while
-        # hidden (see specs/app.md, "Refresh cost").
-        show_debug = gr.Checkbox(label="Show debug panels", value=False)
-        with gr.Row(visible=False, equal_height=False) as debug_panels:
-            with gr.Column():
-                gr.Markdown("### World state (live)")
-                if wica is not None:
-                    world_state_panel(wica.world)
-                else:
-                    gr.Markdown("_No agent — there is no World to show._")
-            with gr.Column():
-                gr.Markdown("### Reaction (prompt + instrumentation)")
-                reaction_panel(reactions)
+                latency_waterfall = gr.HTML("")
+        # Which tab is open: the latency detail is read only while its tab is.
+        latency_open = gr.State(False)
+        interaction_tab.select(lambda: False, outputs=latency_open)  # pyright: ignore[reportAttributeAccessIssue]
+        latency_tab.select(lambda: True, outputs=latency_open)  # pyright: ignore[reportAttributeAccessIssue]
 
         send.click(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
         msg.submit(on_send, inputs=msg, outputs=msg)  # pyright: ignore[reportAttributeAccessIssue]
@@ -392,6 +602,22 @@ def build_ui(system: AppSystem) -> gr.Blocks:
             lambda show: gr.update(visible=show),
             inputs=show_debug,
             outputs=debug_panels,
+        )
+
+        latency_reset.click(latency.reset)  # pyright: ignore[reportAttributeAccessIssue]
+        # The latency view's own timer: the glance line and the timeline always, the detail only
+        # while its tab is open; an unchanged part is not sent.
+        latency_timer = gr.Timer(0.2)
+        latency_timer.tick(  # pyright: ignore[reportAttributeAccessIssue]
+            latency.tick,
+            inputs=latency_open,
+            outputs=[
+                latency_glance,
+                latency_timeline,
+                latency_summary,
+                latency_table,
+                latency_waterfall,
+            ],
         )
 
         # The app's two timers: one reads the ASR bridge and the gesture input (the status lines

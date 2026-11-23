@@ -19,6 +19,9 @@ dependencies = [
     "vision-modules",
     "gradio>=6",
     "numpy",
+    # The latency view collects the spans the agent and the libraries open, on every run
+    # (specs/latency-view.md, "Installing the SDK"); they depend on the API alone.
+    "opentelemetry-sdk>=1.20,<2",
 ]
 
 [project.optional-dependencies]
@@ -79,8 +82,11 @@ tts-phonon = ["tts-engine[phonon]"]
 tts-qwen3 = ["tts-engine[qwen3]"]
 tts-kokoro = ["tts-engine[kokoro]"]
 tts-piper = ["tts-engine[piper]"]
+# Sending the spans to a tracing backend (`WICA_INTERACTION_TRACES=otlp`, specs/latency-view.md),
+# over OTLP/HTTP; the page needs none of it.
+otlp = ["opentelemetry-exporter-otlp-proto-http>=1.20,<2"]
 all = [
-    "wica-interaction[computer,audio-processing,reachy,reachy-sim,vision]",
+    "wica-interaction[computer,audio-processing,reachy,reachy-sim,vision,otlp]",
     "wica-interaction[wica-anthropic,wica-huggingface-hub,wica-openai,wica-gemini,wica-mistral,wica-openai-compatible]",
     "wica-interaction[asr-deepgram,asr-mistral,asr-openai-compatible,asr-mlx-audio,asr-silero]",
     "wica-interaction[tts-elevenlabs,tts-gradium,tts-mistral,tts-deepgram,tts-gemini,tts-cartesia,tts-openai,tts-openai-compatible]",

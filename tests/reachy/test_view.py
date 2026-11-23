@@ -90,6 +90,7 @@ def _user(track_id: int, *, x: float = 0.0, in_view: bool = True) -> User:
         seen=in_view,
         in_view=in_view,
         last_seen_ts=0.0,
+        first_seen_ts=0.0,
         missing_s=0.0 if in_view else 1.5,
         face=Face(x=x, y=0.0, roll=None, size=0.2, track_id=track_id, distance_m=0.66),
     )

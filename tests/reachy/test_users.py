@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
+from opentelemetry import trace
 from reachy_mini_bridge import (
     Face,
     HeadTrackingReport,
@@ -33,6 +34,7 @@ from wica import TextPart
 
 from tests.reachy.fakes import ScriptedFaces, seeing_config
 from wica_interaction.embodiment import InputEntry
+from wica_interaction.latency import SPAN_PERCEPTION, LatencyCollector, install_tracing
 from wica_interaction.reachy.users import (
     PERSONAL_SPACE,
     TRACKED_USER,
@@ -589,6 +591,7 @@ def _user(track_id: int, *, x: float = 0.0, in_view: bool = True) -> User:
         seen=in_view,
         in_view=in_view,
         last_seen_ts=0.0,
+        first_seen_ts=0.0,
         missing_s=0.0,
         face=Face(x=x, y=0.0, roll=None, size=0.2, track_id=track_id, distance_m=0.66),
     )
@@ -765,3 +768,30 @@ def test_the_persona_section_describes_the_entries_and_the_commands() -> None:
         "stop_tracking",
     ):
         assert name in section
+
+
+# --- The latency view: an arrival's span (specs/latency-view.md) -----------------------------------
+
+
+def test_an_arrival_is_written_inside_a_span_from_its_first_sighting() -> None:
+    install_tracing(LatencyCollector(), environ={})
+
+    async def scenario() -> None:
+        faces = ScriptedFaces()
+        async with _seeing(faces) as (_, users, world):
+            spans: list[tuple[Any, int]] = []
+
+            def deliver(key: str, value: Any) -> None:
+                if key == USER_EVENT and value:
+                    spans.append((trace.get_current_span(), time.time_ns()))
+                world.deliver(key, value)
+
+            await users.start(deliver)
+            faces.show(AHEAD)
+            await _arrived(world)
+            span, at_ns = spans[0]
+            assert span.name == SPAN_PERCEPTION and span.parent is None
+            # The bridge confirms a user over about 0.3 s: the origin is the first sighting, before it.
+            assert (at_ns - span.start_time) / 1e9 >= 0.25
+
+    run(scenario())

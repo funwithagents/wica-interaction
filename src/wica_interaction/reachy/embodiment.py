@@ -24,11 +24,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from asr_engine.audio import AudioFormat, AudioSource
 from reachy_mini_bridge import CameraFrame, ReachyMiniBridge
+from reachy_mini_bridge.tracing import (
+    EVENT_FIRST_PUSH,
+    EVENT_MOTION_STARTED,
+    SPAN_PLAY_EMOTION,
+    SPAN_SAY,
+)
 from wica import Command, OutputStream
 
 from wica_interaction.embodiment import (
@@ -38,6 +44,7 @@ from wica_interaction.embodiment import (
     Voice,
 )
 from wica_interaction.gesture_input import CameraFeed
+from wica_interaction.latency import EffectStart
 from wica_interaction.reachy.config import ReachyConfig
 from wica_interaction.reachy.robot_control import RobotControl, emotions_prompt_section
 from wica_interaction.reachy.users import UsersInput, users_prompt_section
@@ -312,6 +319,22 @@ class ReachyEmbodiment:
     def inputs(self) -> Sequence[Input]:
         """The users in view, when the robot sees people (a face detector configured)."""
         return (self._users,) if self._users is not None else ()
+
+    def effects(self) -> Mapping[str, EffectStart]:
+        """The voice's first audio handed to the robot's speaker, and an emotion's first motion
+        (specs/latency-view.md, "`EffectStart`"). The bridge does not measure the delay from a push
+        to the sound, so the voice's effect stops at the push."""
+        return {
+            "say": EffectStart(
+                SPAN_SAY,
+                EVENT_FIRST_PUSH,
+                label="the first audio sent to the robot",
+                note="the delay from there to the sound is not measured",
+            ),
+            "play_emotion": EffectStart(
+                SPAN_PLAY_EMOTION, EVENT_MOTION_STARTED, label="the robot moving"
+            ),
+        }
 
     def view(self) -> EmbodimentView:
         """The robot on the page: its camera with the detected faces and their numbers, and — when

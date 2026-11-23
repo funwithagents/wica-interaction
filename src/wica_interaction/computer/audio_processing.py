@@ -227,6 +227,13 @@ class ContinuousPlayer:
     def drain(self) -> None:
         self._wait(lambda: len(self._queue) == 0)
 
+    @property
+    def output_latency(self) -> float | None:
+        """The stream's reported output latency in seconds (PortAudio's), ``None`` when it reports
+        none: what separates a queued block from its sound."""
+        latency = getattr(self._stream, "latency", None)
+        return float(latency) if isinstance(latency, int | float) else None
+
     def close(self) -> None:
         with self._cond:
             self._closed = True
@@ -359,6 +366,13 @@ class AudioProcessingCoordinator:
         """
         self._resampler = self._resampler_factory(far_rate)
         self._player = self._player_factory(self._tts_device, far_rate, self._played)
+
+    @property
+    def output_latency(self) -> float | None:
+        """The voice's output latency as its player reports it, ``None`` before ``bind_far_rate`` or
+        when the stream reports none."""
+        latency = getattr(self._player, "output_latency", None)
+        return latency if isinstance(latency, float) else None
 
     def close(self) -> None:
         """Close the player's stream (the app is exiting); a no-op when none was built."""

@@ -10,6 +10,7 @@ with them. See specs/gesture-input.md ("Testing").
 
 from __future__ import annotations
 
+import itertools
 import subprocess
 import sys
 import time
@@ -19,18 +20,28 @@ from typing import Any
 
 import numpy as np
 import pytest
+from opentelemetry import trace
+from vision_modules import StageTiming
 from vision_modules.hand import DetectedHand
 
 from tests.fakes import ScriptedCameraFeed, ScriptedCameraSource
 from wica_interaction.gesture_input import (
     SIGNS,
+    FrameStamp,
     GestureInput,
     GestureModels,
     HoldFilter,
     StreamFeed,
     hand_signs_prompt_section,
     sign_shown,
+    sign_steps,
     snapshot_path,
+)
+from wica_interaction.latency import (
+    SPAN_PERCEPTION,
+    LatencyCollector,
+    install_tracing,
+    wall_clock_ns,
 )
 
 # One delivery: (hand number, that hand's sign or None).
@@ -991,3 +1002,79 @@ def test_preloading_transformers_leaves_its_absence_to_the_classifier() -> None:
         check=False,
     )
     assert done.returncode == 0, done.stderr
+
+
+# --- The latency view: a delivered sign's first frame and its span (specs/latency-view.md) ---------
+
+
+def test_the_hold_keeps_the_stamp_of_the_first_frame_of_the_run() -> None:
+    hold = HoldFilter(0.3)
+    assert not hold.observe("like", 0.0, "first")
+    assert not hold.observe("like", 0.2, "second")
+    assert hold.observe("like", 0.3, "third")
+    assert hold.delivered_stamp == "first"
+    # A dissenting frame restarts the run, and its stamp with it.
+    assert not hold.observe("ok", 1.0, "a")
+    assert not hold.observe("stop", 1.1, "b")
+    assert hold.observe("stop", 1.5, "c")
+    assert hold.delivered_stamp == "b"
+
+
+def test_a_signs_steps_split_the_stages_waits_from_their_work() -> None:
+    p = time.perf_counter() - 1.0
+    stamp = FrameStamp(
+        p,
+        (
+            StageTiming("HandStage", p + 0.01, p + 0.05),
+            StageTiming("GestureClassifier", p + 0.06, p + 0.08),
+        ),
+        p + 0.09,
+    )
+    origin, steps = sign_steps(stamp, wall_clock_ns(p + 0.39))
+    assert [(s.name, s.kind) for s in steps] == [
+        ("waiting for hand detection", "wait"),
+        ("hand detection", "work"),
+        ("waiting for classification", "wait"),
+        ("classification", "work"),
+        ("read by the app", "work"),
+        ("holding the sign", "wait"),
+    ]
+    lengths = [round((s.ended_ns - s.started_ns) / 1e9, 2) for s in steps]
+    assert lengths == [0.01, 0.04, 0.01, 0.02, 0.01, 0.3]
+    assert steps[0].started_ns == origin
+    assert all(a.ended_ns == b.started_ns for a, b in itertools.pairwise(steps))
+
+
+def test_a_delivered_sign_is_written_inside_a_span_from_its_first_frame() -> None:
+    install_tracing(LatencyCollector(), environ={})
+    spans: list[Any] = []
+
+    def written(hand: int, sign: str | None) -> None:
+        spans.append((sign, trace.get_current_span(), time.time_ns()))
+
+    gesture = GestureInput(
+        _camera(),
+        on_gesture=written,
+        fps=_FPS,
+        hold_s=0.2,
+        models=GestureModels(
+            detector=ScriptedDetector(),
+            classifier=ScriptedClassifier(_scores("like", 0.9)),
+        ),
+    )
+    gesture.start()
+    try:
+        assert _wait_until(lambda: bool(spans))
+    finally:
+        gesture.stop()
+    sign, span, at_ns = spans[0]
+    assert sign == "like"
+    assert span.name == SPAN_PERCEPTION and span.parent is None
+    # Its origin is the first frame that showed the sign, a hold or more before the write.
+    assert (at_ns - span.start_time) / 1e9 >= 0.2
+    status = gesture.status()
+    assert status["frame_age_s"] is not None
+    assert [name for name, _ in status["stage_ms"]] == [
+        "hand detection",
+        "classification",
+    ]

@@ -77,6 +77,7 @@ from wica_interaction.gesture_input import (
     preload_transformers,
     sign_shown,
 )
+from wica_interaction.latency import LatencyCollector, install_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +200,9 @@ class AppSystem:
     # How the transcript labels the body's entries: key → the entry's `display_fn` (app_ui's
     # `entry_display` tries these before the app's own `display_entry`).
     input_displays: Mapping[str, Callable[[Any], str]] = field(default_factory=dict)
+    # The latency view's collector (specs/latency-view.md): the spans of this run and the agent's
+    # records, joined per reaction. None without an agent: there is no reaction to measure.
+    latency: LatencyCollector | None = None
 
 
 def build_system(
@@ -272,6 +276,12 @@ def build_system(
     if vision is not None and vision.enabled and body is not None:
         addenda.append(hand_signs_prompt_section())
 
+    # --- The latency view's collection, before the agent so its first spans are seen: the SDK is
+    # installed once per process, and this run's collector takes the forwarding over. An exporter
+    # the environment asks for and cannot be had is a banner line, never a failure. -------------
+    latency = LatencyCollector()
+    missing.extend(install_tracing(latency))
+
     wica: Wica | None = None
     try:
         wica = Wica.init(_seeded_wica_config(config.wica, addenda), loop=loop)
@@ -288,6 +298,7 @@ def build_system(
         missing.append(f"Agent: {exc}")
 
     if wica is not None:
+        latency.attach(wica)
         # A World-schema operation, so it belongs to the build (like the demo's register_world).
         # The TTL makes each utterance a one-shot observation (see SPEECH_INPUT_TTL).
         wica.world.register(
@@ -347,6 +358,8 @@ def build_system(
                 mic_error=lambda: embodied.mic_error,
                 # The engine keeps its trigger words private; `start_dictation`'s reply names them.
                 trigger_words=config.asr_engine.segmentation.trigger_words,
+                # The person speaking, for the latency timeline's You row.
+                on_speech=latency.speech if wica is not None else None,
             )
         except (ValueError, ImportError) as exc:
             missing.append(f"ASR: {exc}")
@@ -408,6 +421,7 @@ def build_system(
         submit_speech=submit_speech,
         inputs=tuple(inputs),
         input_displays=input_displays,
+        latency=latency if wica is not None else None,
     )
 
 
@@ -491,6 +505,13 @@ def wire(system: AppSystem) -> None:
     if embodiment is not None:
         for command in embodiment.commands():
             wica.register_command(command)
+    # What the latency view takes as each Command's effect start: the body's declarations, and the
+    # output Command's name (its tail is the Voice lane). After the Commands, so every name exists.
+    if system.latency is not None:
+        system.latency.set_effects(
+            embodiment.effects() if embodiment is not None else {},
+            output_command=wica.agent.output_command_name,
+        )
 
 
 def _start(system: AppSystem) -> None:
