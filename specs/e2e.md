@@ -15,7 +15,7 @@ tests:
 
 # End-to-end tier
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
@@ -51,9 +51,9 @@ The production providers (the example configs' providers) are not this tier's co
 
 ### The configs
 
-- **One committed config per embodiment**: `tests-e2e/configs/computer.json` and `tests-e2e/configs/reachy.json`. Each holds the providers above, with keys read from the environment, and the template's persona (`prompts/computer.md`, `prompts/reachy.md`). The computer's echo cancellation follows the room (below): on when the room puts the app's voice back on the cable, off when it does not — no echo is a headset's case, where the guide says to turn it off.
+- **One committed config per embodiment**: `tests-e2e/configs/computer.json` and `tests-e2e/configs/reachy.json`. Each holds the providers above, in the sections' current shape (`asr` and `tts` as engine blocks — [configuration.md](configuration.md)), with each key's variable named explicitly (`WICA_ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`: the tier's secrets keep their names, whatever a provider's default variable is), and the app's persona by its bare name (`computer.md`, `reachy.md`). The computer's echo cancellation follows the room (below): on when the room puts the app's voice back on the cable, off when it does not — no echo is a headset's case, where the guide says to turn it off.
 - **The fixture fills in what the run controls**: the device names (below), the computer's echo cancellation, the computer's camera file, and the robot's connection block (`robot_options(host, port)` from the bridge's harness, with `daemon.spawn: "never"`).
-- **Each config is loaded through the embodiment's own `load_config`**, so a config the app would reject fails the tier at its first step.
+- **Each config is loaded through the embodiment's own `load_config`**, as a document, with the embodiment's `default/` folder as `base_dir` (where its persona ships — [setup.md](setup.md)), so a config the app would reject fails the tier at its first step. The tier builds the system directly, in-process: it goes through no app folder, no `.env` and no page, and the session's start and stop again is the fast tier's ([session.md](session.md), "Testing").
 
 ### Replacing the devices
 
@@ -95,8 +95,8 @@ So the computer's echo is on whenever the run gives it a virtual speaker: always
 
 | Device | Replacement | Set through |
 |---|---|---|
-| Mic | the cable | `asr.engine.audio_source.device` = `WICA_E2E_MIC_DEVICE` |
-| Speakers | `WICA_E2E_SPEAKER_DEVICE` | `tts.engine.player.device` |
+| Mic | the cable | `asr.audio_source.device` = `WICA_E2E_MIC_DEVICE` |
+| Speakers | `WICA_E2E_SPEAKER_DEVICE` | `tts.player.device` |
 | The speaker-to-mic echo | the room, when there is an echo device | `audio_processing.echo_cancellation.enabled` = whether there is |
 | Webcam | one image file, rewritten to change what the camera sees | `camera.device` = the file's path |
 

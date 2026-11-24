@@ -7,22 +7,24 @@ tests:
 
 # Configuration
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
-The whole app is stood up from **one JSON config file** carrying the sub-configurations of the pieces it wires together: `wica` (the agent), `asr` (speech in), optionally `vision` (the hand-sign input), plus the sections of the **embodiment** the file is for — `tts` / `audio_processing` / `camera` for the computer, `reachy` for the robot. Switching provider, voice, ASR backend, robot backend, camera or persona is a file edit, not a code change. This spec defines the shared part of that file and how a section becomes a live config, **reusing each engine's own loader and validation** rather than re-implementing it; the embodiment sections are specified in [computer-embodiment.md](computer-embodiment.md) and [reachy-embodiment.md](reachy-embodiment.md).
+Each app is stood up from **one config**, the `config.json` of its folder ([setup.md](setup.md), "The folder"), carrying the sub-configurations of the pieces it wires together: `wica` (the agent), `asr` (speech in), `vision` (the hand-sign input), plus the sections of the app's **embodiment** — `tts` / `audio_processing` / `camera` for the computer, `reachy` for the robot. Switching provider, voice, ASR backend, robot backend, camera or persona is a change of that config, made from the Setup tab or by hand, not a code change. This spec defines the shared part of that config and how a section becomes a live config, **reusing each engine's own loader and validation** rather than re-implementing it; the embodiment sections are specified in [computer-embodiment.md](computer-embodiment.md) and [reachy-embodiment.md](reachy-embodiment.md). Which sections an app has, how each is described to the page, and the default config are in [setup.md](setup.md).
 
 ## Each engine owns its config schema
 
 Each sibling engine already defines and validates its own config, and we do **not** duplicate or fork those schemas:
 
-- **WICA** — `WicaConfig.from_dict(data, base_dir=…)` (`wica-framework/specs/config.md`) parses an `{"agent": {...}}` document (provider/model/key/`system_prompt_file`/`model_kwargs`).
-- **ASR** — `ASREngineConfig.from_dict(engine_block)` (`asr-engine/specs/configuration.md`) builds the ASR engine config from an `engine` block.
-- **TTS** (computer) — `TTSEngineConfig.from_dict(engine_block)` (`tts-engine/specs/configuration.md`), the same shape one level down.
-- **`reachy`** — `ReachyMiniConfig.from_dict(...)` (`reachy-mini-bridge/specs/core/config.md`), the bridge's own declarative config, voice included.
+- **WICA** — `WicaConfig.from_dict(data, base_dir=…)` (`wica-framework/specs/config.md`) parses an `{"agent": {...}}` document (provider/model/key variable/`system_prompt_file`/`model_kwargs`).
+- **ASR** — `ASREngineConfig.from_dict(engine_block, base_dir=…)` (`asr-engine/specs/configuration.md`) builds the ASR engine config from its engine block.
+- **TTS** (computer) — `TTSEngineConfig.from_dict(engine_block, base_dir=…)` (`tts-engine/specs/configuration.md`).
+- **`reachy`** — `ReachyMiniConfig.from_dict(data, base_dir=…)` (`reachy-mini-bridge/specs/core/config.md`), the bridge's own declarative config, voice included.
 
-Nesting each engine's native document verbatim (rather than flattening the keys) keeps the file a thin *composition* of schemas the engines already own: an engine adding or renaming a field needs no change here, and a reader can follow each section straight to that engine's config spec.
+Nesting each engine's native document verbatim (rather than flattening the keys) keeps the config a thin *composition* of schemas the engines already own: an engine adding or renaming a field needs no change here, and a reader can follow each section straight to that engine's config spec.
+
+**A section holds exactly the document its setup contract describes** ([setup.md](setup.md)): the same object goes to the contract's checks from the Setup tab and to the loader at Start. That is why `asr` and `tts` are the engine block itself, with no `engine` key around it (until 2026-11-24 each was `{"engine": {…}}`, the shape of the engines' server configs): `asr_engine.setup` and `tts_engine.setup` describe the engine block, as the bridge's own `tts` block always was.
 
 ## The shared sections
 
@@ -32,32 +34,29 @@ Nesting each engine's native document verbatim (rather than flattening the keys)
     "agent": {
       "provider": "anthropic",
       "model": "claude-sonnet-5",
-      "api_key_env": "WICA_ANTHROPIC_API_KEY",
-      "system_prompt_file": "prompts/reachy.md"
+      "system_prompt_file": "reachy.md"
     }
   },
   "asr": {
-    "engine": {
-      "module": { "type": "deepgram-v2", "api_key_env": "DEEPGRAM_API_KEY", "model": "flux-general-en" },
-      "audio_source": { "type": "custom" },
-      "dictation_default_segmentation_mode": "trigger_word",
-      "vad": { "type": "silero", "min_silence_duration_ms": 1500 }
-    }
+    "module": { "type": "deepgram-v2", "model": "flux-general-en" },
+    "audio_source": { "type": "custom" },
+    "dictation_default_segmentation_mode": "trigger_word",
+    "vad": { "type": "silero", "min_silence_duration_ms": 1500 }
   },
   "vision": { "enabled": false, "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null }
 }
 ```
 
 - `wica` and `asr` are **required**; `vision` is optional.
-- `asr.engine.vad` is asr-engine's optional voice-activity gate (`asr-engine/specs/vad.md`), part of the engine block and so parsed by its loader, not by the app. Both templates turn it on (`silero`, the `asr-silero` extra): the recognizer they select, `mlx-audio`, is a batch one with no end-of-utterance signal of its own, so the gate's silence closes each utterance; in front of a hosted recognizer it also keeps the room's silence from being billed. It wraps the source the embodiment injects as it would the engine's own capture ([asr-bridge.md](asr-bridge.md)). `min_silence_duration_ms` is `1500` rather than the default `500`, asr-engine's setting for `deepgram-v2`: Flux hears enough real silence to end the turn itself, and the gate removes only the long idle stretches. The end-to-end configs stay ungated ([e2e.md](e2e.md)).
-- `wica.agent.system_prompt_file` names the persona — `prompts/computer.md` or `prompts/reachy.md` — resolved relative to the config file's directory.
-- `asr.engine.audio_source` says where the audio comes from. The computer's file names its microphone, `{"type": "input-device", "device": …}`; the robot's says `{"type": "custom"}` (the mic is the robot's, supplied by the embodiment), as in the excerpt above. Both bodies' own sources produce 16 kHz mono linear16 and declare it, and the engine converts for a module fed another format, so the module is not constrained by the mic ([asr-bridge.md](asr-bridge.md), "The mic is the embodiment's").
+- `asr.vad` is asr-engine's optional voice-activity gate (`asr-engine/specs/vad.md`), part of the engine block and so parsed by its loader, not by the app. Both default configs turn it on (`silero`, the `asr-silero` extra): the recognizer they select, `mlx-audio`, is a batch one with no end-of-utterance signal of its own, so the gate's silence closes each utterance; in front of a hosted recognizer it also keeps the room's silence from being billed. It wraps the source the embodiment injects as it would the engine's own capture ([asr-bridge.md](asr-bridge.md)). `min_silence_duration_ms` is `1500` rather than the default `500`, asr-engine's setting for `deepgram-v2`: Flux hears enough real silence to end the turn itself, and the gate removes only the long idle stretches. The end-to-end configs stay ungated ([e2e.md](e2e.md)).
+- `wica.agent.system_prompt_file` names the persona — `computer.md` or `reachy.md`, the file the app copied into its folder ([setup.md](setup.md), "The defaults ship inside the package") — resolved relative to the folder.
+- `asr.audio_source` says where the audio comes from. The computer's config names its microphone, `{"type": "input-device", "device": …}`; the robot's says `{"type": "custom"}` (the mic is the robot's, supplied by the embodiment), as in the excerpt above. Both bodies' own sources produce 16 kHz mono linear16 and declare it, and the engine converts for a module fed another format, so the module is not constrained by the mic ([asr-bridge.md](asr-bridge.md), "The mic is the embodiment's").
 
 ### The `vision` section — the app's own small schema
 
-Enables the hand-sign input ([gesture-input.md](gesture-input.md)) over whichever camera the embodiment provides. Unlike the engine sections it is **not** delegated to a sibling loader: `vision-modules` is a library with constructor kwargs and no config document of its own, so the app owns this schema in `config.py` as a frozen `VisionConfig(enabled, threshold, fps, max_hands, hold_s, release_hold_s, device)` with a `from_dict(data, path=…)` that validates it:
+Enables the hand-sign input ([gesture-input.md](gesture-input.md)) over whichever camera the embodiment provides. Unlike the engine sections it is **not** delegated to a sibling loader: `vision-modules` is a library with constructor kwargs and no config document of its own, so the app owns this schema in `config.py` as a frozen `VisionConfig(enabled, threshold, fps, max_hands, hold_s, release_hold_s, device)` with a `from_dict(data)` that validates it, from the same field declarations its setup contract draws the form and checks a draft with ([setup.md](setup.md), "The app's own contracts"):
 
-- `enabled` — the switch; a boolean, default **`false`**. The section can stay in the file, tuned, with vision off; turning it on is a one-key edit.
+- `enabled` — the switch; a boolean, default **`false`**. The section can stay in the config, tuned, with vision off; turning it on is one switch.
 - `threshold` — the gesture classifier's validation threshold; a number in `[0, 1]`, default **`0.55`**.
 - `fps` — one rate for the camera poll, the hand stage and the classifier; a number `> 0`, default **`10`** (the robot's camera delivers 10 fps on a local daemon; `5` until 2026-11-18).
 - `max_hands` — how many hands are detected, published and classified per frame, and so how many `hand_gesture_<n>` entries exist; an integer `>= 1` (not a bool, not a float), default **`2`** ([gesture-input.md](gesture-input.md), "The pipeline").
@@ -65,7 +64,7 @@ Enables the hand-sign input ([gesture-input.md](gesture-input.md)) over whicheve
 - `release_hold_s` — how long a hand must show **no sign**, unbroken, before its sign is delivered as gone (the same filter's other direction); a number `>= 0`, default **`0.5`**; `0` clears it on the first frame.
 - `device` — the classifier's torch device (`"mps"`, `"cuda"`, `"cpu"`); `null`/absent lets the library pick.
 
-**Vision is off unless `enabled` is `true`** — an absent section, `null`, `{}`, or `enabled: false` all mean no camera is opened, no model downloaded, no `hand_gesture_<n>` entry registered. It is an explicit opt-in because its first run downloads ~340 MB of models. Not an object, an unknown key, or an out-of-range value raises `ValueError` from the loader, naming the file and the field. Which camera it reads is the embodiment's business: the computer's `camera` section, the robot's own camera.
+**Vision is off unless `enabled` is `true`** — an absent section, `null`, `{}`, or `enabled: false` all mean no camera is opened, no model downloaded, no `hand_gesture_<n>` entry registered. It is an explicit opt-in because it needs the `vision` extra and ~340 MB of models (both shown, installed and downloaded from the Setup tab). Not an object, an unknown key, or an out-of-range value raises `ValueError` from the loader, naming the section and the field. Which camera it reads is the embodiment's business: the computer's `camera` section, the robot's own camera.
 
 ## Loading
 
@@ -79,43 +78,43 @@ class AppConfig:
     vision: VisionConfig | None = None
 
 
-def read_config_file(path: str) -> dict[str, Any]: ...
-
-
 def load_app_config(
-    data: dict[str, Any], *, path: str, sections: frozenset[str]
+    data: Mapping[str, Any], *, base_dir: Path, sections: frozenset[str]
 ) -> AppConfig: ...
 ```
 
-Two layers, so the shared rules live once and each embodiment adds only its own sections:
+The config reaches the loaders as a document, not as a path: at Start the app hands them `AppModel.used_config(saved)` — the sections the app declares, as saved in the folder — and the folder ([session.md](session.md), "Start"). Reading and writing `config.json` is app-setup's (`ConfigFolder`); nothing here opens a file.
 
-1. **`read_config_file(path)`** reads and JSON-parses the file; raises `ValueError` if it is missing, unreadable, not valid JSON, or not a JSON object.
-2. **`load_app_config(data, path=…, sections=…)`** validates the shared part of the parsed object: the required `wica` and `asr` keys are present; **no top-level key outside `sections`** (the shared names plus the calling embodiment's own) — an unknown section is a `ValueError` naming it, so a reachy file handed to the computer command fails on `'reachy'` rather than being silently ignored; then delegates each section to its owner's `from_dict`, passing the in-memory block directly (no temp files):
-   - `wica` → `WicaConfig.from_dict(data["wica"], base_dir=os.path.dirname(path))`
-   - `asr` → `ASREngineConfig.from_dict(data["asr"]["engine"])` (a section that is not an object with an `engine` block is a `ValueError`)
-   - `vision` → `VisionConfig.from_dict(data["vision"], path=path)` when present and not `null`, else `None`
-3. **Each embodiment loads its own file.** `computer/config.py` and `reachy/config.py` each expose `load_config(path) -> ComputerConfig | ReachyConfig`: read the file once, call `load_app_config` with its section set, parse its own sections into the same object (`.app` holds the `AppConfig`). The entry point calls that loader ([app.md](app.md), "Wiring and lifecycle").
+1. **`load_app_config(data, base_dir=…, sections=…)`** validates the shared part: the required `wica` and `asr` keys are present; **no top-level key outside `sections`** (the shared names plus the calling embodiment's own) — an unknown section is a `ValueError` naming it, so a robot's config handed to the computer's loader fails on `'reachy'` rather than being silently ignored (`used_config` never returns one; a caller with a document of its own, the end-to-end tier, can); then delegates each section to its owner's `from_dict`, the in-memory block passed directly:
+   - `wica` → `WicaConfig.from_dict(data["wica"], base_dir=base_dir)`
+   - `asr` → `ASREngineConfig.from_dict(data["asr"], base_dir=base_dir)` (a section that is not an object is a `ValueError`)
+   - `vision` → `VisionConfig.from_dict(data["vision"])` when present and not `null`, else `None`
+2. **Each embodiment loads its own.** `computer/config.py` and `reachy/config.py` each expose `load_config(data, *, base_dir) -> ComputerConfig | ReachyConfig`: call `load_app_config` with its section set, parse its own sections into the same object (`.app` holds the `AppConfig`), each with the same `base_dir`.
 
-**One error type.** Everything a loader can raise for a bad file is a `ValueError`, so `run_app` has a single thing to catch to open in degraded mode ([app.md](app.md), "Degraded start"). This falls out for free: WICA's, tts-engine's and the bridge's `ConfigError` all subclass `ValueError`, the ASR loader raises `ValueError` directly, and the app's own `VisionConfig`/`CameraConfig`/`AudioProcessingConfig` parsers raise it too. Field-level errors propagate unchanged, keeping the owner's message; nothing is re-wrapped or swallowed.
+**`base_dir` is the app's folder, for every section.** A relative path in any section — the persona, a voice file, a model path, an audio file, a scene — resolves against the folder `config.json` lives in, by each owner's own loader. app-setup gives the setup contracts the same folder, so what the Setup tab checked, prepared and tested is what a session opens.
 
-**Why `base_dir`, not a temp file:** the one thing a path-based loader gave for free was WICA resolving `agent.system_prompt_file` *relative to the config file's directory*. `WicaConfig.from_dict` takes an optional `base_dir`, so the original config's directory is passed and that resolution is preserved without round-tripping any section through disk. Loading stays a pure, side-effect-free composition.
+**One error type.** Everything a loader can raise for a bad document is a `ValueError`, so a caller has a single thing to catch ([session.md](session.md), "Start"). This falls out for free: WICA's, asr-engine's, tts-engine's and the bridge's `ConfigError` all subclass `ValueError`, and the app's own `VisionConfig`/`CameraConfig`/`AudioProcessingConfig` parsers raise it too. Field-level errors propagate unchanged, keeping the owner's message; nothing is re-wrapped or swallowed. An error names the section and the field (`config: vision.fps must be …`), not a file.
 
-## Secrets stay referenced, never stored
+**The loader and the Setup tab agree.** A config with no problem under `AppModel.check_config` loads: each library's `check_config` and its `from_dict` run the same rules, and the app's own sections are read and checked from one declaration ([setup.md](setup.md)).
 
-Each section keeps the secret hygiene its engine prescribes: an `api_key_env` naming an environment variable, not a literal key. The committed `config.computer.example.json` and `config.reachy.example.json` are safe to commit and are **templates** — copy one to a git-ignored `*.local.json` and adapt it. A missing env var surfaces as that engine's own error at build time (WICA raises `MissingEnvError` at `Wica.init`; the ASR and TTS modules raise when they resolve their key; the bridge records a voice build failure as `api.synthesizer_error`) — the app catches each separately and reports what to set ([app.md](app.md), "Degraded start").
+## Keys are named, never stored
+
+**A config never holds a key.** Every engine's section names an environment variable in `api_key_env`, which defaults to the provider's usual one (`ANTHROPIC_API_KEY`, `HF_TOKEN`, `DEEPGRAM_API_KEY`, `GRADIUM_API_KEY`, …); a config carrying `api_key` is refused by its owner's loader. The default configs name no variable, so the provider's own applies. The value comes from the environment the app was launched from or from the folder's `.env`, which app-setup loads into the process environment when the app starts and keeps in step with the Secrets tab (the launch environment wins: `app-setup/specs/secrets.md`); the engines never read the file themselves.
+
+A key that is not set is known before a session starts: it is a missing required item of its section, shown on the Setup tab with a field to set it, and a blocker of Start ([session.md](session.md)). Past that check, a provider that rejects a key surfaces as that engine's own error at build time (WICA raises `MissingSecretError` when no key is under the variable; the ASR and TTS modules raise theirs; the bridge records a voice build failure as `api.synthesizer_error`) — the app catches each separately and reports it ([app.md](app.md), "Degraded start").
 
 ## Relies on the owners' `from_dict`
 
-This dict-based composition rests on each section's owner exposing a `from_dict` constructor that runs the same validation as its file loader. All do — WICA's `from_dict(data, *, base_dir=None)`, ASR's and TTS's `from_dict(engine_block)`, the bridge's `ReachyMiniConfig.from_dict(data)` — and none reads an env var or a file at construction, so loading succeeds with keys unset. `ReachyMiniConfig.from_dict` does import `reachy_mini` lazily (to validate `robot` keys against upstream's signature); that is a load-time cost of the reachy loader only — the computer loader never imports the bridge.
+This composition rests on each section's owner exposing a `from_dict` constructor that runs the same validation as its file loader and takes `base_dir`. All do, and none reads an environment variable or a file at construction, so loading succeeds with keys unset. `ReachyMiniConfig.from_dict` does import `reachy_mini` lazily (to validate `robot` keys against upstream's signature); that is a load-time cost of the robot's loader only — the computer's never imports the bridge.
 
 ## Testing
 
 `tests/test_config.py` (shared) and each embodiment's `tests/<embodiment>/test_config.py`:
 
-- `read_config_file`: a missing file, invalid JSON, a non-object document each raise `ValueError` naming the path.
-- `load_app_config`: a missing `wica` or `asr`, an `asr` without an `engine` block, an unknown top-level key (given a section set), raise `ValueError` naming the offender; a relative `system_prompt_file` resolves against the file's directory; keys unset do not fail the load.
+- `load_app_config`: a missing `wica` or `asr`, an `asr` that is not an object, an unknown top-level key (given a section set), raise `ValueError` naming the offender; a relative `system_prompt_file` resolves against `base_dir`, whatever the working directory; keys unset do not fail the load; an `asr` still wrapped in `engine` is refused by asr-engine's loader (an unknown key).
 - `VisionConfig`: absent/`null`/`{}` ⇒ off; `{"enabled": true}` ⇒ on with defaults (`fps` 10, `hold_s` 0.3 and `release_hold_s` 0.5 among them); each field's type/range rule (a negative or non-numeric `hold_s` or `release_hold_s` included); an unknown key.
+- Each default config ([setup.md](setup.md)) loads through its embodiment's `load_config` against a folder holding its persona.
 
 ## Open questions
 
-1. **A single shared `api_key_env` per provider.** The sections name their keys independently; whether to allow one top-level key reference shared across sections is deferred.
+1. **A single shared key variable per provider.** The sections name their keys independently; whether to allow one reference shared across sections is deferred. In practice two sections on one provider default to the same variable.
