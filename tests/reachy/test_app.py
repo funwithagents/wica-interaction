@@ -56,3 +56,10 @@ def test_the_used_config_holds_exactly_the_apps_sections(tmp_path: Path) -> None
     saved = {**model.saved_config(), "tts": {"module": {"type": "phonon"}}}
     # Every section the app declares (an absent one too, for its loader to default), no other.
     assert set(model.used_config(saved)) == SECTIONS
+
+
+def test_the_default_config_has_no_problem_for_app_setup(tmp_path: Path) -> None:
+    """Every section is in the default config (app-setup counts a missing one as a problem, which
+    would keep the first Start from running)."""
+    model = AppModel(APP, ConfigFolder(tmp_path / "app", APP.default_config))
+    assert model.check_config(model.saved_config()) == []

@@ -33,7 +33,7 @@ The `tests/` tier mirrors `src/wica_interaction/`: `test_<module>.py` for each s
 
 **Fakes are shared, not duplicated.** `tests/fakes.py` holds the doubles more than one test module needs: `FakeASREngine` (the slice of `ASREngine` the bridge and the lifecycle touch) with `asr_factory(engine)`, the `asr_engine_factory` seam that hands it to `build_system` and records the `audio_source` the lifecycle built it over, `FakeEmbodiment` (the whole [Embodiment](embodiment.md) protocol, recording what the lifecycle asked of it — [embodiment.md](embodiment.md), "Testing"), and a scripted-provider `WicaConfig` builder. Embodiment-specific doubles (`FakeTTSEngine`, `FakeReachyMiniBridge`, a fake `OpenCVSource`) live next to the tests that use them, under their subfolder.
 
-**The lifecycle is tested once, over the fake embodiment.** `tests/test_system.py` drives `build_system` / `wire` / `_start` / `_shutdown` with a `FakeEmbodiment` and WICA's scripted `fake` provider, so it knows nothing about either real body; each embodiment's `tests/<embodiment>/test_embodiment.py` pins that the real implementation honours each protocol member against its own fakes. No test builds a real body.
+**The lifecycle is tested once, over the fake embodiment.** `tests/test_system.py` drives `build_system` / `wire` / `_start` / `close_session` with a `FakeEmbodiment` and WICA's scripted `fake` provider, so it knows nothing about either real body; each embodiment's `tests/<embodiment>/test_embodiment.py` pins that the real implementation honours each protocol member against its own fakes. No test builds a real body.
 
 ## What a good test asserts
 
@@ -45,7 +45,7 @@ The `tests/` tier mirrors `src/wica_interaction/`: `test_<module>.py` for each s
 
 If the package holds process-global or singleton state, both tiers carry an identical autouse fixture (in each tier's `conftest.py`) that resets it before and after every test, so no state — or background timers/threads — leaks across tests. The fixture is duplicated rather than shared because `tests-e2e/` isn't a package that imports from `tests/`, and it's only a few lines.
 
-Resources a test *creates* are its own to release. In particular, every lifecycle test that calls `build_system` ends — in a `finally` — with `_shutdown(system)`, the same teardown `run_app` runs, so no loop thread or media session outlives the test that opened it.
+Resources a test *creates* are its own to release. In particular, every lifecycle test that calls `build_system` ends — in a `finally` — with `close_session(system)`, the same teardown `run_app` runs, so no loop thread or media session outlives the test that opened it.
 
 ## Live tier: skip without credentials
 

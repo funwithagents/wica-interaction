@@ -44,5 +44,8 @@
     "hold_s": 0.3,
     "release_hold_s": 0.5,
     "device": null
+  },
+  "camera": {
+    "device": 0
   }
 }

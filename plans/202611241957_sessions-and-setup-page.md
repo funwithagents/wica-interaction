@@ -1,6 +1,6 @@
 # Sessions that start and stop again, the Setup and Secrets tabs
 
-**Status:** Todo
+**Status:** In progress
 
 Implements [specs/session.md](../specs/session.md) (all of it) and the session, page and entry-point parts of [specs/app.md](../specs/app.md) ("What the user sees", "Wiring and lifecycle", "Degraded start"), with the command-line flags of [specs/project.md](../specs/project.md) ("Entry points"). It delivers the page's four tabs, Start and Stop, the config locked while a session runs, and autostart. It builds on [202611241956_config-on-app-setup.md](202611241956_config-on-app-setup.md) (the folder, the sections, the loaders), which must be `Done` first. It leaves out: one app for both embodiments, preparing the optional items at Start, a browser test of the page.
 

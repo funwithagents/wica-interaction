@@ -59,7 +59,7 @@ APP = App(
 
 - **`host` is `wica-interaction`**: the environment is installed from this project, so an install from the page adds one of its extras from its lock ([project.md](project.md), "Extras").
 - **`SECTIONS` is public** next to `APP`: a host built on this app (its own distribution, its own lock) composes its own `App` from the same sections.
-- **Every section is always used** (no `when`). A section a config can leave out is drawn by its own schema: every field of `vision`, `audio_processing` and `camera` has a default, and `{}` is a valid document.
+- **Every section is always used** (no `when`), and app-setup counts a used section missing from `config.json` as a problem: each default config holds every section of its app. A section that can be left at its defaults is still written: every field of `vision`, `audio_processing` and `camera` has a default, and `{}` is a valid document.
 - **The body's library is imported directly**, not through a loader function with a `host_extra`: the `computer` extra is required by `wica-interaction-computer` and `reachy` by `wica-interaction-reachy` ([project.md](project.md)), so by the time an `App` exists its library does too.
 - **`autostart=True`**: both apps start their session at launch, as they always did; the user's choice lives in the folder's `launch.json` ([session.md](session.md), "Autostart").
 

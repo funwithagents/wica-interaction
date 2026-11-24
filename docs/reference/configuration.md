@@ -15,9 +15,10 @@ Each engine section is **that engine's own document, nested verbatim**: the `wic
 
 | File | What it is |
 |---|---|
-| `config.json` | the config, edited by hand; the app reads it at launch |
+| `config.json` | the config, edited on the page's **Setup** tab (or by hand); each session runs what was saved last |
 | `computer.md` / `reachy.md` | the persona, which the config names by this bare name; edit it here |
-| `.env` | the keys, as `NAME=value` lines, loaded at launch; a variable already set in the shell wins ([Keys](#keys-stay-in-the-environment)) |
+| `.env` | the keys, as `NAME=value` lines, written by the **Secrets** tab and loaded at launch; a variable already set in the shell wins ([Keys](#keys-stay-in-the-environment)) |
+| `launch.json` | whether the session starts when the app launches (on by default), the Setup tab's checkbox; `--start` / `--no-start` override it for one launch |
 
 **The first launch fills an empty folder**: the app writes its default config as `config.json` and copies its persona there. Both ship inside the package ([computer](../../src/wica_interaction/computer/default/config.json), [robot](../../src/wica_interaction/reachy/default/config.json)). Neither is ever overwritten: what is in the folder is yours. A relative path in any section (the persona, a voice file, a scene) resolves against the folder.
 
@@ -174,7 +175,7 @@ Strict on purpose: a misspelt feature or an unknown key is rejected, because the
 }
 ```
 
-Computer only, optional: absent means device `0`, which is why the default config leaves it out. What the hand-sign input reads when `vision.enabled` is `true`.
+Computer only, optional for the loader (absent means device `0`); the default config states it, since the Setup tab counts a section missing from `config.json` as a problem to fix. What the hand-sign input reads when `vision.enabled` is `true`.
 
 | Field | Default | What it does |
 |---|---|---|
@@ -255,11 +256,11 @@ Absent, the section means the `real` backend with the bridge's defaults and no v
 
 Every section references its key by **environment variable name** (`api_key_env`), never by value: a config holding `api_key` is refused. Left out, `api_key_env` is the provider's usual variable, so the default configs name none and need one, `HF_TOKEN`, a Hugging Face token for the agent; their speech recognizer and voice run locally and need none. A hosted recognizer or voice adds its own variable (`DEEPGRAM_API_KEY`, `GRADIUM_API_KEY`, …), or the one its `api_key_env` names (the e2e tier's configs use `WICA_ANTHROPIC_API_KEY`).
 
-Set each variable in the shell that runs the command, or in the folder's `.env` (`HF_TOKEN=hf_...`, one per line), which the app loads at launch; the shell wins when both set it. A non-interactive shell does not read your `~/.zshrc`. A variable that is unset does not fail the load: it fails that engine's build, and the app opens with a banner naming what to set ([guides/troubleshooting.md](../guides/troubleshooting.md#the-banner)).
+Set each variable on the **Secrets** tab, or on its line in the Setup tab, both of which write the folder's `.env`; or export it in the shell that runs the command, which wins when both set it. A non-interactive shell does not read your `~/.zshrc`. A variable that is unset keeps the session from starting, and the Interaction tab names it ([guides/troubleshooting.md](../guides/troubleshooting.md#the-session-does-not-start)).
 
 ## What a loader rejects
 
-Everything a loader can raise for a bad config is one `ValueError`, so the app opens in degraded mode with the message in the banner rather than crashing:
+The Setup tab reports these on the field before a session starts (each section's own check runs the same rules as its loader); a config that still reaches a loader with one does not start, and the Interaction tab shows the message:
 
 - a `config.json` that is unreadable, not JSON, or not a JSON object;
 - a missing `wica` or `asr` section, or one that is not an object;
@@ -267,4 +268,4 @@ Everything a loader can raise for a bad config is one `ValueError`, so the app o
 - an engine section its owner rejects, with the owner's own message: an `asr` or `tts` still wrapped in `engine`, a key written as `api_key`, an unknown `agent` key, both `system_prompt` and `system_prompt_file`, a `daemon.spawn` on the `fake` backend, `motion.tracking.enabled` with no `face_detection.detector`, a `motion.tracking` written as a boolean;
 - in the app-owned sections, an unknown key, a wrong type, or an out-of-range value, naming the section and the field: `vision.threshold` outside `[0, 1]`, `max_hands` below 1 or not an integer, a negative `hold_s` or `release_hold_s`, a `camera.device` that is neither an int nor a string, a `noise_suppression.level` outside `0` to `3`.
 
-A key that is unset, or a provider extra that is not installed, is **not** a load error: the file loads, and the failure lands on that engine's banner line at build time.
+A key that is unset, or a provider extra that is not installed, is **not** a load error: the Setup tab lists it as an item to set or install, and Start refuses until it is.

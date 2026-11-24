@@ -30,6 +30,7 @@ class Running:
     system: AppSystem
     transcript: TranscriptLog
     reactions: ReactionLog
+    close: Callable[[], None]  # system.close_session over this system
 
 
 class Session:
@@ -49,6 +50,7 @@ class Session:
 
 - **At most one session per process**, shared by every browser tab. `Session` is thread-safe: the page's handlers run on Gradio's worker threads.
 - **`open_session(used_config, folder)`** is the embodiment's: `system.open_session` bound to the embodiment's loader and constructor ([app.md](app.md), "The entry point"). `Session` knows no embodiment.
+- **`Running` carries its own `close`**, so `session.py` needs nothing of `system.py` at runtime (`system.py` builds the `Running`, and imports `Session`).
 - **`Running` holds the presenters.** A `TranscriptLog` and a `ReactionLog` subscribe to the agent's Events when they are built, so they exist once per session, built after the system and before it starts, and the page reads them however many times it is drawn.
 
 ### Start

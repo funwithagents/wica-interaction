@@ -7,15 +7,20 @@ components, tested in WICA's own suite, not here. See specs/app.md ("What the us
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 import gradio as gr
 import numpy as np
+import pytest
+from app_setup.app import App, AppModel, Section
+from app_setup.folder import ConfigFolder
 from asr_engine.engine import ASREngine
 from asr_engine.vad.gate import VadState
 from wica import CommandExecution
-from wica.contrib.gradio import EntryDisplay
+from wica.contrib.gradio import EntryDisplay, ReactionLog, TranscriptLog
 from wica.events import Event
 from wica.world import WorldEntry, WorldEntryVersion
 
@@ -23,10 +28,13 @@ from tests.fakes import FakeEmbodiment
 from tests.test_latency import reaction_trace
 from wica_interaction.app_ui import (
     LatencyPanel,
-    _label,
-    build_ui,
+    _interaction_surfaces,
+    build_page,
     display_entry,
     entry_display,
+    entry_label,
+    session_buttons,
+    session_status,
     tick_asr,
     tick_view,
     tick_vision,
@@ -35,6 +43,7 @@ from wica_interaction.asr_bridge import AsrBridge
 from wica_interaction.embodiment import EmbodimentView
 from wica_interaction.gesture_input import GestureInput
 from wica_interaction.latency import LatencyCollector
+from wica_interaction.session import Running, Session
 from wica_interaction.system import AppSystem
 
 
@@ -77,6 +86,7 @@ def test_entry_display_labels_the_bodys_entries_by_their_own_wording() -> None:
     `display_entry`, so the app's labels are unchanged."""
     system = AppSystem(
         loop=None,
+        loop_thread=None,
         display_name="fake body",
         embodiment=None,
         wica=None,
@@ -130,6 +140,7 @@ def _system(
         display_name = embodiment.display_name
     return AppSystem(
         loop=None,
+        loop_thread=None,
         display_name=display_name,
         embodiment=embodiment,
         wica=None,
@@ -293,22 +304,95 @@ def test_vision_line_flags_camera_and_stage_errors() -> None:
     assert "stopped" in stopped
 
 
-# --- The page (specs/app.md, "What the user sees") --------------------------------------------
+# --- The page (specs/app.md, "What the user sees"; specs/session.md) ---------------------------
 
 
-def test_the_page_is_named_after_the_body() -> None:
-    """The one place the shared page differs per embodiment: its title and heading name the body the
-    app was launched with (specs/embodiment.md, `display_name`)."""
-    page = build_ui(_system(embodiment=FakeEmbodiment()))
-    assert page.title == "WICA Interaction — fake body"
+def _model(tmp_path: Path) -> AppModel:
+    import wica.setup
 
-    # A body that failed to enter is still the body the app was launched for: the page keeps its
-    # name (the banner says why it is absent).
-    failed = build_ui(_system(display_name="fake body"))
-    assert failed.title == "WICA Interaction — fake body"
+    app = App(
+        name="wica-interaction-fake",
+        title="WICA Interaction — Fake",
+        host="wica-interaction",
+        sections=(Section("wica", wica.setup),),
+        default_config={"wica": {"agent": {"provider": "fake", "model": "scripted"}}},
+        autostart=True,
+    )
+    return AppModel(app, ConfigFolder(tmp_path / "app", app.default_config))
 
-    # Only a config that never loaded has no body to name: a neutral title, not a made-up one.
-    assert build_ui(_system()).title == "WICA Interaction"
+
+def _running(system: AppSystem) -> Running:
+    display = entry_display(system)
+    return Running(
+        system=system,
+        transcript=TranscriptLog(system.wica, display),
+        reactions=ReactionLog(system.wica, display),
+        close=lambda: None,
+    )
+
+
+def test_the_page_has_its_four_tabs_and_is_named_after_the_app(tmp_path: Path) -> None:
+    model = _model(tmp_path)
+    page = build_page(model, Session(lambda *_: _running(_system())))
+    assert page.title == "WICA Interaction — Fake"
+    config = page.get_config_file()
+    tabs = [
+        c["props"].get("label") for c in config["components"] if c["type"] == "tabitem"
+    ]
+    assert tabs == ["Interaction", "Latency", "Setup", "Secrets"]
+
+
+def test_a_running_sessions_surfaces_are_drawn_over_its_own_objects() -> None:
+    """What the Interaction render draws for a running session: the body's camera, the ASR and the
+    Vision, the debug panels, and the banner when something is missing."""
+    system = replace(
+        _system(embodiment=FakeEmbodiment()), missing=["ASR: no key under 'X'"]
+    )
+    running = _running(system)
+    session = Session(lambda *_: running)
+    with gr.Blocks() as blocks:
+        _interaction_surfaces(session, running)
+    texts = [
+        str(c["props"].get("value"))
+        for c in blocks.get_config_file()["components"]
+        if c["type"] == "markdown"
+    ]
+    assert any("no key under" in t for t in texts)
+    assert any("embodied in a fake body" in t for t in texts)
+
+
+class _Stub:
+    """A session whose status and reasons a test sets."""
+
+    def __init__(self, status: str, reasons: list[str] | None = None) -> None:
+        self.status = status
+        self.reasons = reasons or []
+
+
+@pytest.mark.parametrize(
+    ("status", "buttons", "words"),
+    [
+        ("stopped", (True, False), "ready to start"),
+        ("starting", (False, False), "Starting"),
+        ("running", (False, True), "Running"),
+        ("stopping", (False, False), "Stopping"),
+    ],
+)
+def test_the_session_bar_follows_the_status(
+    status: str, buttons: tuple[bool, bool], words: str
+) -> None:
+    session = cast(Session, _Stub(status))
+    assert session_buttons(session) == buttons
+    assert words in session_status(session)
+
+
+def test_the_bar_says_why_the_session_cannot_start() -> None:
+    """The last Start's reasons and the saved config's blockers, each once, with where to fix."""
+    session = cast(Session, _Stub("stopped", ["wica: model is required"]))
+    text = session_status(session, ["wica: model is required", "HF_TOKEN is not set"])
+    assert "Not started" in text and "Setup" in text
+    assert text.count("model is required") == 1
+    assert "HF_TOKEN is not set" in text
 
 
 # --- The Camera panel ------------------------------------------------------------------------------
@@ -415,13 +499,5 @@ def test_the_vision_panel_shows_the_newest_results_age_and_stage_times() -> None
 
 def test_a_follow_ups_label_names_the_command_that_woke_it() -> None:
     entry = _command_entry("c2", "play_emotion", {"name": "happy"})
-    assert _label(display_entry, entry).startswith("🦾 play_emotion: ")
-    assert "CommandExecution" not in _label(display_entry, entry)
-
-
-def test_the_page_has_an_interaction_tab_and_a_latency_tab() -> None:
-    config = build_ui(_system()).get_config_file()
-    tabs = [
-        c["props"].get("label") for c in config["components"] if c["type"] == "tabitem"
-    ]
-    assert tabs[0] == "Interaction" and tabs[-1] == "Latency"
+    assert entry_label(display_entry, entry).startswith("🦾 play_emotion: ")
+    assert "CommandExecution" not in entry_label(display_entry, entry)

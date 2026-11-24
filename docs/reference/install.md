@@ -35,6 +35,8 @@ Another provider is one more extra, named after it ([Extras](#extras)), and a ch
 
 ## Extras
 
+An extra a config needs can also be added from the page: the Setup tab lists it as a missing item of its section, and its **Install** runs `uv sync --inexact --frozen --extra <name>` in this checkout, at the versions of `uv.lock`, adding without removing.
+
 One extra per body, per optional feature, per provider, named after the sibling's own extra (`wica-<name>`, `asr-<name>`, `tts-<name>`), so an engine's "install `<package>[<name>]`" hint always has a matching extra here. The voices serve **both** bodies: the computer plays them through its speakers, the bridge builds the robot's voice from the same engine.
 
 | Extra | Pulls | For |

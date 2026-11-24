@@ -42,7 +42,7 @@ from wica_interaction.computer.embodiment import ComputerEmbodiment
 from wica_interaction.gesture_input import preload_mediapipe
 from wica_interaction.reachy.config import load_config as load_reachy_config
 from wica_interaction.reachy.embodiment import ReachyEmbodiment
-from wica_interaction.system import AppSystem, _shutdown, _start, build_system, wire
+from wica_interaction.system import AppSystem, _start, build_system, close_session, wire
 
 CONFIGS = Path(__file__).resolve().parent / "configs"
 
@@ -203,7 +203,7 @@ def _running(
             run.close()
         if person is not None:
             person.close()
-        _shutdown(system)
+        close_session(system)
 
 
 def _computer(devices: Devices, out: Path, scenario: str) -> Iterator[E2E]:
