@@ -1,6 +1,6 @@
 # The config as app-setup sections, the app run from its folder
 
-**Status:** Todo
+**Status:** In progress
 
 Implements [specs/setup.md](../specs/setup.md) (all of it), [specs/configuration.md](../specs/configuration.md) (all of it), the "Configuration" and "Entry point" sections of [specs/computer-embodiment.md](../specs/computer-embodiment.md) and [specs/reachy-embodiment.md](../specs/reachy-embodiment.md), the config part of [specs/audio-processing.md](../specs/audio-processing.md) and [specs/e2e.md](../specs/e2e.md) ("The configs"), and the dependency, package-data and repo-shape parts of [specs/project.md](../specs/project.md). It delivers both apps running from their folder, their config described section by section through setup contracts, their defaults shipped in the package. It leaves the page and the lifecycle as they are: no Setup tab, no Start/Stop, one build per process. Those are [202611241957_sessions-and-setup-page.md](202611241957_sessions-and-setup-page.md), which also flips [specs/app.md](../specs/app.md) and [specs/project.md](../specs/project.md) back to `Implemented`.
 

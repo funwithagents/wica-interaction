@@ -4,23 +4,20 @@
       "provider": "huggingface-hub",
       "model": "openai/gpt-oss-120b",
       "hf_provider": "cerebras",
-      "api_key_env": "WICA_HF_TOKEN",
-      "system_prompt_file": "prompts/reachy.md",
+      "system_prompt_file": "reachy.md",
       "context_window": 128000,
       "history_budget": 0.5
     }
   },
   "asr": {
-    "engine": {
-      "module": {
-        "type": "mlx-audio",
-        "model": "mlx-community/parakeet-tdt-0.6b-v3",
-        "interim_interval_s": 0.5
-      },
-      "vad": {
-        "type": "silero",
-        "min_silence_duration_ms": 300
-      }
+    "module": {
+      "type": "mlx-audio",
+      "model": "mlx-community/parakeet-tdt-0.6b-v3",
+      "interim_interval_s": 0.5
+    },
+    "vad": {
+      "type": "silero",
+      "min_silence_duration_ms": 300
     }
   },
   "vision": {

@@ -114,7 +114,8 @@ So what the form accepts, what `check_config` accepts and what the loader accept
 - **The extra item** is `extra:wica-interaction[<extra>]`, required, never preparable, found by trying the imports the feature makes (`mediapipe`, `transformers`, `torch`, `cv2` for vision; `aec_audio_processing`, `samplerate` for audio processing). app-setup maps a requirement on the host itself to that extra, so the page's Install runs `--extra vision`.
 - **The two vision models**, each a preparable item that is **not required** (a session downloads what is missing at its first start, slower; getting them during setup is better):
   - `model:hand-landmarker`: MediaPipe's hand landmarker bundle, `ready` when the file is in vision-modules' cache (`vision_modules.hand.default_model_path()`); `prepare` downloads it with the library's own `ensure_model`.
-  - `model:gesture-classifier`: the HaGRID classifier (`GestureClassifier.MODEL_ID`), `ready` when its snapshot is in the Hugging Face cache, looked up without the network; `prepare` downloads the snapshot, reporting the bytes received.
+  - `model:gesture-classifier`: the HaGRID classifier (`HaGRIDViTClassifier.MODEL_ID`), `ready` when its snapshot is in the Hugging Face cache, looked up without the network; `prepare` downloads the files the classifier loads (its JSON and its weights).
+  - Neither download can measure its progress: `prepare` reports its start (`fraction` `None`, what it downloads) and its end (`1.0`).
   - Both are listed only once the extra imports. `unknown` when the cache cannot be read.
 - **`probe` never raises**, releases what it built, and is light: no frame is classified, no audio processed. The camera's probe runs only where a webcam can be opened; a device that yields no frame is `ok: false` naming it.
 - **No keys**: none of the three sections names an environment variable.

@@ -4,19 +4,21 @@ tables that mirror code match it (specs/project.md, "Documentation checks")."""
 from __future__ import annotations
 
 import dataclasses
-import json
 import re
 import tomllib
 from pathlib import Path
 
 import pytest
+from app_setup.app import App
 
+from wica_interaction.computer.app import APP as COMPUTER_APP
 from wica_interaction.computer.config import (
     CameraConfig,
     EchoCancellationConfig,
     NoiseSuppressionConfig,
 )
 from wica_interaction.config import VisionConfig
+from wica_interaction.reachy.app import APP as REACHY_APP
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DOCS = _REPO_ROOT / "docs"
@@ -168,14 +170,9 @@ def test_the_configuration_page_lists_the_app_owned_fields(
     assert _first_column_names(section) == expected
 
 
-@pytest.mark.parametrize(
-    "template", ["config.computer.example.json", "config.reachy.example.json"]
-)
-def test_the_configuration_page_has_a_heading_per_template_section(
-    template: str,
-) -> None:
-    sections = json.loads((_REPO_ROOT / template).read_text("utf-8")).keys()
+@pytest.mark.parametrize("app", [COMPUTER_APP, REACHY_APP], ids=["computer", "reachy"])
+def test_the_configuration_page_has_a_heading_per_section(app: App) -> None:
     text = (_DOCS / "reference" / "configuration.md").read_text("utf-8")
     headings = _HEADING.findall(_FENCE.sub("", text))
-    for section in sections:
-        assert any(f"`{section}`" in heading for heading in headings), section
+    for section in app.sections:
+        assert any(f"`{section.name}`" in heading for heading in headings), section.name

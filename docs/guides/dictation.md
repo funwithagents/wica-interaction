@@ -17,7 +17,7 @@ What closes a dictated passage is the speech recognizer's `dictation_default_seg
 | Mode | The passage is delivered when | Fields |
 |---|---|---|
 | `timeout` | you stop speaking for a few seconds | `segmentation.end_of_speech_timeout_s`, 5 s by default; `initial_silence_timeout_s`, 10 s, when nothing was said at all |
-| `trigger_word` | you say one of the trigger words; a pause does **not** end it (both templates: a pause inside a note would otherwise cut it short) | `segmentation.trigger_words`; by default `submit`, `enter`, `validate`, `send`, `confirm`, `go` and their French equivalents, matched as case-insensitive substrings of a sentence |
+| `trigger_word` | you say one of the trigger words; a pause does **not** end it (both default configs: a pause inside a note would otherwise cut it short) | `segmentation.trigger_words`; by default `submit`, `enter`, `validate`, `send`, `confirm`, `go` and their French equivalents, matched as case-insensitive substrings of a sentence |
 
 The reply `start_dictation` returns says which it is, `Dictation started (timeout mode): …` or `(trigger_word mode): …`, naming the configured words. That reply is for the model, not for you: neither it nor the persona asks the agent to announce how the passage ends, since you chose the mode and an extra spoken turn before every dictation would break the flow. It is there so the model's picture matches the config, for what it answers if asked and what it makes of the passage it then receives.
 

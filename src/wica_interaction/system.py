@@ -25,8 +25,10 @@ application callables; the sink and the output Command are set afterwards):
 - ``wire(system)`` — Gradio-free: sets the embodiment's ``voice`` as the output Command on the
   agent (the model speaks it as a ``<say>`` tag in its text), registers the dictation Commands and
   each of ``embodiment.commands()``.
-- ``run_app(description, load)`` — each embodiment's ``main()`` is this call: parse ``--config``,
-  ``load`` it into ``(AppConfig, Embodiment)``, build, then ``_serve`` — UI, wire, start and launch,
+- ``run_app(app, load=…, embodiment=…, ensure_persona=…)`` — each embodiment's ``main()`` is this
+  call: open the app's folder (``--folder``) through app-setup's ``AppModel`` (the default config
+  written into a new one, its ``.env`` loaded), copy the persona there, ``load`` the saved config
+  against the folder, construct the embodiment, build, then ``_serve`` — UI, wire, start and launch,
   all inside the one ``try`` whose ``finally`` runs ``_shutdown`` (isolated, time-bounded steps; the
   bridge and the vision are stopped before the embodiment exits), since the body is already
   entered by then.
@@ -48,19 +50,24 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import shutil
 import threading
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
-from typing import Any
+from importlib.resources.abc import Traversable
+from pathlib import Path
+from typing import Any, Protocol
 
+from app_setup.app import App, AppModel
+from app_setup.folder import ConfigFolder, default_folder
 from asr_engine.audio import AudioSource
 from asr_engine.config import ASREngineConfig, AudioSourceConfig
 from asr_engine.engine import ASREngine
 from wica import Content, TextPart, Wica
 from wica.config import (
     ConfigError,
-    MissingEnvError,
+    MissingSecretError,
     WicaConfig,
     resolve_system_prompt,
 )
@@ -228,7 +235,7 @@ def build_system(
     corresponding member degrades on its own. The persona is resolved *here*, not inside
     ``Wica.init``, so the embodiment's ``prompt_addendum`` and the hand-signs section can be appended
     to it (see ``_seeded_wica_config``). Each remaining build that can raise on an unset key
-    (``Wica.init`` → ``MissingEnvError``, any other ``ConfigError`` such as an unreadable
+    (``Wica.init`` → ``MissingSecretError``, any other ``ConfigError`` such as an unreadable
     ``system_prompt_file``, or ``ImportError`` for a missing provider extra; ``ASREngine`` →
     ``ValueError``) is likewise caught into ``missing`` rather than crashing, so the returned system
     opens even with credentials or a body absent. ``asr_engine_factory`` / ``gesture_models`` inject
@@ -285,10 +292,10 @@ def build_system(
     wica: Wica | None = None
     try:
         wica = Wica.init(_seeded_wica_config(config.wica, addenda), loop=loop)
-    except MissingEnvError as exc:
-        missing.append(f"Agent: environment variable {exc.env_var!r} is not set")
+    except MissingSecretError as exc:
+        missing.append(f"Agent: {exc}")
     except ConfigError as exc:
-        # After MissingEnvError (its subclass). resolve_system_prompt (in _seeded_wica_config) reads
+        # After MissingSecretError (its subclass). resolve_system_prompt (in _seeded_wica_config) reads
         # `system_prompt_file` and raises this when the file is missing/unreadable — a config typo
         # degrades to the banner, not a traceback.
         missing.append(f"Agent: {exc}")
@@ -630,38 +637,64 @@ def _serve(system: AppSystem) -> None:
         _shutdown(system)
 
 
-def run_app(
-    *, description: str, load: Callable[[str], tuple[AppConfig, Embodiment]]
+class _Loaded(Protocol):
+    """What an embodiment's ``load_config`` returns: its config, the shared part as ``.app``."""
+
+    @property
+    def app(self) -> AppConfig: ...
+
+
+def copy_persona(source: Traversable, target: Path) -> Path:
+    """*target*, copied from *source* (a persona shipped in the package) when it does not exist.
+    Never overwritten: the file in the app's folder is the user's (specs/setup.md)."""
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with source.open("rb") as src, target.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+    return target
+
+
+def run_app[C: _Loaded](
+    app: App,
+    *,
+    load: Callable[..., C],
+    embodiment: Callable[[C], Embodiment],
+    ensure_persona: Callable[[Path], Path],
+    argv: Sequence[str] | None = None,
 ) -> None:
     """The whole app, from the command line: each embodiment's ``main()`` is one call to this.
 
-    *description* is the argparse description (what this command talks to); *load* reads a config
-    path into the shared ``AppConfig`` plus the embodiment built from that embodiment's own sections
-    (no I/O in its constructor — ``build_system`` enters it). A ``ValueError`` from *load* — a
-    missing, malformed, or wrongly-sectioned file — opens the UI with the message in the banner
-    rather than a traceback.
+    *app* is the embodiment's app-setup declaration (its sections, its default config); *load* is
+    its ``load_config(data, *, base_dir)``; *embodiment* constructs the body from what *load*
+    returned (no I/O in the constructor — ``build_system`` enters it); *ensure_persona* copies its
+    persona into the folder. The app runs from its folder (``--folder``, default
+    ``~/.config/<app.name>``): building the ``AppModel`` creates it, writes the default config into
+    a new one and loads its ``.env``; the saved config is then loaded against the folder. A
+    ``ValueError`` — a document a loader refuses, an unreadable ``config.json`` — opens the UI with
+    the message in the banner rather than a traceback.
     """
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("wica").setLevel(logging.INFO)
 
-    parser = argparse.ArgumentParser(description=description)
-    # Required, with no default: the committed example configs are templates to copy and adapt, not
-    # configs anyone should run unmodified — argparse exits with usage guidance instead of silently
-    # loading one.
+    folder = default_folder(app.name)
+    parser = argparse.ArgumentParser(description=app.title)
     parser.add_argument(
-        "--config",
-        required=True,
-        help="Path to the composed app config JSON (copy the example config to start).",
+        "--folder",
+        type=Path,
+        default=folder,
+        help=f"the app's folder: its config, its keys, its persona (default: {folder})",
     )
-    args = parser.parse_args()
+    options = parser.parse_args(argv)
 
     try:
-        app_config, embodiment = load(args.config)
+        model = AppModel(app, ConfigFolder(options.folder, app.default_config))
+        ensure_persona(model.path)
+        config = load(model.used_config(model.saved_config()), base_dir=model.path)
     except ValueError as exc:
-        # A malformed/missing config still opens the UI with an explanation rather than a traceback.
+        # A config that does not load still opens the UI with an explanation, not a traceback.
         system = _degraded_system(str(exc))
     else:
-        system = build_system(app_config, embodiment)
+        system = build_system(config.app, embodiment(config))
     # build → UI → wire → start → launch → close; everything after the build is `_serve`'s, under
     # the one `finally` that tears the entered body down.
     _serve(system)

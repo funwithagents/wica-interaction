@@ -15,7 +15,6 @@ bottom of this file, with the feature they configure.
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from collections.abc import Coroutine
 from pathlib import Path
@@ -529,14 +528,12 @@ def _load_with(tmp_path: Path, section: object | None) -> ComputerConfig:
                 "system_prompt": "a voice assistant",
             }
         },
-        "asr": {"engine": {"module": {"type": "deepgram-v2"}}},
-        "tts": {"engine": {"module": {"type": "elevenlabs"}}},
+        "asr": {"module": {"type": "deepgram-v2"}},
+        "tts": {"module": {"type": "elevenlabs"}},
     }
     if section is not None:
         config["audio_processing"] = section
-    path = tmp_path / "app.json"
-    path.write_text(json.dumps(config), encoding="utf-8")
-    return load_config(str(path))
+    return load_config(config, base_dir=tmp_path)
 
 
 def test_audio_processing_absent_defaults_to_disabled(tmp_path: Path) -> None:
@@ -574,16 +571,14 @@ def test_audio_processing_partial_sections_keep_defaults(tmp_path: Path) -> None
 
 
 def test_audio_processing_not_an_object_raises(tmp_path: Path) -> None:
-    with pytest.raises(
-        ValueError, match="section 'audio_processing' must be an object"
-    ):
+    with pytest.raises(ValueError, match="audio_processing must be an object"):
         _load_with(tmp_path, "on")
 
 
 def test_audio_processing_wrong_type_raises(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError,
-        match="'audio_processing.echo_cancellation.stream_delay_ms' must be a int",
+        match="audio_processing.echo_cancellation 'stream_delay_ms' must be an integer",
     ):
         _load_with(tmp_path, {"echo_cancellation": {"stream_delay_ms": "soon"}})
 
@@ -592,14 +587,15 @@ def test_audio_processing_rejects_bool_for_int_field(tmp_path: Path) -> None:
     # bool is an int subclass; stream_delay_ms must not silently accept True/False.
     with pytest.raises(
         ValueError,
-        match="'audio_processing.echo_cancellation.stream_delay_ms' must be a int",
+        match="audio_processing.echo_cancellation 'stream_delay_ms' must be an integer",
     ):
         _load_with(tmp_path, {"echo_cancellation": {"stream_delay_ms": True}})
 
 
 def test_audio_processing_ns_level_out_of_range_raises(tmp_path: Path) -> None:
     with pytest.raises(
-        ValueError, match="'audio_processing.noise_suppression.level' must be 0-3"
+        ValueError,
+        match="audio_processing.noise_suppression 'level' must be an integer >= 0 and <= 3",
     ):
         _load_with(tmp_path, {"noise_suppression": {"level": 5}})
 
@@ -629,7 +625,7 @@ def test_a_feature_that_is_not_an_object_is_rejected(tmp_path: Path) -> None:
     """`"echo_cancellation": false` reads like a switch, but it is not the schema — it must not be
     quietly taken for "all defaults"."""
     with pytest.raises(
-        ValueError, match="'audio_processing.echo_cancellation' must be an object"
+        ValueError, match="audio_processing.echo_cancellation must be an object"
     ):
         _load_with(tmp_path, {"echo_cancellation": False})
 

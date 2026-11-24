@@ -10,7 +10,7 @@ Each reaction is measured from the moment the person finished giving their input
 
 | Trigger | Measured from |
 |---|---|
-| speech | the end of the last word the voice-activity detector heard. Without a VAD (`asr.engine.vad` absent), or once it has failed open, the start is unknown: the measure starts when the final transcript was produced, and the reaction is flagged `origin unknown` |
+| speech | the end of the last word the voice-activity detector heard. Without a VAD (`asr.vad` absent), or once it has failed open, the start is unknown: the measure starts when the final transcript was produced, and the reaction is flagged `origin unknown` |
 | typed text | the moment it was sent |
 | hand sign | the first camera frame that showed the sign, before the hold ([hand-signs.md](hand-signs.md)) |
 | user event (robot) | for an arrival, the first frame that saw the person, before the robot confirmed them; otherwise the frame that was reported |
