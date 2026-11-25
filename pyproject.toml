@@ -132,13 +132,10 @@ wica-interaction = { workspace = true }
 # funwithagents/tts-engine@main`) — uv refuses two different URLs for one package, and `rev`
 # (not `branch`) is what makes the two references identical, so the graph resolves without an
 # override.
-# TEMPORARY, until its setup pull request is merged: reachy-mini-bridge on its `setup-contract`
-# branch. Back to `rev = "main"` and `uv lock --upgrade-package reachy-mini-bridge` before this
-# branch merges (plans/202611241956_config-on-app-setup.md, "Verification").
 wica = { git = "https://github.com/funwithagents/wica-framework", rev = "main" }
 asr-engine = { git = "https://github.com/funwithagents/asr-engine", rev = "main" }
 tts-engine = { git = "https://github.com/funwithagents/tts-engine", rev = "main" }
-reachy-mini-bridge = { git = "https://github.com/funwithagents/reachy-mini-bridge", rev = "setup-contract" }
+reachy-mini-bridge = { git = "https://github.com/funwithagents/reachy-mini-bridge", rev = "main" }
 vision-modules = { git = "https://github.com/funwithagents/vision-modules", rev = "main" }
 app-setup = { git = "https://github.com/funwithagents/app-setup", rev = "main" }
 # PyPI's Linux torch wheel is the CUDA build and drags gigabytes of NVIDIA libraries; on Linux
