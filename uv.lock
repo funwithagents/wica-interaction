@@ -3791,7 +3791,7 @@ wheels = [
 [[package]]
 name = "reachy-mini-bridge"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=setup-contract#1f16c41d4932dd33fe473f22c5532fa1dc60ea0b" }
+source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main#d97f972c9e6174938e6f220a6abbc60fe8fc76db" }
 dependencies = [
     { name = "numpy" },
     { name = "opentelemetry-api" },
@@ -5168,8 +5168,8 @@ requires-dist = [
     { name = "numpy" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otlp'", specifier = ">=1.20,<2" },
     { name = "opentelemetry-sdk", specifier = ">=1.20,<2" },
-    { name = "reachy-mini-bridge", marker = "extra == 'reachy'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=setup-contract" },
-    { name = "reachy-mini-bridge", extras = ["sim"], marker = "extra == 'reachy-sim'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=setup-contract" },
+    { name = "reachy-mini-bridge", marker = "extra == 'reachy'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main" },
+    { name = "reachy-mini-bridge", extras = ["sim"], marker = "extra == 'reachy-sim'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main" },
     { name = "samplerate", marker = "extra == 'audio-processing'", specifier = ">=0.2.4" },
     { name = "tts-engine", marker = "extra == 'computer'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
     { name = "tts-engine", extras = ["cartesia"], marker = "extra == 'tts-cartesia'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
