@@ -200,13 +200,17 @@ class AppSystem:
     wica: Wica | None
     bridge: AsrBridge | None
     # Vision-in: the hand-sign input over the embodiment's camera; None without a `vision` config
-    # section or without an embodiment. See specs/gesture-input.md.
+    # section (hand signs off) or without an embodiment. See specs/gesture-input.md.
     gesture: GestureInput | None
     missing: list[str]
     # The typed-text hatch: writes the same `speech_input` World update a closed ASR segment makes (so
     # both flow through the identical reason → say → sink path), but ignores empty/whitespace input —
     # a guard ASR finals deliberately bypass. Built in build_system.
     submit_speech: Callable[[str], None]
+    # Whether the config turns speech input (an `asr` section) and hand signs (a `vision` section)
+    # on: absent means off, by choice — the page says "off" rather than "unavailable" then.
+    speech_on: bool = True
+    signs_on: bool = False
     # The body's own perceptions (`embodiment.inputs()`), each with the guarded `deliver` built for
     # it: registered at build, started by `_start` once the agent runs, stopped by `close_session` right
     # after it. Empty without a body or an agent. See specs/embodiment.md, "`inputs()` is the mirror
@@ -261,7 +265,8 @@ def build_system(
 
     # MediaPipe before the body: imported once the robot's media runs, it aborts the process on
     # Linux (see `preload_mediapipe`). Only for the shipped detector — an injected one needs none.
-    vision_on = config.vision is not None and config.vision.enabled
+    # Hand signs are on when the config has a `vision` section (absent means off).
+    vision_on = config.vision is not None
     if vision_on and (gesture_models is None or gesture_models.detector is None):
         preload_mediapipe()
     # Transformers before any worker thread: imported on two at once (the classifier's stage and
@@ -290,7 +295,7 @@ def build_system(
     # vocabulary — so a persona never describes hands it cannot see or emotions it cannot play. ---
     addenda = [body.prompt_addendum if body is not None else ""]
     vision = config.vision
-    if vision is not None and vision.enabled and body is not None:
+    if vision is not None and body is not None:
         addenda.append(hand_signs_prompt_section())
 
     # --- The latency view's collection, before the agent so its first spans are seen: the SDK is
@@ -363,31 +368,34 @@ def build_system(
     # --- Speech in: the ASR bridge, or None with a captured reason. Built after the agent, so its
     # on_final_segment callback (_deliver_speech) resolves forward with no placeholder. The engine
     # reads the embodiment's mic (None there means it opens its own default device), so speech-in
-    # needs a body: with none, the bridge stays None and typed text still drives the agent. -------
+    # needs a body: with none, the bridge stays None and typed text still drives the agent. With no
+    # `asr` section speech input is off: no engine, no bridge, no dictation Commands, and no banner
+    # line either — off is the config's choice, not something missing. -------------------------
     bridge: AsrBridge | None = None
-    if body is not None:
+    asr_config = config.asr_engine
+    if body is not None and asr_config is not None:
         embodied = body  # bound for the closure below: `body` is not reassigned after this point
         try:
-            asr = asr_engine_factory(config.asr_engine, body.mic)
+            asr = asr_engine_factory(asr_config, body.mic)
             bridge = AsrBridge(
                 asr,
                 on_final_segment=_deliver_speech,
                 mic_error=lambda: embodied.mic_error,
                 # The engine keeps its trigger words private; `start_dictation`'s reply names them.
-                trigger_words=config.asr_engine.segmentation.trigger_words,
+                trigger_words=asr_config.segmentation.trigger_words,
                 # The person speaking, for the latency timeline's You row.
                 on_speech=latency.speech if wica is not None else None,
             )
         except (ValueError, ImportError) as exc:
             missing.append(f"ASR: {exc}")
 
-    # --- Vision in: the hand-sign input over the embodiment's camera, only with `vision.enabled`
+    # --- Vision in: the hand-sign input over the embodiment's camera, only with a `vision` section
     # and a body (no embodiment ⇒ no camera) and an agent (there is nothing else to deliver to). The
     # World entries are registered only then, so a vision-less run never tells the model about hands
     # it cannot see. Construction loads no model and opens no camera (both happen on start()), so a
     # failure here is a programming/config error — still a banner line, never a crash. -----------
     gesture: GestureInput | None = None
-    if vision is not None and vision.enabled and body is not None and wica is not None:
+    if vision is not None and body is not None and wica is not None:
         world = wica.world
 
         def _deliver_gesture(hand: int, value: str | None) -> None:
@@ -437,6 +445,8 @@ def build_system(
         gesture=gesture,
         missing=missing,
         submit_speech=submit_speech,
+        speech_on=asr_config is not None,
+        signs_on=vision is not None,
         inputs=tuple(inputs),
         input_displays=input_displays,
         latency=latency if wica is not None else None,
@@ -708,6 +718,7 @@ def run_app[C: _Loaded](
     load: Callable[..., C],
     embodiment: Callable[[C], Embodiment],
     ensure_persona: Callable[[Path], Path],
+    check: Callable[[Mapping[str, Any]], list[str]] | None = None,
     argv: Sequence[str] | None = None,
 ) -> None:
     """The whole app, from the command line: each embodiment's ``main()`` is one call to this
@@ -716,7 +727,9 @@ def run_app[C: _Loaded](
     *app* is the embodiment's app-setup declaration (its sections, its default config, autostart);
     *load* is its ``load_config(data, *, base_dir)``; *embodiment* constructs the body from what
     *load* returned (no I/O in the constructor — ``build_system`` enters it); *ensure_persona*
-    copies its persona into the folder.
+    copies its persona into the folder; *check*, when given, says what is wrong across the
+    config's sections (the computer's hand signs without a camera), which Start refuses like a
+    blocker (``Session``).
 
     The app runs from its folder (``--folder``, default ``~/.config/<app.name>``): building the
     ``AppModel`` creates it, writes the default config into a new one and loads its ``.env``. Or it
@@ -751,7 +764,7 @@ def run_app[C: _Loaded](
     def opened(used_config: Mapping[str, Any], path: Path) -> Running:
         return open_session(used_config, path, load=load, embodiment=embodiment)
 
-    session = Session(opened)
+    session = Session(opened, check=check)
     try:
         source = open_source(options, app)
     except ConfigFileError as exc:

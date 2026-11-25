@@ -159,7 +159,10 @@ def tick_asr(system: AppSystem) -> tuple[str, str, Any, str]:
     if bridge is None:
         return (
             _NO_LIVE_SPEECH,
-            "_ASR unavailable._",
+            "_ASR unavailable._"
+            if system.speech_on
+            else "_Speech input is off (the config has no Speech recognition section): "
+            "type a turn instead._",
             gr.update(interactive=False),
             "",
         )
@@ -217,7 +220,9 @@ def tick_vision(system: AppSystem) -> str:
     error, each on its own line."""
     gesture = system.gesture
     if gesture is None:
-        return "_Vision off (`vision.enabled` is false, or no camera)._"
+        if not system.signs_on:
+            return "_Hand signs are off (the config has no Hand signs section)._"
+        return "_Hand signs unavailable (no body, or the banner says why)._"
     status = gesture.status()
     hands = status["hands"]
     signs = status["signs"]
@@ -454,7 +459,7 @@ def _blockers(model: AppModel, session: Session) -> list[str]:
     """Why the saved config cannot start now; none unless stopped."""
     if session.status != "stopped":
         return []
-    return model.blockers(model.saved_config())
+    return session.blockers(model)
 
 
 @dataclass(frozen=True)

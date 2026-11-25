@@ -496,15 +496,26 @@ def build_coordinator(config: ComputerConfig) -> AudioProcessingCoordinator:
     The one caught build point, called from ``ComputerEmbodiment.enter()`` through its
     ``coordinator_factory`` seam. Raises ``ImportError`` if an optional dependency is absent — the
     WebRTC backend, or (when echo cancellation is on) the resampler the far-end tap needs — and
-    ``RuntimeError`` if the config's ASR audio source is not an input device left at its default
-    format: the processor opens that device itself, at its own 16 kHz mono linear16.
+    ``RuntimeError`` if the config has no ``asr`` section (speech input off: no microphone to
+    clean) or its ASR audio source is not an input device left at its default format: the processor opens that device itself, at its own 16 kHz mono linear16.
     Either is caught by the caller and reported in ``missing`` so the embodiment degrades to
     no-processing rather than failing. Validating the resampler here, not lazily in
     ``bind_far_rate``, keeps a partial install (backend present, resampler absent) on the
     graceful-degrade path.
     """
     ap = config.audio_processing
-    audio = config.app.asr_engine.audio_source
+    asr = config.app.asr_engine
+    if ap is None:
+        raise RuntimeError(
+            "audio processing is off: the config has no audio_processing"
+        )
+    if asr is None:
+        # The processing cleans the microphone speech recognition reads; with speech input off
+        # there is no microphone opened to clean.
+        raise RuntimeError(
+            "not used: speech input is off (no asr section), so there is no microphone to clean"
+        )
+    audio = asr.audio_source
     if audio.type != "input-device":
         raise RuntimeError(
             f"audio processing needs asr.audio_source.type 'input-device' (the "

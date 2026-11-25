@@ -28,7 +28,7 @@ Anything else, `call` and `mute` among them, a label below the confidence thresh
 
 ## Enabling it
 
-Set `vision.enabled` to `true` ([reference](../reference/configuration.md#vision-hand-signs)) with the `vision` extra installed ([extras](../reference/install.md#extras)); both default configs ship it on. An absent section or `enabled: false` opens no camera, loads no model and tells the agent nothing about hands.
+Have a `vision` section in the config ([reference](../reference/configuration.md#vision-hand-signs)), `{}` being enough, with the `vision` extra installed ([extras](../reference/install.md#extras)); both default configs ship it. The section left out opens no camera, loads no model and tells the agent nothing about hands. On the computer the hand signs read the webcam of the `camera` section, which must be there too. A config still holding the old `enabled` field is refused: remove the field, or the whole section to turn hand signs off.
 
 The first run downloads the models, a MediaPipe hand bundle and a gesture classifier of about 340 MB, into the Hugging Face cache ([first-run downloads](../reference/install.md#first-run-downloads)); until they are loaded the Vision line shows no label. The models load on the first frame, so a download that fails, with no network, is reported on the Vision line rather than crashing the app.
 
@@ -53,7 +53,7 @@ With the stages, the hold and the agent's coalescing window of about 200 ms, a `
 
 ## The Vision line
 
-At the top of the Vision section, beside the ASR one, refreshed with it. Off, it reads `Vision off (vision.enabled is false, or no camera).` On, the rates first, then a few lines under a **Hand signs** subheading:
+At the top of the Vision section, beside the ASR one, refreshed with it. Off, it reads `Hand signs are off (the config has no Hand signs section).` On, the rates first, then a few lines under a **Hand signs** subheading:
 
 ```
 - camera: 9.8 fps

@@ -35,7 +35,7 @@ The config carries the shared sections (`wica`, `asr`, optional `vision` — [co
     "echo_cancellation": { "enabled": true, "stream_delay_ms": 50 },
     "noise_suppression": { "enabled": false, "level": 2 }
   },
-  "vision": { "enabled": true, "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null },
+  "vision": { "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null },
   "camera": { "device": 0 }
 }
 ```
@@ -50,13 +50,18 @@ class CameraConfig:
 class ComputerConfig:
     app: AppConfig  # the shared sections
     tts_engine: TTSEngineConfig
-    audio_processing: AudioProcessingConfig
-    camera: CameraConfig
+    audio_processing: AudioProcessingConfig | None = None  # None: absent, no processing
+    camera: CameraConfig | None = None  # None: absent, no webcam
+
+
+def config_problems(data: Mapping[str, Any]) -> list[str]: ...  # the rule across sections
 ```
 
 - **`tts` (required)** — tts-engine's engine block, handed verbatim to `TTSEngineConfig.from_dict(…, base_dir=base_dir)` (a relative voice file or model path is the folder's), so the provider (`module.type`: `elevenlabs`, `gradium`, `pocket`, …), its key reference and voice, and the `player.device` (the speaker) are the engine's own schema. The provider named must have its extra installed (`tts-<name>`, one per tts-engine provider: `tts-elevenlabs`, `tts-gradium`, `tts-pocket`, … — [project.md](project.md), "Extras").
-- **`audio_processing` (optional)** — absent ⇒ every feature off; the schema and semantics are in [audio-processing.md](audio-processing.md).
-- **`camera` (optional)** — the webcam `GestureInput` reads when `vision.enabled`; `device` is what `cv2.VideoCapture` takes (an index, default `0`, or a path/URL). Absent ⇒ device `0`. A non-object section, an unknown key, or a `device` that is neither an int nor a string raises `ValueError` from `load_config`, naming the section and the field; the fields are declared once, for the loader and for the section's contract ([setup.md](setup.md), "The app's own contracts").
+- **`asr` (optional, shared)** — absent ⇒ no speech input ([configuration.md](configuration.md), "Optional sections"): no mic is opened, and the audio processing, which cleans the mic for the recognizer, is not used (below).
+- **`audio_processing` (optional)** — absent ⇒ no processing (`None`); present, each feature by its own `enabled`. The schema and semantics are in [audio-processing.md](audio-processing.md).
+- **`camera` (optional)** — absent ⇒ no webcam (`None`). Present, the webcam `GestureInput` reads when hand signs are on; `device` is what `cv2.VideoCapture` takes (an index, default `0`, or a path/URL). A non-object section, an unknown key, or a `device` that is neither an int nor a string raises `ValueError` from `load_config`, naming the section and the field; the fields are declared once, for the loader and for the section's contract ([setup.md](setup.md), "The app's own contracts").
+- **Hand signs need the camera.** The one rule across this config's sections: `vision` present with `camera` absent (or `null`) is a problem, worded "Hand signs need a camera: add the Camera section, or remove the Hand signs section." `config_problems(data)` returns it, over the whole document. `load_config` raises it as a `ValueError` (so a config that reaches a session with it does not start), and the app hands `config_problems` to `run_app` as its `check`, so the session bar shows it and Start refuses it before anything is built ([session.md](session.md), "Start"). app-setup checks one section at a time and cannot see it; the robot has no such rule (its camera is the robot's).
 - The microphone is the ASR config's own `asr.audio_source.device` (opened by the engine, or by the audio processing when it is on), so it needs no section here.
 - Any top-level key outside `wica`/`asr`/`vision`/`tts`/`audio_processing`/`camera` is rejected — a `reachy` section in a computer config is a `ValueError`, not silently ignored ([configuration.md](configuration.md), "Loading").
 
@@ -85,7 +90,7 @@ The members:
 - **`voice`** — the bound `say` below, **always**: with no engine it stays wired and answers with the TTS error, the same contract as the robot's ([embodiment.md](embodiment.md), "A voice that failed to build stays wired").
 - **`mic`** — `coordinator.source` when a coordinator was built (the processed mic, whatever features are on), else `None`: the ASR engine opens its default `AudioCapture` on `asr.audio_source.device`.
 - **`mic_error`** — the coordinator's `capture_error` when one was built: why the processed mic went silent (its pump failed — [audio-processing.md](audio-processing.md), "Near-end path"), `None` while healthy. Without a coordinator, always `None`: the engine's own capture, when it dies, raises inside the engine, which reports it its own way.
-- **`camera(fps=…)`** — a `StreamFeed(WebcamSource(config.camera.device, fps=fps))`: the paced webcam source below, behind the gesture module's own `StreamProvider` adapter ([gesture-input.md](gesture-input.md), "`StreamFeed`"), so the hand stage samples a latest-value slot here as it does on the robot. `open()` starts the provider (which opens the webcam), `close()` stops it; `capture_error` is the source's.
+- **`camera(fps=…)`** — with no `camera` section, a `RuntimeError` carrying the rule's wording (a config built around the loader still gets a plain `Vision: …` banner line, not an `AttributeError`); else a `StreamFeed(WebcamSource(config.camera.device, fps=fps))`: the paced webcam source below, behind the gesture module's own `StreamProvider` adapter ([gesture-input.md](gesture-input.md), "`StreamFeed`"), so the hand stage samples a latest-value slot here as it does on the robot. `open()` starts the provider (which opens the webcam), `close()` stops it; `capture_error` is the source's.
 - **`view()`** — the webcam on the page: the feed `camera()` built keeps its newest frame, and `view()` returns it through `display_frame`, mirrored ([embodiment.md](embodiment.md), "`view()` is display-ready"), with no status. Before `camera()` was called — vision off, so no webcam is ever opened — or before the feed's first frame, an empty `EmbodimentView()`. It reads the feed the gesture input samples: the page opens no device of its own.
 - **`commands()`** — `()`; the computer has nothing to act with.
 - **`prompt_addendum`** — `""`.
@@ -171,7 +176,7 @@ def main() -> None:
 
 `tests/computer/` — deterministic, no audio device, no camera, no provider ([testing.md](testing.md)):
 
-- **Config:** `load_config` on a computer document yields the shared `AppConfig` plus `tts_engine`, `audio_processing`, `camera`; `tts` missing, `tts` that is not an object, a `camera` that is not an object or has an unknown key, a `reachy` section, each raise `ValueError` naming the section; `camera` absent ⇒ device `0`; a relative voice file in `tts` resolves against `base_dir`; **the default config loads**; the `audio_processing` cases are in [audio-processing.md](audio-processing.md).
+- **Config:** `load_config` on a computer document yields the shared `AppConfig` plus `tts_engine`, `audio_processing`, `camera`; `tts` missing, `tts` that is not an object, a `camera` that is not an object or has an unknown key, a `reachy` section, each raise `ValueError` naming the section; `asr`, `audio_processing` and `camera` absent ⇒ `None` (off); `vision` without `camera` refused by `load_config` and named by `config_problems`, `vision` with it and `camera` alone accepted; each starting document loading as its section; a relative voice file in `tts` resolves against `base_dir`; **the default config loads**; the `audio_processing` cases are in [audio-processing.md](audio-processing.md).
 - **Voice:** with an injected fake `TTSEngine`, WICA reads the voice as a streaming output Command; a tag's pieces reach `say_stream` and `say` returns `"OK"`; the first words reach the engine before the tag closes and `say` returns only after it; an empty, `""`, whitespace-only or punctuation-only tag returns the empty-text error without calling the engine; what reaches the engine is the cleaned text; a `TTSError` maps to `"TTS error: …"`.
 - **Enter:** with a fake engine, `voice` is set, `mic` is `None` with processing off; a `coordinator_factory` returning a fake coordinator makes `mic` its `source`, and with echo cancellation on the engine is built with its `sink` and `bind_far_rate` is called with the engine's rate; a factory raising `ImportError`, or an exception nobody foresaw, degrades to `Audio processing: …` in `missing` with a still-working voice; `mic_error` is the coordinator's `capture_error`, and `None` without one; a `TTSEngine` build raising `ConfigError`, `ImportError` or any other exception degrades to `TTS: …` with `voice` still the `say`, which returns the TTS error naming the cause; `commands()` is empty and `prompt_addendum` is `""`.
 - **Webcam:** `WebcamSource` over an injected fake `OpenCVSource`-like object: `read()` paces to `fps`, the first read returning at once and a later one returning what the device holds when its interval ends (not a frame held back from its start); an `open()` that raises sets `capture_error` and a later success clears it; `close()` makes `read()` return `None` promptly; an open that completes after `close()` is released; a device whose stream ends after each frame (as an image file's does) is reopened in the same poll, delivering every poll with no `capture_error`, while a device that has delivered nothing yet is not reopened; a stream that ends and whose reopen fails sets `capture_error` (`camera open failed`), and the source heals once the device opens again. `camera(fps=…)` returns a `StreamFeed` whose `capture_error` is that webcam's (an unopenable device shows through it) and whose `open()` / `close()` open and close the device.

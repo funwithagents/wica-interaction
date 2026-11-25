@@ -39,7 +39,7 @@ from wica_interaction.computer.audio_processing import (
     AudioProcessingCoordinator,
     build_coordinator,
 )
-from wica_interaction.computer.config import ComputerConfig
+from wica_interaction.computer.config import VISION_NEEDS_CAMERA, ComputerConfig
 from wica_interaction.embodiment import (
     EMPTY_UTTERANCE,
     EmbodimentView,
@@ -242,7 +242,7 @@ class ComputerEmbodiment:
         degrades — no coordinator means the mic goes straight to ASR, no engine means a ``say`` that
         reports the TTS error."""
         ap = self._config.audio_processing
-        if ap.any_enabled:
+        if ap is not None and ap.any_enabled:
             try:
                 self._coordinator = self._factory(self._config)
             except Exception as exc:  # noqa: BLE001 - processing degrades alone, whatever broke it
@@ -254,7 +254,9 @@ class ComputerEmbodiment:
         # suppression processes the mic alone. So the sink is wired only when AEC is on.
         sink = (
             self._coordinator.sink
-            if self._coordinator is not None and ap.echo_cancellation.enabled
+            if self._coordinator is not None
+            and ap is not None
+            and ap.echo_cancellation.enabled
             else None
         )
         try:
@@ -330,8 +332,13 @@ class ComputerEmbodiment:
         device, ``close()`` releases it, ``capture_error`` is the webcam's."""
         # The opener is named here, not left to the default, so the module attribute is what is
         # resolved at call time (a test swaps it for a fake device).
+        camera = self._config.camera
+        if camera is None:
+            # The loader refuses hand signs without the camera section; a config built around it
+            # still gets a plain reason (a `Vision: …` banner line), not an AttributeError.
+            raise RuntimeError(VISION_NEEDS_CAMERA)
         self._feed = StreamFeed(
-            WebcamSource(self._config.camera.device, fps=fps, opener=OpenCVSource)
+            WebcamSource(camera.device, fps=fps, opener=OpenCVSource)
         )
         return self._feed
 
@@ -343,6 +350,7 @@ class ComputerEmbodiment:
         coordinator = self._coordinator
         if (
             coordinator is not None
+            and self._config.audio_processing is not None
             and self._config.audio_processing.echo_cancellation.enabled
         ):
             return {

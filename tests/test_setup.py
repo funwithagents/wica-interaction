@@ -19,10 +19,12 @@ from app_setup.extras import host_extras
 
 from wica_interaction.computer.app import DEFAULT_CONFIG as COMPUTER_DEFAULT
 from wica_interaction.computer.app import SECTIONS as COMPUTER_SECTIONS
+from wica_interaction.computer.app import STARTING_DOCUMENTS as COMPUTER_STARTING
 from wica_interaction.computer.config import CameraConfig
 from wica_interaction.config import VisionConfig
 from wica_interaction.reachy.app import DEFAULT_CONFIG as REACHY_DEFAULT
 from wica_interaction.reachy.app import SECTIONS as REACHY_SECTIONS
+from wica_interaction.reachy.app import STARTING_DOCUMENTS as REACHY_STARTING
 from wica_interaction.setup import AUDIO_PROCESSING, CAMERA, VISION
 
 _E2E = Path(__file__).resolve().parents[1] / "tests-e2e" / "configs"
@@ -66,6 +68,24 @@ def test_every_section_of_each_default_config_passes_its_contract(
         )
 
 
+@pytest.mark.parametrize(
+    ("sections", "starting"),
+    [
+        (COMPUTER_SECTIONS, COMPUTER_STARTING),
+        (REACHY_SECTIONS, REACHY_STARTING),
+    ],
+    ids=["computer", "reachy"],
+)
+def test_every_starting_document_passes_its_contract(
+    sections: Any, starting: dict[str, dict[str, Any]]
+) -> None:
+    """What the Setup tab writes when the user adds an optional section is a document its owner's
+    contract accepts as it is."""
+    contracts = {section.name: section.contract for section in sections}
+    for name, document in starting.items():
+        assert contracts[name].check_config(document) == [], name
+
+
 # --- A draft's problems, worded as the loaders word them --------------------------------------
 
 
@@ -75,7 +95,7 @@ def test_every_section_of_each_default_config_passes_its_contract(
         ({"fps": 0}, "/fps"),
         ({"threshold": 1.5}, "/threshold"),
         ({"max_hands": 2.0}, "/max_hands"),
-        ({"enabled": "yes"}, "/enabled"),
+        ({"enabled": True}, "/enabled"),
         ({"mirror": True}, "/mirror"),
     ],
 )
@@ -87,6 +107,14 @@ def test_a_vision_problem_is_at_its_pointer_with_the_loaders_message(
     with pytest.raises(ValueError) as refused:
         VisionConfig.from_dict(document)
     assert problem["message"] == str(refused.value)
+
+
+def test_the_retired_enabled_is_refused_with_how_to_fix_it_and_the_rest_still_checked() -> (
+    None
+):
+    problems = VISION.check_config({"enabled": False, "fps": 0})
+    assert [p["path"] for p in problems] == ["/enabled", "/fps"]
+    assert "Remove 'enabled'" in problems[0]["message"]
 
 
 def test_every_problem_is_reported_at_once() -> None:
@@ -123,15 +151,11 @@ def test_a_section_that_is_not_an_object_is_one_problem_at_its_root() -> None:
 @pytest.mark.parametrize(
     ("document", "expected"),
     [
-        ({}, []),
-        ({"enabled": False}, []),
-        ({"enabled": True}, ["wica-interaction[vision]"]),
-        ("nonsense", []),
+        ({}, ["wica-interaction[vision]"]),
+        ({"threshold": 0.7}, ["wica-interaction[vision]"]),
     ],
 )
-def test_vision_needs_its_extra_only_when_on(
-    document: Any, expected: list[str]
-) -> None:
+def test_vision_present_needs_its_extra(document: Any, expected: list[str]) -> None:
     assert VISION.required_extras(document) == expected
 
 
@@ -197,15 +221,11 @@ def _missing_import() -> None:
     raise ImportError("No module named 'mediapipe'")
 
 
-def test_vision_off_needs_nothing(models: _Models) -> None:
-    assert VISION.check_setup({"enabled": False}) == []
-
-
 def test_a_missing_vision_extra_is_the_only_item(
     models: _Models, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(VISION, "try_imports", _missing_import)
-    [item] = VISION.check_setup({"enabled": True})
+    [item] = VISION.check_setup({})
     assert item["id"] == "extra:wica-interaction[vision]"
     assert item["status"] == "missing"
     assert item["required"] is True and item["preparable"] is False
@@ -215,7 +235,7 @@ def test_a_missing_vision_extra_is_the_only_item(
 def test_with_the_extra_the_models_are_optional_items_to_prepare(
     models: _Models,
 ) -> None:
-    items = {item["id"]: item for item in VISION.check_setup({"enabled": True})}
+    items = {item["id"]: item for item in VISION.check_setup({})}
     assert items["extra:wica-interaction[vision]"]["status"] == "ready"
     for model in ("model:hand-landmarker", "model:gesture-classifier"):
         assert items[model]["status"] == "missing"
@@ -226,20 +246,18 @@ def test_with_the_extra_the_models_are_optional_items_to_prepare(
 
 def test_one_model_is_prepared_alone_with_its_progress(models: _Models) -> None:
     events: list[dict[str, Any]] = []
-    VISION.prepare(
-        {"enabled": True}, "model:hand-landmarker", on_progress=events.append
-    )
+    VISION.prepare({}, "model:hand-landmarker", on_progress=events.append)
 
     assert models.fetched == ["model:hand-landmarker"]
     assert events[-1]["fraction"] == 1.0
-    statuses = {i["id"]: i["status"] for i in VISION.check_setup({"enabled": True})}
+    statuses = {i["id"]: i["status"] for i in VISION.check_setup({})}
     assert statuses["model:hand-landmarker"] == "ready"
     assert statuses["model:gesture-classifier"] == "missing"
 
 
 def test_preparing_a_ready_model_fetches_nothing(models: _Models) -> None:
     models.cached.add("model:gesture-classifier")
-    VISION.prepare({"enabled": True}, "model:gesture-classifier")
+    VISION.prepare({}, "model:gesture-classifier")
     assert models.fetched == []
 
 
@@ -254,14 +272,14 @@ def test_a_cache_that_cannot_be_read_is_unknown_not_a_raise(
     monkeypatch.setitem(
         VISION.models, "model:gesture-classifier", (title, what, unreadable, fetch)
     )
-    items = {item["id"]: item for item in VISION.check_setup({"enabled": True})}
+    items = {item["id"]: item for item in VISION.check_setup({})}
     assert items["model:gesture-classifier"]["status"] == "unknown"
 
 
 @pytest.mark.parametrize(
     ("contract", "document"),
     [
-        (VISION, {"enabled": True}),
+        (VISION, {}),
         (AUDIO_PROCESSING, {"echo_cancellation": {"enabled": True}}),
         (CAMERA, {}),
     ],
@@ -300,7 +318,7 @@ def test_vision_probe_loads_with_the_configured_values(
         return "loaded"
 
     monkeypatch.setattr(VISION, "load", load)
-    result = VISION.probe({"enabled": True, "max_hands": 1, "device": "cpu"})
+    result = VISION.probe({"max_hands": 1, "device": "cpu"})
     assert result["ok"] is True and result["message"] == "loaded"
     assert seen == [(1, "cpu")]
 
@@ -329,7 +347,6 @@ def test_a_probe_over_an_invalid_section_says_so(
 
 
 def test_a_probe_with_nothing_to_run_says_so() -> None:
-    assert VISION.probe({"enabled": False})["ok"] is True
     assert AUDIO_PROCESSING.probe({})["ok"] is True
 
 
@@ -385,11 +402,11 @@ def test_every_requirement_a_section_can_name_has_an_extra_here() -> None:
     reachy_extras = [
         {"reachy": {"backend": "sim", "daemon": {"spawn": "auto"}}},
         {"reachy": {"backend": "sim", "daemon": {"kinematics_engine": "placo"}}},
-        {"vision": {"enabled": True}},
+        {"vision": {}},
     ]
     computer_extras = [
         {"audio_processing": {"noise_suppression": {"enabled": True}}},
-        {"vision": {"enabled": True}},
+        {"vision": {}},
     ]
     requirements = _requirements(
         COMPUTER_SECTIONS, [COMPUTER_DEFAULT, _e2e("computer"), *computer_extras]

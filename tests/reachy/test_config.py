@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from reachy_mini_bridge.config import ReachyMiniConfig
 
-from wica_interaction.reachy.app import DEFAULT_CONFIG
+from wica_interaction.reachy.app import DEFAULT_CONFIG, STARTING_DOCUMENTS
 from wica_interaction.reachy.config import ReachyConfig, load_config
 
 
@@ -55,6 +55,7 @@ def test_happy_path_yields_the_shared_config_and_a_bridge_config(
     assert isinstance(cfg, ReachyConfig)
     # The shared sections live under `.app`, untouched by this loader.
     assert cfg.app.wica.agent.provider == "anthropic"
+    assert cfg.app.asr_engine is not None
     assert cfg.app.asr_engine.module.type == "deepgram-v2"
 
     # The `reachy` section is a verbatim bridge config, delegated to ReachyMiniConfig.from_dict.
@@ -229,6 +230,30 @@ def test_the_default_config_loads(tmp_path: Path) -> None:
     assert cfg.reachy.face_detection.enabled is True
     assert cfg.reachy.face_detection.score_threshold == 0.6
     assert cfg.reachy.motion.tracking.enabled is False
+    # Speech input and hand signs are on at first launch: both sections present.
+    assert cfg.app.asr_engine is not None
+    assert cfg.app.vision is not None
+
+
+def test_speech_and_hand_signs_absent_are_off(tmp_path: Path) -> None:
+    # Optional (specs/configuration.md, "Optional sections"); the robot's hand signs read its own
+    # camera, so no rule across sections applies here.
+    config = _composed()
+    del config["asr"]
+    cfg = _load(tmp_path, config)
+    assert cfg.app.asr_engine is None
+    assert cfg.app.vision is None
+    assert _load(tmp_path, {**config, "vision": {}}).app.vision is not None
+
+
+@pytest.mark.parametrize("name", sorted(STARTING_DOCUMENTS))
+def test_each_starting_document_loads_as_its_section(tmp_path: Path, name: str) -> None:
+    config = _composed()
+    config.pop("asr")
+    cfg = _load(tmp_path, {**config, name: STARTING_DOCUMENTS[name]})
+    assert (cfg.app.asr_engine if name == "asr" else cfg.app.vision) is not None
+    assert STARTING_DOCUMENTS["asr"] == DEFAULT_CONFIG["asr"]
+    assert STARTING_DOCUMENTS["vision"] == {}
 
 
 def test_a_relative_scene_resolves_against_the_folder(tmp_path: Path) -> None:

@@ -2,12 +2,15 @@
 
 The app runs from its folder (`~/.config/wica-interaction-reachy`, or `--folder`), whose
 `config.json` holds the sections below, each described to the Setup tab by its owner's setup
-contract (specs/setup.md). `SECTIONS` and `APP` are public: a host built on this app composes its
-own `App` from the same sections.
+contract (specs/setup.md). `wica` and `reachy` are required; `asr` and `vision` are optional —
+absent means off — each with the starting document the Setup tab writes when the user adds it
+(`STARTING_DOCUMENTS`). `SECTIONS`, `APP` and `STARTING_DOCUMENTS` are public: a host built on this
+app composes its own `App` from the same sections.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 from importlib.resources import files
 from pathlib import Path
@@ -20,7 +23,7 @@ from app_setup.app import App, Section
 
 from wica_interaction.reachy.config import load_config
 from wica_interaction.reachy.embodiment import ReachyEmbodiment
-from wica_interaction.setup import VISION
+from wica_interaction.setup import VISION, VISION_START
 from wica_interaction.system import copy_persona, run_app
 
 # The default config and the persona, shipped in the package (specs/setup.md, "The defaults ship
@@ -30,6 +33,13 @@ PERSONA_FILE = "reachy.md"
 DEFAULT_CONFIG: dict[str, Any] = json.loads(
     (_DEFAULT / "config.json").read_text(encoding="utf-8")
 )
+
+# What each optional section starts from when the user adds it (specs/configuration.md, "Optional
+# sections"): speech recognition as the default config has it, hand signs at every default.
+STARTING_DOCUMENTS: dict[str, dict[str, Any]] = {
+    "asr": copy.deepcopy(DEFAULT_CONFIG["asr"]),
+    "vision": copy.deepcopy(VISION_START),
+}
 
 SECTIONS: tuple[Section, ...] = (
     Section("wica", wica.setup, title="Agent"),

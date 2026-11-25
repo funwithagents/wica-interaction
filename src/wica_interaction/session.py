@@ -3,7 +3,8 @@
 The app (the process and its page) outlives every session: a user stops one, changes the config on
 the Setup tab, and starts another, without relaunching. ``Session`` holds that cycle: at most one
 running session, built from the app's **saved** config. Start checks it first
-(``AppModel.blockers``: its problems, what the machine misses) and says why instead of starting;
+(``AppModel.blockers``: its problems, what the machine misses; then the app's own rules across
+sections, its ``check``) and says why instead of starting;
 Stop tears the session down, leaving nothing of it in the process. The config is locked
 (``locked()``) from a Start until its teardown has finished, so the Setup tab cannot save a config
 out from under a running session.
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
 
     from wica_interaction.system import AppSystem
 
-__all__ = ["OpenSession", "Running", "Session", "Status"]
+__all__ = ["ConfigCheck", "OpenSession", "Running", "Session", "Status"]
 
 _log = logging.getLogger(__name__)
 
@@ -52,13 +53,20 @@ class Running:
 # Builds one session from the used config and the app's folder: the embodiment's.
 OpenSession = Callable[[Mapping[str, Any], Path], Running]
 
+# What is wrong across the sections of a used config, in words (the computer's hand signs without
+# a camera): the app's own rules, which app-setup's per-section checks cannot see.
+ConfigCheck = Callable[[Mapping[str, Any]], list[str]]
+
 
 class Session:
     """At most one running session, started from the app's saved config. Thread-safe: the page's
     handlers run on Gradio's worker threads, from any browser tab."""
 
-    def __init__(self, open_session: OpenSession) -> None:
+    def __init__(
+        self, open_session: OpenSession, *, check: ConfigCheck | None = None
+    ) -> None:
         self._open_session = open_session
+        self._check = check
         self._lock = threading.Lock()
         self._current: Running | None = None
         self._status: Status = "stopped"
@@ -85,6 +93,18 @@ class Session:
         """Bumped at every start and stop: the page draws the session's surfaces again."""
         return self._version
 
+    def blockers(self, model: AppModel) -> list[str]:
+        """Why the saved config cannot start, in words; empty when it can: app-setup's blockers
+        (each section's problems, what the machine misses), then the app's rules across
+        sections."""
+        return self._blockers(model, model.saved_config())
+
+    def _blockers(self, model: AppModel, saved: Mapping[str, Any]) -> list[str]:
+        reasons = model.blockers(saved)
+        if self._check is not None:
+            reasons += self._check(model.used_config(saved))
+        return reasons
+
     def locked(self) -> bool:
         """Whether the saved config is in use: from a Start until the teardown has finished."""
         return self._status != "stopped"
@@ -97,7 +117,7 @@ class Session:
             if self._status != "stopped":
                 return []
             saved = model.saved_config()
-            blockers = model.blockers(saved)
+            blockers = self._blockers(model, saved)
             if blockers:
                 self._reasons = blockers
                 return list(blockers)

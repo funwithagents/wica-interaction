@@ -46,7 +46,7 @@ The config carries the shared sections (`wica`, `asr`, optional `vision` — [co
     "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "score_threshold": 0.6, "target_fps": null },
     "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": { "enabled": false } }
   },
-  "vision": { "enabled": true, "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null }
+  "vision": { "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null }
 }
 ```
 

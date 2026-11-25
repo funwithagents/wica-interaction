@@ -133,6 +133,8 @@ def _system(
     gesture: GestureInput | None = None,
     embodiment: FakeEmbodiment | None = None,
     display_name: str | None = None,
+    speech_on: bool = True,
+    signs_on: bool = False,
 ) -> AppSystem:
     """A bare `AppSystem` carrying only what the view under test reads. `display_name` defaults to
     the body's, as `build_system` sets it; pass it alone for a body that failed to enter."""
@@ -148,6 +150,8 @@ def _system(
         gesture=gesture,
         missing=[],
         submit_speech=lambda _text: None,
+        speech_on=speech_on,
+        signs_on=signs_on,
     )
 
 
@@ -220,7 +224,18 @@ def test_display_entry_labels_each_hand_sign_input() -> None:
 
 
 def test_vision_line_without_gesture_input_says_off() -> None:
-    assert "off" in tick_vision(_system_with_gesture(None))
+    assert "Hand signs are off" in tick_vision(_system_with_gesture(None))
+    # On in the config but not built (no body, or a failure the banner names): not "off".
+    unavailable = tick_vision(_system(signs_on=True))
+    assert "unavailable" in unavailable and "off" not in unavailable
+
+
+def test_asr_line_says_speech_input_is_off_without_the_section() -> None:
+    _, off, _, vad = tick_asr(_system(speech_on=False))
+    assert "Speech input is off" in off and "type a turn" in off
+    assert vad == ""
+    _, unavailable, _, _ = tick_asr(_system())
+    assert unavailable == "_ASR unavailable._"
 
 
 def test_vision_shows_each_hand_slot_as_a_row_and_the_rates_as_a_list() -> None:

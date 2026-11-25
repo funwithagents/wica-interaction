@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from app_setup.app import AppModel
 from app_setup.config_file import ConfigFile
@@ -11,7 +12,13 @@ from app_setup.folder import ConfigFolder
 from app_setup.ui import config_page
 
 from wica_interaction.computer.app import APP, DEFAULT_CONFIG, ensure_persona
-from wica_interaction.computer.config import SECTIONS, load_config
+from wica_interaction.computer.config import (
+    SECTIONS,
+    VISION_NEEDS_CAMERA,
+    config_problems,
+    load_config,
+)
+from wica_interaction.session import Session
 
 
 def test_the_app_declares_its_sections_in_the_pages_order() -> None:
@@ -67,6 +74,24 @@ def test_the_default_config_has_no_problem_for_app_setup(tmp_path: Path) -> None
     would keep the first Start from running)."""
     model = AppModel(APP, ConfigFolder(tmp_path / "app", APP.default_config))
     assert model.check_config(model.saved_config()) == []
+
+
+def test_hand_signs_without_a_camera_are_a_reason_start_gives(tmp_path: Path) -> None:
+    """The rule across sections (specs/computer-embodiment.md, "Hand signs need the camera"): the
+    app's check sees the whole used config, so the session bar shows it and Start refuses it."""
+    config = {k: v for k, v in DEFAULT_CONFIG.items() if k != "camera"}
+    model = AppModel(APP, ConfigFolder(tmp_path / "app", config))
+    session = Session(_never_opened, check=config_problems)
+
+    assert VISION_NEEDS_CAMERA in session.blockers(model)
+    assert VISION_NEEDS_CAMERA in session.start(model)
+    assert session.status == "stopped"
+    # The default config, camera included, has nothing to say across sections.
+    assert config_problems(DEFAULT_CONFIG) == []
+
+
+def _never_opened(_used: Any, _folder: Path) -> Any:
+    raise AssertionError("a blocked Start builds nothing")
 
 
 def test_a_config_file_runs_with_its_persona_next_to_it(tmp_path: Path) -> None:

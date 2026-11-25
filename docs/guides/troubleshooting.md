@@ -53,7 +53,7 @@ The transcript shows the agent's own sentences coming back as 🗣️ input, and
 
 ## No camera frame, or no sign
 
-- **Is vision on?** `_Vision off_` on the Vision line means `vision.enabled` is false, or there is no body. With it on, the line reads `running` and the hand-stage and classifier rates climb once the models are loaded ([hand-signs.md](hand-signs.md#the-vision-line)).
+- **Is vision on?** `Hand signs are off` on the Vision line means the config has no `vision` section; `Hand signs unavailable` means there is no body, or the banner says what failed. With it on, the line reads `running` and the hand-stage and classifier rates climb once the models are loaded ([hand-signs.md](hand-signs.md#the-vision-line)).
 - **`⚠️ error:` on the line.** A model failed to load: no network on the first run (the download is a few hundred megabytes), or the `vision` extra is not installed. Fix it and restart; the app itself keeps running.
 - **`⚠️ camera: no camera frame for 3 s`.** The camera publishes nothing. The computer: the wrong `camera.device`, no camera permission for the terminal (macOS), the webcam held by another application; a `camera open failed: …` tail says which, and the source retries so plugging the camera in heals it. The robot: a headless simulator on macOS has no camera (no GL context without a window), a daemon that has not delivered its first frame yet, a Lite whose camera is held by another process; the bridge's [troubleshooting page](https://github.com/funwithagents/reachy-mini-bridge/blob/main/docs/guides/troubleshooting.md) has the robot's camera checks.
 - **Hands are seen, no sign is delivered.** The label is `below threshold`: lower `vision.threshold`, or improve the light. The sign flickers between two classes: the hold filter needs it unbroken for `hold_s`; hold it steadier, or lower `hold_s`. A sign arrives late: see the tuning notes in [hand-signs.md](hand-signs.md#tuning). `no crop` means the hand is at the frame's edge.
@@ -91,5 +91,5 @@ The banner reads `Reachy Mini: …`. The message is the bridge's or upstream's, 
 
 - **Typing raises `World is not running`.** The agent was not built (see the banner) or the app is shutting down.
 - **The World panel shows a note instead of a table.** No agent: the banner says why.
-- **The Vision section says `No camera frame yet`.** On the computer the webcam opens only with `vision.enabled`; with it on, the Vision line's `⚠️ camera:` tail says why no frame came. On the robot, the session has not published a frame yet, or the body is absent (the banner says why).
+- **The Vision section says `No camera frame yet`.** On the computer the webcam opens only with a `vision` section (and its `camera` section); with it on, the Vision line's `⚠️ camera:` tail says why no frame came. On the robot, the session has not published a frame yet, or the body is absent (the banner says why).
 - **Closing.** Stop the command with Ctrl-C: the app closes the agent, stops vision and the recognizer, exits the body (the robot goes to sleep, a daemon the bridge spawned is stopped) and ends. A step that hangs is given five seconds and skipped, so a stuck device cannot strand the process.

@@ -20,13 +20,14 @@ import asyncio
 import json
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 import pytest
 from app_setup.app import App, AppModel, Section
-from asr_engine.audio import AudioFormat
+from asr_engine.audio import AudioFormat, AudioSource
 from asr_engine.config import ASREngineConfig
 from asr_engine.segmenter import SpeechSegment
 from opentelemetry import trace
@@ -612,6 +613,30 @@ def _asr_degrade_config() -> AppConfig:
         {"module": {"type": "deepgram-v2", "api_key_env": "WICA_TEST_UNSET_ASR_KEY"}}
     )
     return AppConfig(wica=scripted_wica_config([], persona="double"), asr_engine=asr)
+
+
+def test_no_asr_section_is_speech_input_off_and_typing_still_drives_the_agent() -> None:
+    """Optional (specs/configuration.md, "Optional sections"): without an `asr` section no engine is
+    built, no bridge and no dictation Commands exist, nothing is said missing (off is the config's
+    choice), and a typed turn still reaches the agent and its voice."""
+    embodiment = FakeEmbodiment()
+    calls: list[AudioSource | None] = []
+    config = replace(_config(script=_say_once("typed, heard")), asr_engine=None)
+    system = build_system(
+        config, embodiment, asr_engine_factory=asr_factory(FakeASREngine(), calls)
+    )
+    try:
+        assert calls == []  # no engine built
+        assert system.bridge is None and not system.speech_on
+        assert system.missing == []
+        _wire(system)
+        _start(system)
+        assert system.wica is not None
+        assert "start_dictation" not in system.wica.agent.commands
+        system.submit_speech("hello")
+        assert _wait_until(lambda: embodiment.said == ["typed, heard"])
+    finally:
+        close_session(system)
 
 
 def test_missing_asr_key_degrades_but_the_body_survives(monkeypatch: Any) -> None:
@@ -1271,7 +1296,7 @@ def _vision_system(
         embodiment,
         script=script,
         # No hold: these tests are about the wiring, not the filter (tested with the module).
-        vision=VisionConfig(enabled=True, fps=100.0, hold_s=0.0),
+        vision=VisionConfig(fps=100.0, hold_s=0.0),
         models=GestureModels(detector=_ScriptedDetector(), classifier=classifier),
     )
 
@@ -1383,16 +1408,15 @@ def test_vision_is_off_without_a_config_section() -> None:
         close_session(system)
 
 
-def test_vision_section_present_but_disabled_builds_nothing() -> None:
-    """`enabled: false` (the default) with the body up: no gesture input, no `hand_gesture_<n>`
-    entry, no hand-signs section — the section can sit in the file, tuned, without vision running."""
+def test_a_vision_section_present_is_hand_signs_on() -> None:
+    """The section is the switch (specs/configuration.md, "Optional sections"): present, even
+    `{}`, builds the gesture input with its entries and the persona's section."""
     system = _build(FakeEmbodiment(), script=[], vision=VisionConfig(fps=100.0))
     try:
-        assert system.gesture is None
+        assert system.gesture is not None and system.signs_on
         assert system.wica is not None
-        assert not system.wica.world.is_registered("hand_gesture_1")
-        assert "## Hand signs" not in system.wica.agent.system_prompt
-        assert not any(m.startswith("Vision:") for m in system.missing)
+        assert system.wica.world.is_registered("hand_gesture_1")
+        assert "## Hand signs" in system.wica.agent.system_prompt
     finally:
         close_session(system)
 
@@ -1404,9 +1428,7 @@ def test_vision_max_hands_fps_and_hold_reach_the_gesture_input() -> None:
     system = _build(
         embodiment,
         script=[],
-        vision=VisionConfig(
-            enabled=True, max_hands=1, fps=20.0, hold_s=0.25, release_hold_s=0.75
-        ),
+        vision=VisionConfig(max_hands=1, fps=20.0, hold_s=0.25, release_hold_s=0.75),
         models=GestureModels(
             detector=_ScriptedDetector(), classifier=_ScriptedClassifier(fist=0.9)
         ),
@@ -1427,7 +1449,7 @@ def test_vision_needs_a_body() -> None:
     """No body ⇒ no camera ⇒ no gesture input and no `hand_gesture_<n>` entry (the agent is never
     told about hands it cannot see); the banner carries only the body's line."""
     system = build_system(
-        _config(script=[], vision=VisionConfig(enabled=True)),
+        _config(script=[], vision=VisionConfig()),
         FakeEmbodiment(raise_on_enter="no body"),
         asr_engine_factory=asr_factory(FakeASREngine()),
     )

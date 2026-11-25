@@ -42,7 +42,13 @@ class _Harness:
     """An app with one `wica` section, its folder, and a session over the fake body: each Start
     builds a new `FakeEmbodiment` whose voice answers every turn with *reply*."""
 
-    def __init__(self, folder: Path, saved: dict[str, Any], reply: str = "Hi.") -> None:
+    def __init__(
+        self,
+        folder: Path,
+        saved: dict[str, Any],
+        reply: str = "Hi.",
+        check: Any = None,
+    ) -> None:
         app = App(
             name="wica-interaction-test",
             host="wica-interaction",
@@ -52,7 +58,7 @@ class _Harness:
         self.reply = reply
         self.bodies: list[FakeEmbodiment] = []
         self.personas: list[str] = []
-        self.session = Session(self._open)
+        self.session = Session(self._open, check=check)
         self.model = AppModel(
             app, ConfigFolder(folder, saved), locked=self.session.locked
         )
@@ -115,6 +121,31 @@ def test_a_start_with_a_blocker_builds_nothing_and_says_why(tmp_path: Path) -> N
     assert harness.bodies == []
     assert harness.session.status == "stopped" and not harness.session.locked()
     assert harness.session.reasons == reasons
+
+
+def test_a_rule_across_sections_blocks_start_like_a_blocker(tmp_path: Path) -> None:
+    """The app's own check over the whole used config (the computer's hand signs without a camera)
+    joins app-setup's blockers: the bar shows it before a Start, and Start refuses on it."""
+    seen: list[dict[str, Any]] = []
+
+    def check(used: Any) -> list[str]:
+        seen.append(dict(used))
+        return ["Hand signs need a camera."]
+
+    harness = _Harness(tmp_path / "app", _saved(), check=check)
+
+    assert harness.session.blockers(harness.model) == ["Hand signs need a camera."]
+    assert seen[-1] == harness.model.used_config(harness.model.saved_config())
+    reasons = harness.session.start(harness.model)
+    assert reasons == ["Hand signs need a camera."]
+    assert harness.bodies == [] and harness.session.status == "stopped"
+
+
+def test_a_check_with_nothing_to_say_lets_the_session_start(tmp_path: Path) -> None:
+    harness = _Harness(tmp_path / "app", _saved(), check=lambda _used: [])
+    assert harness.session.start(harness.model) == []
+    assert harness.session.status == "running"
+    harness.session.stop()
 
 
 def test_start_then_stop(tmp_path: Path) -> None:

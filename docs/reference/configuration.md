@@ -1,6 +1,6 @@
 # Configuration reference
 
-Each app is stood up from **one JSON config**, the `config.json` of its folder (or a config file of the same shape, [Three launches](#three-launches)): the sections every embodiment shares (`wica`, `asr`, `vision`) plus the sections of the app's body (`tts`, `audio_processing`, `camera` for the computer; `reachy` for the robot). Switching the model, the voice, the speech recognizer, the robot backend, the camera or the persona is an edit of that file. This page is the config section by section; the design is [specs/configuration.md](../../specs/configuration.md) and [specs/setup.md](../../specs/setup.md).
+Each app is stood up from **one JSON config**, the `config.json` of its folder (or a config file of the same shape, [Three launches](#three-launches)): the sections every embodiment shares (`wica`, `asr`, `vision`) plus the sections of the app's body (`tts`, `audio_processing`, `camera` for the computer; `reachy` for the robot). Some are optional: [left out, they are off](#optional-sections-absent-means-off). Switching the model, the voice, the speech recognizer, the robot backend, the camera or the persona is an edit of that file. This page is the config section by section; the design is [specs/configuration.md](../../specs/configuration.md) and [specs/setup.md](../../specs/setup.md).
 
 Each engine section is **that engine's own document, nested verbatim**: the `wica` section is a WICA config, `asr` an asr-engine engine block, `tts` a tts-engine engine block, `reachy` a reachy-mini-bridge config. The app hands each to its owner's loader, so every field, default and validation rule is the engine's, and this page summarizes the fields you will touch and links to the engine's own reference for the rest. The two sections the app owns, `vision` and the computer's `audio_processing` / `camera`, are complete here.
 
@@ -21,6 +21,19 @@ Each engine section is **that engine's own document, nested verbatim**: the `wic
 | `launch.json` | whether the session starts when the app launches (on by default), the Setup tab's checkbox; `--start` / `--no-start` override it for one launch |
 
 **The first launch fills an empty folder**: the app writes its default config as `config.json` and copies its persona there. Both ship inside the package ([computer](../../src/wica_interaction/computer/default/config.json), [robot](../../src/wica_interaction/reachy/default/config.json)). Neither is ever overwritten: what is in the folder is yours. A relative path in any section (the persona, a voice file, a scene) resolves against the folder.
+
+## Optional sections: absent means off
+
+| Section | Apps | Left out of the config | Added from the Setup tab, it starts as |
+|---|---|---|---|
+| `asr` | both | no speech input: no recognizer, no microphone, no dictation; the agent is driven by typing (and hand signs) | the default config's `asr` |
+| `vision` | both | no hand signs: no hand camera reading, no model, no hand entry for the agent | `{}`, every field at its default |
+| `audio_processing` | computer | the microphone goes to the recognizer as it is | the default config's: echo cancellation on, noise suppression off |
+| `camera` | computer | no webcam is opened; hand signs cannot be on | `{"device": 0}`, the first webcam |
+
+A section present, whatever it holds (`{}` included), is on; `null` is the same as left out. `wica`, the computer's `tts` and the robot's `reachy` are required. **Hand signs need a camera on the computer**: a computer config with `vision` and no `camera` does not start, and the Interaction tab says so ("Hand signs need a camera: add the Camera section, or remove the Hand signs section."). The robot's hand signs read its own camera.
+
+The default configs keep each app's first launch as it was: speech input, hand signs and (on the computer) echo cancellation and the webcam all on, their sections present.
 
 The default configs spell out the app's own `vision` and `audio_processing` sections in full. The robot's `reachy` section, long otherwise, keeps to the fields that matter here and shows each motion switch, on or off; every field left out takes its owner's default, documented on the pages linked below.
 
@@ -102,7 +115,7 @@ Every field, the providers and their notes (Gemini thinks by default, Mistral's 
 }
 ```
 
-The section is an asr-engine engine block, handed to `ASREngineConfig.from_dict`. (Until 2026-11-24 it was wrapped in an `engine` key; a config still written that way is refused: move the block up one level.) The fields that matter here:
+Optional, on in both default configs: left out, there is no speech input, and the agent is driven by what you type (and by hand signs) ([Optional sections](#optional-sections-absent-means-off)). The section is an asr-engine engine block, handed to `ASREngineConfig.from_dict`. (Until 2026-11-24 it was wrapped in an `engine` key; a config still written that way is refused: move the block up one level.) The fields that matter here:
 
 | Field | What it does |
 |---|---|
@@ -118,7 +131,6 @@ The recognizer does not have to match the microphone: the robot's mic and the co
 
 ```json
 "vision": {
-  "enabled": true,
   "threshold": 0.65,
   "fps": 10,
   "max_hands": 2,
@@ -128,11 +140,12 @@ The recognizer does not have to match the microphone: the robot's mic and the co
 }
 ```
 
-The hand-sign input over whichever camera the body has ([guides/hand-signs.md](../guides/hand-signs.md)). Optional, and **off unless `enabled` is `true`**: an absent section, `null`, `{}` or `enabled: false` opens no camera, downloads no model and registers no hand entry. The app owns this schema; the default configs turn it on, raise `threshold` to `0.65` so a sign is read only when the classifier is sure, and spell out every other field at its default, so the knobs are in front of you.
+The hand-sign input over whichever camera the body has ([guides/hand-signs.md](../guides/hand-signs.md)). Optional, and **the section is the switch**: present (`{}` included), hand signs are on; left out or `null`, no camera is read for them, no model is downloaded and no hand entry is registered. The app owns this schema; the default configs have it, raise `threshold` to `0.65` so a sign is read only when the classifier is sure, and spell out every other field at its default, so the knobs are in front of you.
+
+The section used to have an `enabled` field. A config that still holds it is refused, with a message saying to remove it: to keep hand signs, delete the `enabled` line; to turn them off, delete the whole section.
 
 | Field | Default | What it does |
 |---|---|---|
-| `enabled` | `false` | the switch |
 | `threshold` | `0.55` | the classifier's confidence a label needs to count, in `[0, 1]` |
 | `fps` | `10` | one rate for the camera poll (where the body paces it), the hand stage and the classifier |
 | `max_hands` | `2` | how many hands are detected and classified per frame, and so how many `hand_gesture_<n>` entries the agent has; an integer `>= 1` |
@@ -170,7 +183,7 @@ Computer only, required. The section is a tts-engine engine block (no `engine` k
 }
 ```
 
-Computer only, optional: absent means both features off; the default config turns echo cancellation on and spells out noise suppression, off. One WebRTC processor cleans the microphone before the speech recognizer hears it ([guides/computer.md](../guides/computer.md#echo-cancellation)); the `audio-processing` extra. The app owns this schema.
+Computer only, optional: left out, the microphone goes to the recognizer unprocessed. Present, each feature runs by its own `enabled`; the default config turns echo cancellation on and spells out noise suppression, off. It cleans the microphone speech recognition reads, so without an `asr` section it is not used (the Interaction tab's banner says so). One WebRTC processor cleans the microphone before the speech recognizer hears it ([guides/computer.md](../guides/computer.md#echo-cancellation)); the `audio-processing` extra. The app owns this schema.
 
 | Field | Default | What it does |
 |---|---|---|
@@ -189,7 +202,7 @@ Strict on purpose: a misspelt feature or an unknown key is rejected, because the
 }
 ```
 
-Computer only, optional for the loader (absent means device `0`); the default config states it, since the Setup tab counts a section missing from `config.json` as a problem to fix. What the hand-sign input reads when `vision.enabled` is `true`.
+Computer only, optional: left out, no webcam is opened, and hand signs cannot be on (a config with `vision` and no `camera` does not start). The webcam the hand-sign input reads; the default config has it, on device `0`.
 
 | Field | Default | What it does |
 |---|---|---|
@@ -277,9 +290,10 @@ Set each variable on the **Secrets** tab, or on its line in the Setup tab, both 
 The Setup tab reports these on the field before a session starts (each section's own check runs the same rules as its loader); a config that still reaches a loader with one does not start, and the Interaction tab shows the message:
 
 - a `config.json` that is unreadable, not JSON, or not a JSON object;
-- a missing `wica` or `asr` section, or one that is not an object;
+- a missing `wica` section (or, for its app, `tts`), or a section that is not an object;
 - a top-level key the command does not accept: `reachy` in the computer's config; `tts`, `audio_processing` or `camera` in the robot's; anything misspelt;
 - an engine section its owner rejects, with the owner's own message: an `asr` or `tts` still wrapped in `engine`, a key written as `api_key`, an unknown `agent` key, both `system_prompt` and `system_prompt_file`, a `daemon.spawn` on the `fake` backend, `motion.tracking.enabled` with no `face_detection.detector`, a `motion.tracking` written as a boolean;
-- in the app-owned sections, an unknown key, a wrong type, or an out-of-range value, naming the section and the field: `vision.threshold` outside `[0, 1]`, `max_hands` below 1 or not an integer, a negative `hold_s` or `release_hold_s`, a `camera.device` that is neither an int nor a string, a `noise_suppression.level` outside `0` to `3`.
+- in the app-owned sections, an unknown key, a wrong type, or an out-of-range value, naming the section and the field: `vision.threshold` outside `[0, 1]`, `max_hands` below 1 or not an integer, a negative `hold_s` or `release_hold_s`, a `camera.device` that is neither an int nor a string, a `noise_suppression.level` outside `0` to `3`; a `vision.enabled`, a field that is gone ([`vision`](#vision-hand-signs));
+- on the computer, a `vision` section without a `camera` section.
 
 A key that is unset, or a provider extra that is not installed, is **not** a load error: the Setup tab lists it as an item to set or install, and Start refuses until it is.

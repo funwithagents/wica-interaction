@@ -94,9 +94,22 @@ def test_system_prompt_file_is_located_against_the_folder(
 
 def test_missing_section_names_the_missing_key(tmp_path: Path) -> None:
     config = _composed()
-    del config["asr"]
-    with pytest.raises(ValueError, match="missing required section.*'asr'"):
+    del config["wica"]
+    with pytest.raises(ValueError, match="missing required section.*'wica'"):
         _load(tmp_path, config)
+
+
+@pytest.mark.parametrize("absent", [None, "deleted"])
+def test_asr_absent_means_speech_input_off(tmp_path: Path, absent: str | None) -> None:
+    # Optional (specs/configuration.md, "Optional sections"): absent and `null` alike are off.
+    config = _composed()
+    if absent is None:
+        config["asr"] = None
+    else:
+        del config["asr"]
+    cfg = _load(tmp_path, config)
+    assert cfg.asr_engine is None
+    assert cfg.wica.agent.provider == "anthropic"
 
 
 def test_asr_that_is_not_an_object_raises(tmp_path: Path) -> None:
@@ -165,7 +178,6 @@ def test_vision_null_means_off(tmp_path: Path) -> None:
 def test_vision_empty_object_takes_the_defaults(tmp_path: Path) -> None:
     cfg = _load(tmp_path, {**_composed(), "vision": {}})
     assert cfg.vision == VisionConfig(
-        enabled=False,
         threshold=0.55,
         fps=10.0,
         max_hands=2,
@@ -177,7 +189,6 @@ def test_vision_empty_object_takes_the_defaults(tmp_path: Path) -> None:
 
 def test_vision_fields_are_carried(tmp_path: Path) -> None:
     section = {
-        "enabled": True,
         "threshold": 0.7,
         "fps": 20,
         "max_hands": 1,
@@ -188,7 +199,6 @@ def test_vision_fields_are_carried(tmp_path: Path) -> None:
     cfg = _load(tmp_path, {**_composed(), "vision": section})
     assert cfg.vision is not None
     assert cfg.vision == VisionConfig(
-        enabled=True,
         threshold=0.7,
         fps=20.0,
         max_hands=1,
@@ -202,8 +212,6 @@ def test_vision_fields_are_carried(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("section", "field"),
     [
-        ({"enabled": "yes"}, "vision 'enabled'"),
-        ({"enabled": 1}, "vision 'enabled'"),
         ({"threshold": 1.5}, "vision 'threshold'"),
         ({"threshold": "high"}, "vision 'threshold'"),
         ({"threshold": True}, "vision 'threshold'"),
@@ -229,6 +237,20 @@ def test_vision_invalid_value_names_the_field(
         _load(tmp_path, {**_composed(), "vision": section})
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_vision_enabled_is_refused_with_how_to_fix_it(
+    tmp_path: Path, enabled: bool
+) -> None:
+    # The section is the switch now: `enabled` is refused, not ignored — an ignored
+    # `enabled: false` would turn hand signs on.
+    with pytest.raises(ValueError) as caught:
+        _load(tmp_path, {**_composed(), "vision": {"enabled": enabled}})
+    message = str(caught.value)
+    assert "vision.enabled is no longer a field" in message
+    assert "Remove 'enabled'" in message
+    assert "remove the whole vision section" in message
+
+
 def test_vision_unknown_key_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="'mirror'"):
         _load(tmp_path, {**_composed(), "vision": {"mirror": True}})
@@ -241,5 +263,5 @@ def test_vision_not_an_object_raises(tmp_path: Path) -> None:
 
 def test_a_null_required_section_is_missing(tmp_path: Path) -> None:
     # app-setup's `used_config` gives every declared section, an absent one as `None`.
-    with pytest.raises(ValueError, match="missing required section.*'asr'"):
-        _load(tmp_path, {**_composed(), "asr": None})
+    with pytest.raises(ValueError, match="missing required section.*'wica'"):
+        _load(tmp_path, {**_composed(), "wica": None})
