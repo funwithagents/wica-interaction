@@ -6,22 +6,24 @@ code:
   - src/wica_interaction/reachy/view.py
   - src/wica_interaction/reachy/config.py
   - src/wica_interaction/reachy/app.py
-  - prompts/reachy.md
+  - src/wica_interaction/reachy/default/config.json
+  - src/wica_interaction/reachy/default/reachy.md
 tests:
   - tests/reachy/test_embodiment.py
   - tests/reachy/test_robot_control.py
   - tests/reachy/test_users.py
   - tests/reachy/test_view.py
   - tests/reachy/test_config.py
+  - tests/reachy/test_app.py
 ---
 
 # Reachy Mini embodiment
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
-The agent embodied in a **[Reachy Mini](https://github.com/pollen-robotics/reachy_mini)**: it speaks out of the robot's speaker, listens through the robot's echo-cancelled microphone, sees through the robot's camera, and acts — plays emotions, manages its motors, follows a person with its head — through `reachy-mini-bridge`'s `ReachyMiniBridge`. With a face detector configured it also **perceives the users in front of it** — who arrives, who leaves, who is present, who is inside its personal space, whom it follows — and tells the agent through an input of its own ("Users: `UsersInput`"). One implementation of the [Embodiment](embodiment.md) protocol, gathering what used to be spread over `tts_output.py`, `robot_control.py`, the `RobotMicSource` in `asr_bridge.py` and the `RobotCameraSource` in `gesture_input.py`. Its persona is the robot, [prompts/reachy.md](../prompts/reachy.md). It runs as `wica-interaction-reachy --config <file>`.
+The agent embodied in a **[Reachy Mini](https://github.com/pollen-robotics/reachy_mini)**: it speaks out of the robot's speaker, listens through the robot's echo-cancelled microphone, sees through the robot's camera, and acts — plays emotions, manages its motors, follows a person with its head — through `reachy-mini-bridge`'s `ReachyMiniBridge`. With a face detector configured it also **perceives the users in front of it** — who arrives, who leaves, who is present, who is inside its personal space, whom it follows — and tells the agent through an input of its own ("Users: `UsersInput`"). One implementation of the [Embodiment](embodiment.md) protocol, gathering what used to be spread over `tts_output.py`, `robot_control.py`, the `RobotMicSource` in `asr_bridge.py` and the `RobotCameraSource` in `gesture_input.py`. Its persona is the robot, `reachy.md` ([the shipped copy](../src/wica_interaction/reachy/default/reachy.md)). It runs as `wica-interaction-reachy --config <file>`.
 
 ## Why the robot owns audio
 
@@ -29,12 +31,12 @@ Audio on Reachy Mini is not a pair of laptop `sounddevice` streams: it is a daem
 
 ## Configuration
 
-The file carries the shared sections (`wica`, `asr`, optional `vision` — [configuration.md](configuration.md)) plus one of this embodiment's own, parsed by `reachy/config.py`'s `load_config(path) -> ReachyConfig`:
+The config carries the shared sections (`wica`, `asr`, optional `vision` — [configuration.md](configuration.md)) plus one of this embodiment's own, parsed by `reachy/config.py`'s `load_config(data, *, base_dir) -> ReachyConfig`. On the Setup tab the `reachy` section is described by the bridge's own contract (`reachy_mini_bridge.setup`), which delegates its `tts` block to tts-engine's ([setup.md](setup.md)):
 
 ```json
 {
-  "wica": { "agent": { "…": "…", "system_prompt_file": "prompts/reachy.md" } },
-  "asr": { "engine": { "…": "…" } },
+  "wica": { "agent": { "…": "…", "system_prompt_file": "reachy.md" } },
+  "asr": { "module": { "…": "…" }, "audio_source": { "type": "custom" } },
   "reachy": {
     "backend": "sim",
     "robot": {},
@@ -55,15 +57,15 @@ class ReachyConfig:
     reachy: ReachyMiniConfig
 ```
 
-**The `reachy` section is a verbatim bridge config**, handed whole to `ReachyMiniConfig.from_dict` — every field, default and validation rule is the bridge's own (`reachy-mini-bridge/specs/core/config.md`):
+**The `reachy` section is a verbatim bridge config**, handed whole to `ReachyMiniConfig.from_dict(…, base_dir=base_dir)` (a relative scene or voice file is the folder's) — every field, default and validation rule is the bridge's own (`reachy-mini-bridge/specs/core/config.md`):
 
 - `backend` — `"real"` (default), `"sim"` (the upstream MuJoCo mockup), or `"fake"` (the bridge's in-package stand-in: no daemon, no hardware — the offline/test path).
 - `robot` — upstream `ReachyMini(...)` kwargs, forwarded verbatim.
 - `daemon` — how the bridge brings up the daemon it talks to (`spawn`, `headless`, `scene`, `camera`, `preload_datasets`, `startup_timeout`). Only `fake` has no daemon, so `spawn` other than `"never"` is rejected there.
 - `tts` — **the voice**: a tts-engine `engine` block whose `module.type` names the provider; the bridge builds the synthesizer itself from it. The provider's extra must be installed — the same `tts-<name>` extras the computer embodiment uses (`tts-elevenlabs`, `tts-gradium`, `tts-pocket`, …) ([project.md](project.md), "Extras"). The committed default is `pocket` (the local model, voice `george`): no key, no network at synthesis time, weights downloaded on first run. Absent ⇒ no voice (`say` unavailable, everything else unaffected).
 - `audio.xvf3800` — the tuned XVF3800 profile; `null`/absent keeps the firmware defaults.
-- `face_detection` — the bridge's **opt-in face detection** (`reachy-mini-bridge/specs/vision/user_perception.md`): `detector` names what finds the faces in the camera feed's frames — `null` (the default: nothing is detected, no model is loaded), `"yunet"` (the bridge's shipped detector, upstream's own model; nothing to install, its weights a Hugging Face download on first use) or `"custom"` (a detector registered from code; not used here) — `enabled` (default `false`) whether the detection loop runs from session entry for the caller's sake (`bridge.faces`, the observable face report), `score_threshold` (default `null` = upstream's own, 0.6 today; the confidence the shipped detector keeps a face from, strictly between 0 and 1 — the committed template states `0.6` so the knob is in front of whoever tunes it: raised against posters and reflections, lowered to catch faces farther away), and the detector's cost knobs: `width` (default `640`, the width the shipped detector subsamples each frame to; `null` = the full frame) and `target_fps` (default `null` = once per new camera frame; a ceiling on detections per second — the wireless robot's lever). Detection needs no motors. **With a detector configured, this embodiment runs detection for the whole session whatever `enabled` says** (`enter()` step 5): the users the agent is told about are the bridge's users present (`bridge.users`), which exist only while detection runs, and tracking alone would not keep it running — `stop_head_tracking()` with detection off stops the loop and every user leaves.
-- `motion` — presence, the idle mode (`"breathing"` by default, else `"hold"` / `"custom"`), wobbling — the bridge's own aliveness, none of it agent-facing — and tracking, whose switch and target are the agent's (below). `presence` and `wobbling` default `true`; **`tracking` is an object, off by default (`enabled: false`), and needs a detector** — its other fields are the bridge's tracking posture (mirroring, approach, personal space, frame delay), left at the bridge's defaults — the bridge's own head tracker is a client of the detection loop, so `tracking.enabled: true` with `face_detection.detector` `null` is a bridge `ConfigError`, as is a `tracking` written as a boolean (surfacing as `ValueError` from `load_config`, the file named). **Tracking is the agent's, so the committed template starts it off** (`tracking.enabled: false`) with `yunet` configured: the agent starts and stops it through `start_tracking` / `stop_tracking` (below), choosing whom to follow. `tracking`'s other fields — the posture — stay the config's: the agent says *whether* and *whom*, the config *how*. A config with `tracking.enabled: true` still loads and starts the session tracking the bridge's automatic choice, until the agent says otherwise. A deployment with no `face_detection.detector` has neither the users input nor the tracking Commands.
+- `face_detection` — the bridge's **opt-in face detection** (`reachy-mini-bridge/specs/vision/user_perception.md`): `detector` names what finds the faces in the camera feed's frames — `null` (the default: nothing is detected, no model is loaded), `"yunet"` (the bridge's shipped detector, upstream's own model; nothing to install, its weights a Hugging Face download on first use) or `"custom"` (a detector registered from code; not used here) — `enabled` (default `false`) whether the detection loop runs from session entry for the caller's sake (`bridge.faces`, the observable face report), `score_threshold` (default `null` = upstream's own, 0.6 today; the confidence the shipped detector keeps a face from, strictly between 0 and 1 — the default config states `0.6` so the knob is in front of whoever tunes it: raised against posters and reflections, lowered to catch faces farther away), and the detector's cost knobs: `width` (default `640`, the width the shipped detector subsamples each frame to; `null` = the full frame) and `target_fps` (default `null` = once per new camera frame; a ceiling on detections per second — the wireless robot's lever). Detection needs no motors. **With a detector configured, this embodiment runs detection for the whole session whatever `enabled` says** (`enter()` step 5): the users the agent is told about are the bridge's users present (`bridge.users`), which exist only while detection runs, and tracking alone would not keep it running — `stop_head_tracking()` with detection off stops the loop and every user leaves.
+- `motion` — presence, the idle mode (`"breathing"` by default, else `"hold"` / `"custom"`), wobbling — the bridge's own aliveness, none of it agent-facing — and tracking, whose switch and target are the agent's (below). `presence` and `wobbling` default `true`; **`tracking` is an object, off by default (`enabled: false`), and needs a detector** — its other fields are the bridge's tracking posture (mirroring, approach, personal space, frame delay), left at the bridge's defaults — the bridge's own head tracker is a client of the detection loop, so `tracking.enabled: true` with `face_detection.detector` `null` is a bridge `ConfigError`, as is a `tracking` written as a boolean (surfacing as `ValueError` from `load_config`, the file named). **Tracking is the agent's, so the default config starts it off** (`tracking.enabled: false`) with `yunet` configured: the agent starts and stops it through `start_tracking` / `stop_tracking` (below), choosing whom to follow. `tracking`'s other fields — the posture — stay the config's: the agent says *whether* and *whom*, the config *how*. A config with `tracking.enabled: true` still loads and starts the session tracking the bridge's automatic choice, until the agent says otherwise. A deployment with no `face_detection.detector` has neither the users input nor the tracking Commands.
 
 Absent `reachy` section ⇒ `ReachyMiniConfig()` (the `real` backend, upstream defaults, no voice). Its validation errors are the bridge's `ConfigError`, a `ValueError` subclass, so `load_config`'s one error type holds. The section is the one place that imports `reachy_mini` at load (lazily, to validate `robot` keys against upstream's signature). The ASR config's `audio_source` is `{"type": "custom"}` here (no local device is opened; the mic is the embodiment's); the ASR module needs no matching rate, since the mic source declares `bridge.mic_sample_rate` and the engine converts. Any top-level key outside `wica`/`asr`/`vision`/`reachy` — a `tts`, `audio_processing` or `camera` section — is rejected.
 
@@ -336,23 +338,39 @@ class RobotControl:
 
 ## Entry point
 
-`wica_interaction.reachy.app:main` — `wica-interaction-reachy` in `[project.scripts]`:
+`wica_interaction.reachy.app:main` — `wica-interaction-reachy` in `[project.scripts]`. The module declares the app ([setup.md](setup.md)) and runs it:
 
 ```python
-def _load(path: str) -> tuple[AppConfig, Embodiment]:
-    config = load_config(path)
-    return config.app, ReachyEmbodiment(config)
+SECTIONS = (
+    Section("wica", wica.setup, title="Agent"),
+    Section("asr", asr_engine.setup, title="Speech recognition"),
+    Section("reachy", reachy_mini_bridge.setup, title="Reachy Mini"),
+    Section("vision", VISION, title="Hand signs"),
+)
+APP = App(
+    name="wica-interaction-reachy",
+    title="WICA Interaction — Reachy Mini",
+    host="wica-interaction",
+    sections=SECTIONS,
+    default_config=DEFAULT_CONFIG,  # reachy/default/config.json
+    autostart=True,
+)
 
 
 def main() -> None:
-    run_app(description="Talk to a WICA-driven Reachy Mini.", load=_load)
+    run_app(
+        APP,
+        load=load_config,
+        embodiment=ReachyEmbodiment,
+        ensure_persona=ensure_persona,
+    )
 ```
 
-`run_app` ([app.md](app.md)) requires `--config`: the committed `config.reachy.example.json` is a template (the Hugging Face Hub agent, the local `mlx-audio` recognizer and `phonon` voice, a simulator daemon the bridge spawns itself with the webcam as its camera, the shipped `yunet` face detector with detection on, every motion switch shown at its default — head tracking off, the agent's to start —, vision on; the `reachy` section keeps to the fields that matter here and leaves the rest at the bridge's defaults) to copy and point at what you drive — `"real"` for the physical robot, `"sim"` for the MuJoCo simulator, `"fake"` (with no `daemon` block) for offline development.
+`run_app` ([app.md](app.md)) runs it from its folder. **The default config** (`reachy/default/config.json`) is the Hugging Face Hub agent, the local `mlx-audio` recognizer and `phonon` voice, a simulator daemon the bridge spawns itself with the webcam as its camera, the shipped `yunet` face detector with detection on, every motion switch shown at its default — head tracking off, the agent's to start —, vision on; the `reachy` section keeps to the fields that matter here and leaves the rest at the bridge's defaults. Pointing it at what you drive is a change on the Setup tab: `"real"` for the physical robot, `"sim"` for the MuJoCo simulator, `"fake"` (with no `daemon` block) for offline development. What a backend needs on the machine (the `reachy-sim` extra, the face detector's weights, the emotions library, the voice's model) shows there as items to install or prepare. With autostart on, a robot's app launched at boot starts its session by itself ([session.md](session.md), "Autostart").
 
 ## Persona
 
-[prompts/reachy.md](../prompts/reachy.md): the voice and mind of a Reachy Mini in a spoken, physical interaction. Beyond the shared voice/dictation rules (how a dictated passage ends comes from `start_dictation`'s reply, not from the file — [asr-bridge.md](asr-bridge.md); an empty passage means nothing came through), it tells the model how it moves — `play_emotion` kept for a real moment, a few times in a conversation at most (most replies have none; the tool description repeats it), with the names listed "further down" (the seeded section), the motors assumed on with `set_motors_state("enabled")` kept for recovering from a move that reported them off, resting in `gravity_compensation` — and never to narrate movements; it says nothing about presence/breathing/wobbling, and says that following people with its head is its own to start and stop, described further down (the "The users around you" section, when there is one). It carries the shared **self-knowledge rules** ("What you can do, and what you know" — [app.md](app.md), "World, Commands, persona"): the robot can do only what its commands do — no command looks left or nods, so a request for one is declined out loud, never pretended — and it knows its own state only from the commands it called, their results, and the World: it is not following anyone unless `start_tracking` succeeded or `tracked_user` says so. It carries the three **action rules** WICA's generic primer cannot know, because these Commands share one body and one speaker:
+`reachy.md` (shipped as `reachy/default/reachy.md`, copied into the app's folder at first launch and edited there — [setup.md](setup.md)): the voice and mind of a Reachy Mini in a spoken, physical interaction. Beyond the shared voice/dictation rules (how a dictated passage ends comes from `start_dictation`'s reply, not from the file — [asr-bridge.md](asr-bridge.md); an empty passage means nothing came through), it tells the model how it moves — `play_emotion` kept for a real moment, a few times in a conversation at most (most replies have none; the tool description repeats it), with the names listed "further down" (the seeded section), the motors assumed on with `set_motors_state("enabled")` kept for recovering from a move that reported them off, resting in `gravity_compensation` — and never to narrate movements; it says nothing about presence/breathing/wobbling, and says that following people with its head is its own to start and stop, described further down (the "The users around you" section, when there is one). It carries the shared **self-knowledge rules** ("What you can do, and what you know" — [app.md](app.md), "World, Commands, persona"): the robot can do only what its commands do — no command looks left or nods, so a request for one is declined out loud, never pretended — and it knows its own state only from the commands it called, their results, and the World: it is not following anyone unless `start_tracking` succeeded or `tracked_user` says so. It carries the three **action rules** WICA's generic primer cannot know, because these Commands share one body and one speaker:
 
 1. **No colliding actions in one turn.** Speaking (a `<say>` tag) with `play_emotion` (the emotion's sidecar sound plays over the speech and its motion fights the talking head), two emotions, a move with a motor-state change, a `cancel_command` with the action replacing what it cancels: do the first, then the next in a later step once the first is observed complete. Things touching different parts may go together. A prompt rule, not a guard.
 2. **Order matters.** Dependent actions (enable → move; stop one thing → start the next) are done in that order across turns. The end of speech wakes no step by itself (WICA's output wakes only through the model's `<next>` note), so speak → then act (stop following, an emotion already decided on) is one response: the tag, and a `<next>` note naming what remains. The example is deliberately not "the emotion that goes with it": worded that way, a first session showed the model treating every reply as speech plus an emotion; most replies carry no `<next>` note.
@@ -364,7 +382,7 @@ Like the computer persona, it says nothing about hands: the "Hand signs" section
 
 `tests/reachy/` — the bridge's `fake` backend or a fake `ReachyMiniBridge` (no daemon, no hardware, no cloud):
 
-- **Config:** `load_config` yields `AppConfig` + a `ReachyMiniConfig`; the `reachy` section absent ⇒ the bridge's defaults; a bridge validation error (`daemon.spawn` on `fake`, an unknown key, `motion.tracking.enabled: true` with no `face_detection.detector`, a boolean `motion.tracking`) surfaces as `ValueError`; a `face_detection` block reaches `config.reachy.face_detection` (detector, switch, score threshold and cost knobs); a `score_threshold` outside (0, 1) surfaces as `ValueError`; a `tts` or `camera` top-level section is rejected; **the committed reachy template loads**.
+- **Config:** `load_config` yields `AppConfig` + a `ReachyMiniConfig`; the `reachy` section absent ⇒ the bridge's defaults; a bridge validation error (`daemon.spawn` on `fake`, an unknown key, `motion.tracking.enabled: true` with no `face_detection.detector`, a boolean `motion.tracking`) surfaces as `ValueError`; a `face_detection` block reaches `config.reachy.face_detection` (detector, switch, score threshold and cost knobs); a `score_threshold` outside (0, 1) surfaces as `ValueError`; a `tts` or `camera` top-level section is rejected; a relative `daemon.scene` resolves against `base_dir`; **the default config loads**.
 - **Enter / members:** with a fake bridge, `enter()` starts it once (`running` reads `True`), `voice` is the `say`, `mic` is a `RobotMicSource` over it, `commands()` are the three actions with `play_emotion` described by the fetched names, `prompt_addendum` names every emotion and the `play_emotion` command; a `start()` that raises propagates out of `enter()`, carrying the offline hint on a non-`fake` backend and untouched on `fake`; a failing `list_emotions` degrades to `Robot: emotions unavailable` with the plain docstring and an empty addendum; `synthesizer_error` (or no `tts` block) yields the `TTS:` line while the voice stays wired; `exit()` stops the bridge (`running` reads `False`).
 - **`say`:** WICA reads the voice as a streaming output Command; a tag's pieces reach `bridge.say_stream` and `say` returns `"OK"`; the first words reach the bridge before the tag closes and `say` returns only after it; an empty, `""`, whitespace-only or punctuation-only tag returns the empty-text error without calling it; an exception maps to `"TTS error: …"`.
 - **`RobotMicSource`:** `start()` returns a queue receiving the bridge's chunks in order; `stop()` cancels the pump; a raising or ending stream sets `capture_error`, a restart clears it; undrained, only the newest `maxsize` chunks are kept; a second `start()` without `stop()` leaves one stream open.

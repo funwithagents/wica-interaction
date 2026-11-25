@@ -12,26 +12,26 @@ cd wica-interaction
 What every embodiment needs is a base dependency; what only one body, one provider or one optional feature needs is an **extra**, so an install carries only what it runs. Pick a body, an agent provider, a speech recognizer and a voice:
 
 ```
-# the computer as the template runs it: the Hub agent, local speech in (Apple silicon) and a local voice, echo cancellation, hand signs
+# the computer as its default config runs it: the Hub agent, local speech in (Apple silicon) and a local voice, echo cancellation, hand signs
 uv sync --no-dev --extra computer --extra wica-huggingface-hub --extra asr-mlx-audio --extra asr-silero --extra tts-phonon --extra audio-processing --extra vision
 
-# the Reachy Mini in the simulator, as the template runs it: the same agent, speech in and voice, hand signs
+# the Reachy Mini in the simulator, as its default config runs it: the same agent, speech in and voice, hand signs
 uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-mlx-audio --extra asr-silero --extra tts-phonon --extra vision
 
 # the same on a real Reachy Mini: no simulator
 uv sync --no-dev --extra reachy --extra wica-huggingface-hub --extra asr-mlx-audio --extra asr-silero --extra tts-phonon --extra vision
 
-# not on Apple silicon: swap the local recognizer for a hosted one (and set asr.engine.module to it)
+# not on Apple silicon: swap the local recognizer for a hosted one (and set asr.module to it)
 uv sync --no-dev --extra computer --extra wica-huggingface-hub --extra asr-deepgram --extra asr-silero --extra tts-phonon --extra audio-processing --extra vision
 
 # everything, one command
 uv sync --no-dev --extra all
 
-# the development environment: both bodies, every agent provider, the speech providers the templates and the e2e tier select, the simulator, the tooling
+# the development environment: both bodies, every agent provider, the speech providers the default configs and the e2e tier select, the simulator, the tooling
 uv sync --dev
 ```
 
-Another provider is one more extra, named after it ([Extras](#extras)), and a change of its block in the config: [configuration.md](configuration.md#what-the-templates-run-and-the-other-choices) says where each provider is documented. `--no-dev` keeps an install to what you selected: a bare `uv sync` includes the `dev` group, which pulls both bodies, the simulator and the tooling. The **simulator** (MuJoCo) is its own extra, `reachy-sim`, next to `reachy` rather than part of it, since a deployment on a real robot needs none of it: the reachy template targets the simulator, so an install that runs it as committed adds `reachy-sim`. Selecting a provider whose extra is not installed does not fail the install or the config load: it lands on that engine's banner line when the app starts, naming the extra to add ([../guides/troubleshooting.md](../guides/troubleshooting.md#the-banner)). The body's own extra is the exception: `wica-interaction-computer` needs `computer` and `wica-interaction-reachy` needs `reachy`, and without it the command fails at import, before the page opens.
+Another provider is one more extra, named after it ([Extras](#extras)), and a change of its block in the config: [configuration.md](configuration.md#what-the-default-configs-run-and-the-other-choices) says where each provider is documented. `--no-dev` keeps an install to what you selected: a bare `uv sync` includes the `dev` group, which pulls both bodies, the simulator and the tooling. The **simulator** (MuJoCo) is its own extra, `reachy-sim`, next to `reachy` rather than part of it, since a deployment on a real robot needs none of it: the robot's default config targets the simulator, so an install that runs it as committed adds `reachy-sim`. Selecting a provider whose extra is not installed does not fail the install or the config load: it lands on that engine's banner line when the app starts, naming the extra to add ([../guides/troubleshooting.md](../guides/troubleshooting.md#the-banner)). The body's own extra is the exception: `wica-interaction-computer` needs `computer` and `wica-interaction-reachy` needs `reachy`, and without it the command fails at import, before the page opens.
 
 ## Extras
 
@@ -43,7 +43,7 @@ One extra per body, per optional feature, per provider, named after the sibling'
 | `computer` | `tts-engine` | the computer embodiment's voice |
 | `audio-processing` | `aec-audio-processing`, `samplerate` | the computer's echo cancellation and noise suppression |
 | `reachy` | `reachy-mini-bridge` | the Reachy Mini embodiment (pulls the upstream `reachy-mini` SDK), the robot itself |
-| `reachy-sim` | `reachy-mini-bridge[sim]` | the MuJoCo simulator the `sim` backend runs on, what the reachy template targets; a real robot needs none of it |
+| `reachy-sim` | `reachy-mini-bridge[sim]` | the MuJoCo simulator the `sim` backend runs on, what the robot's default config targets; a real robot needs none of it |
 | `vision` | `vision-modules[hand,opencv]` | the hand-sign input, either body: MediaPipe, the torch classifier, OpenCV for the webcam and the snapshots |
 | `otlp` | `opentelemetry-exporter-otlp-proto-http` | sending the app's traces to a tracing backend (`WICA_INTERACTION_TRACES=otlp`, [../guides/latency.md](../guides/latency.md)); the page's latency view needs none of it |
 | `wica-anthropic` | `wica[anthropic]` | the Anthropic agent provider |
@@ -55,8 +55,8 @@ One extra per body, per optional feature, per provider, named after the sibling'
 | `asr-deepgram` | `asr-engine[deepgram]` | the Deepgram speech recognizers (`deepgram-v2`, `deepgram-v1`), the e2e tier's |
 | `asr-mistral` | `asr-engine[mistral]` | the Mistral Voxtral realtime speech recognizer (`mistral-realtime`) |
 | `asr-openai-compatible` | `asr-engine[openai-compatible]` | the OpenAI-protocol speech recognizers (`openai-realtime-compatible`, `openai-transcriptions-compatible`): OpenAI's own API or any compatible server |
-| `asr-mlx-audio` | `asr-engine[mlx-audio]` | the local speech recognizer on the mlx-audio runner (`mlx-audio`: Parakeet, Whisper, Qwen3-ASR), the templates' choice; Apple silicon only (elsewhere it installs nothing) |
-| `asr-silero` | `asr-engine[silero]` | the Silero voice-activity gate (`asr.engine.vad`), on in both templates: keeps silence from a billed recognizer, and required by the batch recognizers (`mlx-audio`, `openai-transcriptions-compatible`) |
+| `asr-mlx-audio` | `asr-engine[mlx-audio]` | the local speech recognizer on the mlx-audio runner (`mlx-audio`: Parakeet, Whisper, Qwen3-ASR), the default configs' choice; Apple silicon only (elsewhere it installs nothing) |
+| `asr-silero` | `asr-engine[silero]` | the Silero voice-activity gate (`asr.vad`), on in both default configs: keeps silence from a billed recognizer, and required by the batch recognizers (`mlx-audio`, `openai-transcriptions-compatible`) |
 | `tts-elevenlabs` | `tts-engine[elevenlabs]` | the ElevenLabs hosted voice |
 | `tts-gradium` | `tts-engine[gradium]` | the Gradium hosted voice |
 | `tts-mistral` | `tts-engine[mistral]` | the Mistral hosted voice |
@@ -66,7 +66,7 @@ One extra per body, per optional feature, per provider, named after the sibling'
 | `tts-openai` | `tts-engine[openai]` | the OpenAI Realtime API voice |
 | `tts-openai-compatible` | `tts-engine[openai-compatible]` | the `openai-speech-compatible` voice: OpenAI's speech endpoint, or any OpenAI-compatible server |
 | `tts-pocket` | `tts-engine[pocket]` | the local pocket-tts voice (torch, weights downloaded on first run) |
-| `tts-phonon` | `tts-engine[phonon]` | the local Phonon voice, the templates' choice |
+| `tts-phonon` | `tts-engine[phonon]` | the local Phonon voice, the default configs' choice |
 | `tts-qwen3` | `tts-engine[qwen3]` | the local Qwen3-TTS voice, Apple silicon only |
 | `tts-kokoro` | `tts-engine[kokoro]` | the local Kokoro voice |
 | `tts-piper` | `tts-engine[piper]` | the local Piper voice (GPL-3.0+) |

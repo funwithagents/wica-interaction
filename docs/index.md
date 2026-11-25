@@ -6,9 +6,9 @@ The documentation of WICA Interaction, by what you want to do. The [README](../R
 
 | I want to… | Read |
 |---|---|
-| run the app for the first time | [getting-started.md](getting-started.md): install, a template, the keys, the computer app, then the robot in the simulator and on a Reachy Mini |
+| run the app for the first time | [getting-started.md](getting-started.md): install, the app's folder, the keys, the computer app, then the robot in the simulator and on a Reachy Mini |
 | install only what I run, or know what my platform supports | [reference/install.md](reference/install.md): the install recipes, every extra, the platforms, the system packages, the first-run downloads |
-| understand or change a field of the config file | [reference/configuration.md](reference/configuration.md): the whole file section by section, the templates, what a loader rejects |
+| understand or change a field of the config | [reference/configuration.md](reference/configuration.md): the app's folder, its config section by section, the default configs, what a loader rejects |
 | choose the LLM, the speech recognizer or the voice | [reference/configuration.md](reference/configuration.md): each section names its providers and links to the engine's own pages |
 | run it on my computer: devices, echo, noise, the webcam | [guides/computer.md](guides/computer.md) |
 | run it on a Reachy Mini: the simulator, a Lite over USB, the voice, the people it sees and follows | [guides/reachy-mini.md](guides/reachy-mini.md) |

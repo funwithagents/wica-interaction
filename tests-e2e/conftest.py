@@ -18,6 +18,7 @@ import tempfile
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -132,23 +133,23 @@ def keys() -> None:
     require_env("DEEPGRAM_API_KEY")
 
 
-def _fill(name: str, values: dict[str, Any], out: Path) -> Path:
-    """The committed config *name* with the run's *values* set (dotted paths) and its persona path
-    made absolute, written to *out*."""
-    path = CONFIGS / name
-    data = json.loads(path.read_text())
-    agent = data["wica"]["agent"]
-    agent["system_prompt_file"] = str(
-        (path.parent / agent["system_prompt_file"]).resolve()
-    )
+def _filled(name: str, values: dict[str, Any]) -> dict[str, Any]:
+    """The committed config *name*, with the run's *values* set (dotted paths): the document the
+    embodiment's `load_config` takes (specs/e2e.md, "The configs")."""
+    data = json.loads((CONFIGS / name).read_text())
     for dotted, value in values.items():
         *parents, leaf = dotted.split(".")
         node = data
         for part in parents:
             node = node[part]
         node[leaf] = value
-    out.write_text(json.dumps(data, indent=2))
-    return out
+    return data
+
+
+def _persona_folder(embodiment: str) -> Path:
+    """Where the embodiment's persona ships, the folder the configs' bare persona name resolves
+    against: no app folder in this tier (specs/e2e.md, "The configs")."""
+    return Path(str(files(f"wica_interaction.{embodiment}") / "default"))
 
 
 def _evidence(e2e: E2E, out: Path) -> None:
@@ -209,17 +210,17 @@ def _computer(devices: Devices, out: Path, scenario: str) -> Iterator[E2E]:
     """The computer embodiment's real system: the cable as its mic, an image file as its webcam,
     echo cancellation on when the room plays its voice back, started, with the person in front."""
     camera = FileCamera(out / "camera.jpg")
-    config_path = _fill(
+    data = _filled(
         "computer.json",
         {
-            "asr.engine.audio_source.device": devices.mic,
-            "tts.engine.player.device": devices.speaker,
+            "asr.audio_source.device": devices.mic,
+            "tts.player.device": devices.speaker,
             "audio_processing.echo_cancellation.enabled": devices.echo is not None,
             "camera.device": str(camera.path),
         },
-        out / "config.json",
     )
-    config = load_computer_config(str(config_path))
+    (out / "config.json").write_text(json.dumps(data, indent=2))
+    config = load_computer_config(data, base_dir=_persona_folder("computer"))
     if devices.echo is None:
         system = build_system(config.app, ComputerEmbodiment(config))
         yield from _running(system, devices, camera, out, scenario, echo=False)
@@ -283,12 +284,9 @@ def _reachy(
         missing("the sim has no scene to show hands in")
     sim_scene.clear()
     host, port = live_daemon
-    config_path = _fill(
-        "reachy.json",
-        {"reachy.robot": robot_options(host, port)},
-        out / "config.json",
-    )
-    config = load_reachy_config(str(config_path))
+    data = _filled("reachy.json", {"reachy.robot": robot_options(host, port)})
+    (out / "config.json").write_text(json.dumps(data, indent=2))
+    config = load_reachy_config(data, base_dir=_persona_folder("reachy"))
     system = build_system(config.app, ReachyEmbodiment(config))
     try:
         yield from _running(

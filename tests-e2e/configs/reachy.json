@@ -4,33 +4,46 @@
       "provider": "anthropic",
       "model": "claude-haiku-5-5",
       "api_key_env": "WICA_ANTHROPIC_API_KEY",
-      "system_prompt_file": "../../prompts/reachy.md"
+      "system_prompt_file": "reachy.md"
     }
   },
   "asr": {
-    "engine": {
-      "module": {
-        "type": "deepgram-v2",
-        "api_key_env": "DEEPGRAM_API_KEY",
-        "model": "flux-general-en"
-      },
-      "audio_source": { "type": "custom" },
-      "dictation_default_segmentation_mode": "trigger_word"
-    }
+    "module": {
+      "type": "deepgram-v2",
+      "api_key_env": "DEEPGRAM_API_KEY",
+      "model": "flux-general-en"
+    },
+    "audio_source": {
+      "type": "custom"
+    },
+    "dictation_default_segmentation_mode": "trigger_word"
   },
   "reachy": {
     "backend": "sim",
     "robot": {},
     "tts": {
-      "module": { "type": "phonon", "voice": "Micah" }
+      "module": {
+        "type": "phonon",
+        "voice": "Micah"
+      }
     },
-    "audio": { "xvf3800": null },
-    "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "score_threshold": 0.6, "target_fps": null },
+    "audio": {
+      "xvf3800": null
+    },
+    "face_detection": {
+      "detector": "yunet",
+      "enabled": true,
+      "width": 640,
+      "score_threshold": 0.6,
+      "target_fps": null
+    },
     "motion": {
       "presence": true,
       "idle": "breathing",
       "wobbling": true,
-      "tracking": { "enabled": false }
+      "tracking": {
+        "enabled": false
+      }
     }
   },
   "vision": {

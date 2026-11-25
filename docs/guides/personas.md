@@ -6,10 +6,10 @@ The persona is what makes the agent a voice assistant or a small robot: a Markdo
 
 | Body | File | Selected by |
 |---|---|---|
-| the computer | [prompts/computer.md](../../prompts/computer.md) | `wica.agent.system_prompt_file` in the computer config |
-| the Reachy Mini | [prompts/reachy.md](../../prompts/reachy.md) | `wica.agent.system_prompt_file` in the reachy config |
+| the computer | `computer.md` in `~/.config/wica-interaction-computer` ([shipped](../../src/wica_interaction/computer/default/computer.md)) | `wica.agent.system_prompt_file` in the computer's config |
+| the Reachy Mini | `reachy.md` in `~/.config/wica-interaction-reachy` ([shipped](../../src/wica_interaction/reachy/default/reachy.md)) | `wica.agent.system_prompt_file` in the robot's config |
 
-The path resolves relative to the config file ([../reference/configuration.md](../reference/configuration.md#wica-the-agent)). A persona that cannot be read is an `Agent:` banner line: the page opens, the agent does not.
+The first launch copies the shipped file into the app's folder, and never overwrites it after: the copy in the folder is the one to edit. The path resolves relative to the folder ([../reference/configuration.md](../reference/configuration.md#wica-the-agent)). A persona that cannot be read is an `Agent:` banner line: the page opens, the agent does not.
 
 ## What the files say
 
@@ -54,6 +54,6 @@ Some facts are seeded into the prompt from the config or the code, so the file m
 
 ## Editing and language
 
-Edit the file and restart the app; the prompt is composed once, before the agent starts, and lands in the model's cached prefix. For a different persona, copy the file, edit it, and point `system_prompt_file` in your config copy at it.
+Edit the file in the app's folder and restart the app; the prompt is composed once, before the agent starts, and lands in the model's cached prefix. For a different persona, copy the file next to it under another name, edit it, and point `system_prompt_file` in the folder's `config.json` at it. The shipped files change with the app; to pick up a newer one, delete your copy and relaunch.
 
-The committed files are in English. They do not fix the language of the conversation: the model answers in the language the person speaks on its own. What decides which languages are *transcribed* is the speech recognizer's module and model ([../reference/configuration.md](../reference/configuration.md#asr-speech-in)): the templates' `flux-general-en` is an English model, so a conversation in another language starts with a multilingual recognizer model, such as Deepgram's `nova-3` through the `deepgram-v1` module, and a voice that speaks that language. A persona written in another language works the same way.
+The shipped files are in English. They do not fix the language of the conversation: the model answers in the language the person speaks on its own. What decides which languages are *transcribed* is the speech recognizer's module and model ([../reference/configuration.md](../reference/configuration.md#asr-speech-in)): the e2e tier's `flux-general-en` is an English model, so a conversation in another language starts with a multilingual recognizer model, such as Deepgram's `nova-3` through the `deepgram-v1` module, and a voice that speaks that language. A persona written in another language works the same way.

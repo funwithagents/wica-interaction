@@ -6,12 +6,12 @@ own section — the verbatim bridge config — and that it rejects a section bel
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 from reachy_mini_bridge.config import ReachyMiniConfig
 
+from wica_interaction.reachy.app import DEFAULT_CONFIG
 from wica_interaction.reachy.config import ReachyConfig, load_config
 
 
@@ -23,18 +23,16 @@ def _composed() -> dict:
                 "provider": "anthropic",
                 "model": "claude-sonnet-5",
                 "api_key_env": "WICA_ANTHROPIC_API_KEY",
-                "system_prompt_file": "prompts/reachy.md",
+                "system_prompt_file": "reachy.md",
             }
         },
         "asr": {
-            "engine": {
-                "module": {
-                    "type": "deepgram-v2",
-                    "api_key_env": "DEEPGRAM_API_KEY",
-                    "model": "nova-3",
-                },
-                "audio_source": {"type": "custom"},
-            }
+            "module": {
+                "type": "deepgram-v2",
+                "api_key_env": "DEEPGRAM_API_KEY",
+                "model": "nova-3",
+            },
+            "audio_source": {"type": "custom"},
         },
         "reachy": {
             "tts": {
@@ -45,16 +43,14 @@ def _composed() -> dict:
     }
 
 
-def _write(tmp_path: Path, config: dict, name: str = "app.json") -> str:
-    path = tmp_path / name
-    path.write_text(json.dumps(config), encoding="utf-8")
-    return str(path)
+def _load(tmp_path: Path, config: dict) -> ReachyConfig:
+    return load_config(config, base_dir=tmp_path)
 
 
 def test_happy_path_yields_the_shared_config_and_a_bridge_config(
     tmp_path: Path,
 ) -> None:
-    cfg = load_config(_write(tmp_path, _composed()))
+    cfg = _load(tmp_path, _composed())
 
     assert isinstance(cfg, ReachyConfig)
     # The shared sections live under `.app`, untouched by this loader.
@@ -74,7 +70,7 @@ def test_happy_path_yields_the_shared_config_and_a_bridge_config(
 def test_reachy_backend_round_trips(tmp_path: Path, backend: str) -> None:
     config = _composed()
     config["reachy"]["backend"] = backend
-    cfg = load_config(_write(tmp_path, config))
+    cfg = _load(tmp_path, config)
     assert cfg.reachy.backend == backend
 
 
@@ -82,7 +78,7 @@ def test_reachy_daemon_block_is_parsed(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"]["backend"] = "sim"
     config["reachy"]["daemon"] = {"spawn": "auto", "headless": False}
-    cfg = load_config(_write(tmp_path, config))
+    cfg = _load(tmp_path, config)
     assert cfg.reachy.daemon.spawn == "auto"
     assert cfg.reachy.daemon.headless is False
 
@@ -90,14 +86,14 @@ def test_reachy_daemon_block_is_parsed(tmp_path: Path) -> None:
 def test_reachy_audio_profile_is_carried(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"]["audio"] = {"xvf3800": [["AEC_ENABLE", [1]]]}
-    cfg = load_config(_write(tmp_path, config))
+    cfg = _load(tmp_path, config)
     assert cfg.reachy.audio.xvf3800 == [["AEC_ENABLE", [1]]]
 
 
 def test_reachy_absent_defaults_to_the_bridges_own_defaults(tmp_path: Path) -> None:
     config = _composed()
     config.pop("reachy", None)
-    cfg = load_config(_write(tmp_path, config))
+    cfg = _load(tmp_path, config)
     assert cfg.reachy == ReachyMiniConfig()
     assert cfg.reachy.backend == "real"
     assert cfg.reachy.tts is None
@@ -106,7 +102,7 @@ def test_reachy_absent_defaults_to_the_bridges_own_defaults(tmp_path: Path) -> N
 def test_reachy_empty_object_defaults_the_same_way(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"] = {}
-    cfg = load_config(_write(tmp_path, config))
+    cfg = _load(tmp_path, config)
     assert cfg.reachy == ReachyMiniConfig()
 
 
@@ -114,14 +110,14 @@ def test_invalid_reachy_backend_raises(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"]["backend"] = "hologram"
     with pytest.raises(ValueError, match="'backend' must be one of"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 def test_unknown_reachy_key_raises(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"]["bogus"] = True
     with pytest.raises(ValueError, match="unknown key"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 def test_daemon_spawn_on_fake_backend_raises(tmp_path: Path) -> None:
@@ -131,14 +127,14 @@ def test_daemon_spawn_on_fake_backend_raises(tmp_path: Path) -> None:
     config["reachy"]["backend"] = "fake"
     config["reachy"]["daemon"] = {"spawn": "auto"}
     with pytest.raises(ValueError, match="requires backend 'sim' or 'real'"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 def test_daemon_spawn_on_real_backend_is_accepted(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"]["backend"] = "real"
     config["reachy"]["daemon"] = {"spawn": "auto"}
-    loaded = load_config(_write(tmp_path, config))
+    loaded = _load(tmp_path, config)
     assert loaded.reachy.backend == "real"
     assert loaded.reachy.daemon.spawn == "auto"
 
@@ -147,7 +143,7 @@ def test_reachy_not_an_object_raises(tmp_path: Path) -> None:
     config = _composed()
     config["reachy"] = "real"
     with pytest.raises(ValueError, match="section 'reachy' must be an object"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 def test_reachy_section_is_optional_but_required_sections_stay(tmp_path: Path) -> None:
@@ -155,16 +151,16 @@ def test_reachy_section_is_optional_but_required_sections_stay(tmp_path: Path) -
     config = _composed()
     del config["wica"]
     with pytest.raises(ValueError, match="missing required section.*'wica'"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 def test_a_computer_section_is_rejected(tmp_path: Path) -> None:
     # A computer file handed to the reachy command fails on its own sections, rather than being
     # silently ignored (specs/configuration.md, "Each embodiment loads its own file").
     config = _composed()
-    config["tts"] = {"engine": {}}
+    config["tts"] = {"module": {"type": "phonon"}}
     with pytest.raises(ValueError, match="unknown section.*'tts'"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 # --- Face detection and head tracking: the bridge's `face_detection` block ------------------------
@@ -180,7 +176,7 @@ def test_a_face_detection_block_reaches_the_bridge_config(tmp_path: Path) -> Non
         "target_fps": 5,
     }
     config["reachy"]["motion"] = {"tracking": {"enabled": True}}
-    cfg = load_config(_write(tmp_path, config))
+    cfg = _load(tmp_path, config)
     assert cfg.reachy.face_detection.detector == "yunet"
     assert cfg.reachy.face_detection.enabled is True
     assert cfg.reachy.face_detection.width == 640
@@ -201,7 +197,7 @@ def test_a_score_threshold_outside_0_1_is_the_bridges_config_error(
         "score_threshold": threshold,
     }
     with pytest.raises(ValueError, match="score_threshold"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 def test_tracking_without_a_detector_is_the_bridges_config_error(
@@ -212,7 +208,7 @@ def test_tracking_without_a_detector_is_the_bridges_config_error(
     config = _composed()
     config["reachy"]["motion"] = {"tracking": {"enabled": True}}
     with pytest.raises(ValueError, match="motion.tracking.*face_detection.detector"):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
 def test_a_boolean_tracking_is_the_bridges_config_error(tmp_path: Path) -> None:
@@ -222,16 +218,29 @@ def test_a_boolean_tracking_is_the_bridges_config_error(tmp_path: Path) -> None:
     config["reachy"]["face_detection"] = {"detector": "yunet"}
     config["reachy"]["motion"] = {"tracking": True}
     with pytest.raises(ValueError, match=r'motion.tracking.*\{"enabled": true\}'):
-        load_config(_write(tmp_path, config))
+        _load(tmp_path, config)
 
 
-def test_the_committed_template_loads() -> None:
-    """The shipped template must open, seeing people (a detector, detection on) with tracking off:
+def test_the_default_config_loads(tmp_path: Path) -> None:
+    """The shipped default must open, seeing people (a detector, detection on) with tracking off:
     tracking is the agent's to start (specs/reachy-embodiment.md, "Configuration")."""
-    cfg = load_config(
-        str(Path(__file__).resolve().parents[2] / "config.reachy.example.json")
-    )
+    cfg = _load(tmp_path, DEFAULT_CONFIG)
     assert cfg.reachy.face_detection.detector == "yunet"
     assert cfg.reachy.face_detection.enabled is True
     assert cfg.reachy.face_detection.score_threshold == 0.6
     assert cfg.reachy.motion.tracking.enabled is False
+
+
+def test_a_relative_scene_resolves_against_the_folder(tmp_path: Path) -> None:
+    # The bridge resolves `daemon.scene` against `base_dir`: the app's folder.
+    config = _composed()
+    config["reachy"] = {
+        "backend": "sim",
+        "daemon": {"spawn": "auto", "scene": "scenes/room.xml"},
+    }
+    cfg = _load(tmp_path, config)
+    assert cfg.reachy.daemon.scene is not None
+    assert (
+        Path(cfg.reachy.daemon.scene).resolve()
+        == (tmp_path / "scenes" / "room.xml").resolve()
+    )

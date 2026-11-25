@@ -62,7 +62,7 @@ Plus two cross-cutting specs: [project.md](project.md) (tooling/layout/extras) a
 
 ## Configuration in one file
 
-Each embodiment is stood up from a single JSON file: the shared sections `wica`, `asr`, `vision` plus the embodiment's own — `tts`, `audio_processing`, `camera` for the computer; `reachy` (a verbatim bridge config, voice included) for the robot. Each engine section holds *exactly* the document that engine's own loader expects. Switching provider, voice, ASR backend, robot backend, camera or persona is a file edit, not a code change. Keys are referenced by env-var name, never stored; a missing key surfaces as that engine's own error, and the app still opens and says what to set. One template per embodiment is committed (`config.computer.example.json`, `config.reachy.example.json`). Full detail: [configuration.md](configuration.md).
+Each app is stood up from the `config.json` of its folder (`~/.config/wica-interaction-<embodiment>`, with its keys and its persona next to it), edited, checked and completed from the page's Setup tab: the shared sections `wica`, `asr`, `vision` plus the embodiment's own — `tts`, `audio_processing`, `camera` for the computer; `reachy` (a verbatim bridge config, voice included) for the robot. Each engine section holds *exactly* the document that engine's own loader expects. Switching provider, voice, ASR backend, robot backend, camera or persona is a change of that config, not a code change. Keys are referenced by env-var name, never stored; a missing key, extra or model shows on the Setup tab before a session starts, where it is set, installed or downloaded. Each app ships its default config, written into a new folder. The runtime is a session the page starts and stops, the config locked while it runs. Full detail: [configuration.md](configuration.md), [setup.md](setup.md), [session.md](session.md).
 
 ## What it is (and isn't) — v1
 
@@ -80,5 +80,5 @@ To **run** the app rather than change it, the user documentation is the place: [
 - The seam between the app and a body: [embodiment.md](embodiment.md), then [computer-embodiment.md](computer-embodiment.md) / [reachy-embodiment.md](reachy-embodiment.md)
 - The speech-in rule and dictation: [asr-bridge.md](asr-bridge.md)
 - The hand signs: [gesture-input.md](gesture-input.md)
-- The config file: [configuration.md](configuration.md)
+- The config: [configuration.md](configuration.md); the apps, their sections and their folder: [setup.md](setup.md); a session started and stopped: [session.md](session.md)
 - Status of every spec: [_index.md](_index.md); build status: [../plans/_index.md](../plans/_index.md)

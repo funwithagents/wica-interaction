@@ -1,14 +1,14 @@
 """Functional tests for the shared part of the composed app config (specs/configuration.md).
 
-Drives the two loading layers every embodiment reuses — ``read_config_file`` (the file rules) and
-``load_app_config`` (the shared sections, and the unknown-section rule scoped by the caller's
-section set). The sections an embodiment adds are tested with that embodiment
+Drives ``load_app_config`` (the shared sections over a config document, relative paths against the
+app's folder, and the unknown-section rule scoped by the caller's section set), which every
+embodiment's loader reuses. The sections an embodiment adds are tested with that embodiment
 (``tests/reachy/test_config.py``, ``tests/computer/test_config.py``).
 """
 
 from __future__ import annotations
 
-import json
+import os
 from pathlib import Path
 
 import pytest
@@ -20,14 +20,13 @@ from wica_interaction.config import (
     AppConfig,
     VisionConfig,
     load_app_config,
-    read_config_file,
 )
 
 # What a reachy-flavoured caller passes: the shared names plus its own section.
 _SECTIONS = SHARED_SECTIONS | {"reachy"}
 
 
-def _composed(system_prompt_file: str = "prompts/reachy.md") -> dict:
+def _composed(system_prompt_file: str = "reachy.md") -> dict:
     """A full, valid shared config using env-reference keys (no literals, no env reads at load)."""
     return {
         "wica": {
@@ -39,32 +38,24 @@ def _composed(system_prompt_file: str = "prompts/reachy.md") -> dict:
             }
         },
         "asr": {
-            "engine": {
-                "module": {
-                    "type": "deepgram-v2",
-                    "api_key_env": "DEEPGRAM_API_KEY",
-                    "model": "nova-3",
-                },
-                "audio_source": {"type": "input-device", "device": None},
-                "dictation_default_segmentation_mode": "timeout",
-                "segmentation": {"end_of_speech_timeout_s": 2.0},
-            }
+            "module": {
+                "type": "deepgram-v2",
+                "api_key_env": "DEEPGRAM_API_KEY",
+                "model": "nova-3",
+            },
+            "audio_source": {"type": "input-device", "device": None},
+            "dictation_default_segmentation_mode": "timeout",
+            "segmentation": {"end_of_speech_timeout_s": 2.0},
         },
     }
-
-
-def _write(tmp_path: Path, config: dict, name: str = "app.json") -> str:
-    path = tmp_path / name
-    path.write_text(json.dumps(config), encoding="utf-8")
-    return str(path)
 
 
 def _load(
     tmp_path: Path, config: dict, *, sections: frozenset[str] = _SECTIONS
 ) -> AppConfig:
-    """Read + validate, the way an embodiment's own ``load_config`` does."""
-    path = _write(tmp_path, config)
-    return load_app_config(read_config_file(path), path=path, sections=sections)
+    """Validate a document against the app's folder, the way an embodiment's ``load_config``
+    does."""
+    return load_app_config(config, base_dir=tmp_path, sections=sections)
 
 
 def test_happy_path_builds_both_engine_configs(tmp_path: Path) -> None:
@@ -81,37 +72,24 @@ def test_happy_path_builds_both_engine_configs(tmp_path: Path) -> None:
     assert cfg.asr_engine.dictation_default_segmentation_mode == "timeout"
 
 
-def test_system_prompt_file_is_located_against_config_dir(tmp_path: Path) -> None:
-    # A relative system_prompt_file must resolve against the config file's own directory,
-    # proving base_dir was threaded into WicaConfig.from_dict. Compare *resolved* paths:
-    # WICA calls Path.resolve(), which canonicalizes symlinks (macOS /var -> /private/var).
-    cfg = _load(tmp_path, _composed(system_prompt_file="prompts/reachy.md"))
+def test_system_prompt_file_is_located_against_the_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A relative system_prompt_file resolves against the app's folder (`base_dir`), whatever the
+    # working directory. Compare *resolved* paths: WICA calls Path.resolve(), which canonicalizes
+    # symlinks (macOS /var -> /private/var).
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    folder = tmp_path / "folder"
+    cfg = load_app_config(
+        _composed(system_prompt_file="reachy.md"), base_dir=folder, sections=_SECTIONS
+    )
 
     located = cfg.wica.agent.system_prompt_file
     assert located is not None
-    expected = (tmp_path / "prompts" / "reachy.md").resolve()
-    assert Path(located).resolve() == expected
-    # Located, not read: the file need not exist.
-    assert not expected.exists()
-
-
-def test_missing_file_raises_value_error(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="could not read config file"):
-        read_config_file(str(tmp_path / "does-not-exist.json"))
-
-
-def test_invalid_json_raises_value_error(tmp_path: Path) -> None:
-    path = tmp_path / "app.json"
-    path.write_text("{not valid json", encoding="utf-8")
-    with pytest.raises(ValueError, match="invalid JSON"):
-        read_config_file(str(path))
-
-
-def test_non_object_top_level_raises_value_error(tmp_path: Path) -> None:
-    path = tmp_path / "app.json"
-    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
-    with pytest.raises(ValueError, match="must contain a JSON object"):
-        read_config_file(str(path))
+    assert Path(located).resolve() == (folder / "reachy.md").resolve()
+    assert os.getcwd() == str(elsewhere.resolve())
 
 
 def test_missing_section_names_the_missing_key(tmp_path: Path) -> None:
@@ -121,25 +99,32 @@ def test_missing_section_names_the_missing_key(tmp_path: Path) -> None:
         _load(tmp_path, config)
 
 
-def test_section_without_engine_block_raises(tmp_path: Path) -> None:
+def test_asr_that_is_not_an_object_raises(tmp_path: Path) -> None:
     config = _composed()
-    config["asr"] = {"not_engine": {}}
-    with pytest.raises(
-        ValueError, match="section 'asr' must be an object with an 'engine' block"
-    ):
+    config["asr"] = ["deepgram"]
+    with pytest.raises(ValueError, match="section 'asr' must be an object"):
+        _load(tmp_path, config)
+
+
+def test_asr_still_wrapped_in_engine_is_refused(tmp_path: Path) -> None:
+    # Until 2026-11-24 `asr` was `{"engine": {…}}`; the section is now the engine block itself
+    # (specs/configuration.md), and asr-engine's own loader refuses the old wrapper by name.
+    config = _composed()
+    config["asr"] = {"engine": config["asr"]}
+    with pytest.raises(ValueError, match="engine"):
         _load(tmp_path, config)
 
 
 def test_unknown_top_level_section_names_it(tmp_path: Path) -> None:
     # The whole point of the `sections` argument: a section the calling embodiment does not declare
-    # is an error, not a silent no-op — a reachy file handed to the computer command fails here.
+    # is an error, not a silent no-op — a robot's config handed to the computer's loader fails here.
     config = {**_composed(), "reachy": {"backend": "fake"}}
     with pytest.raises(ValueError, match="unknown section.*'reachy'"):
         _load(tmp_path, config, sections=SHARED_SECTIONS)
 
 
 def test_section_inside_the_callers_set_is_accepted(tmp_path: Path) -> None:
-    # The same file, with 'reachy' in the section set, loads — the embodiment parses it itself.
+    # The same document, with 'reachy' in the section set, loads — the embodiment parses it itself.
     cfg = _load(tmp_path, {**_composed(), "reachy": {"backend": "fake"}})
     assert cfg.wica.agent.provider == "anthropic"
 
@@ -147,7 +132,7 @@ def test_section_inside_the_callers_set_is_accepted(tmp_path: Path) -> None:
 def test_loads_with_credentials_unset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The composed file references keys by env-var name; with those vars unset, loading must still
+    # The config references keys by env-var name; with those vars unset, loading must still
     # succeed (no env read at load — the "app opens without credentials" contract).
     for var in ("WICA_ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY"):
         monkeypatch.delenv(var, raising=False)
@@ -159,7 +144,7 @@ def test_loads_with_credentials_unset(
 def test_engine_validation_error_propagates(tmp_path: Path) -> None:
     # A field-level error is the engine's own, raised as-is — not swallowed or re-wrapped here.
     config = _composed()
-    config["asr"]["engine"]["dictation_default_segmentation_mode"] = "nonsense"
+    config["asr"]["dictation_default_segmentation_mode"] = "nonsense"
     with pytest.raises(ValueError, match="dictation_default_segmentation_mode"):
         _load(tmp_path, config)
 
@@ -217,24 +202,24 @@ def test_vision_fields_are_carried(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("section", "field"),
     [
-        ({"enabled": "yes"}, "vision.enabled"),
-        ({"enabled": 1}, "vision.enabled"),
-        ({"threshold": 1.5}, "vision.threshold"),
-        ({"threshold": "high"}, "vision.threshold"),
-        ({"threshold": True}, "vision.threshold"),
-        ({"fps": 0}, "vision.fps"),
-        ({"fps": -5}, "vision.fps"),
-        ({"max_hands": 0}, "vision.max_hands"),
-        ({"max_hands": 1.5}, "vision.max_hands"),
-        ({"max_hands": 2.0}, "vision.max_hands"),
-        ({"max_hands": True}, "vision.max_hands"),
-        ({"max_hands": "two"}, "vision.max_hands"),
-        ({"hold_s": -0.1}, "vision.hold_s"),
-        ({"hold_s": "0.5"}, "vision.hold_s"),
-        ({"hold_s": True}, "vision.hold_s"),
-        ({"release_hold_s": -0.1}, "vision.release_hold_s"),
-        ({"release_hold_s": "0.5"}, "vision.release_hold_s"),
-        ({"device": 3}, "vision.device"),
+        ({"enabled": "yes"}, "vision 'enabled'"),
+        ({"enabled": 1}, "vision 'enabled'"),
+        ({"threshold": 1.5}, "vision 'threshold'"),
+        ({"threshold": "high"}, "vision 'threshold'"),
+        ({"threshold": True}, "vision 'threshold'"),
+        ({"fps": 0}, "vision 'fps'"),
+        ({"fps": -5}, "vision 'fps'"),
+        ({"max_hands": 0}, "vision 'max_hands'"),
+        ({"max_hands": 1.5}, "vision 'max_hands'"),
+        ({"max_hands": 2.0}, "vision 'max_hands'"),
+        ({"max_hands": True}, "vision 'max_hands'"),
+        ({"max_hands": "two"}, "vision 'max_hands'"),
+        ({"hold_s": -0.1}, "vision 'hold_s'"),
+        ({"hold_s": "0.5"}, "vision 'hold_s'"),
+        ({"hold_s": True}, "vision 'hold_s'"),
+        ({"release_hold_s": -0.1}, "vision 'release_hold_s'"),
+        ({"release_hold_s": "0.5"}, "vision 'release_hold_s'"),
+        ({"device": 3}, "vision 'device'"),
     ],
 )
 def test_vision_invalid_value_names_the_field(
@@ -250,5 +235,11 @@ def test_vision_unknown_key_raises(tmp_path: Path) -> None:
 
 
 def test_vision_not_an_object_raises(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="'vision' must be an object"):
+    with pytest.raises(ValueError, match="vision must be an object"):
         _load(tmp_path, {**_composed(), "vision": "on"})
+
+
+def test_a_null_required_section_is_missing(tmp_path: Path) -> None:
+    # app-setup's `used_config` gives every declared section, an absent one as `None`.
+    with pytest.raises(ValueError, match="missing required section.*'asr'"):
+        _load(tmp_path, {**_composed(), "asr": None})

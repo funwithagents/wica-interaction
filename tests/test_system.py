@@ -17,7 +17,7 @@ members in `tests/<embodiment>/test_embodiment.py` (specs/testing.md).
 from __future__ import annotations
 
 import asyncio
-import sys
+import json
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -25,6 +25,7 @@ from typing import Any, cast
 import gradio as gr
 import numpy as np
 import pytest
+from app_setup.app import App, Section
 from asr_engine.audio import AudioFormat
 from asr_engine.config import ASREngineConfig
 from asr_engine.segmenter import SpeechSegment
@@ -812,45 +813,166 @@ def test_shutdown_skips_never_started_bridge() -> None:
 # --- The entry point ------------------------------------------------------------------------------
 
 
-def test_run_app_requires_a_config_path(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+# --- The entry point: the app's folder (specs/app.md, "The entry point"; specs/setup.md) -------
+
+
+_PERSONA = "You are the persona from the folder."
+
+
+def _fake_app(default_config: dict[str, Any]) -> App:
+    """An app with one section, `wica`, described by WICA's own contract."""
+    import wica.setup
+
+    return App(
+        name="wica-interaction-fake",
+        host="wica-interaction",
+        sections=(Section("wica", wica.setup),),
+        default_config=default_config,
+    )
+
+
+class _Loaded:
+    def __init__(self, app: AppConfig) -> None:
+        self.app = app
+
+
+def _run(
+    monkeypatch: pytest.MonkeyPatch,
+    folder: Path,
+    *,
+    default_config: dict[str, Any],
+    load: Any,
+) -> AppSystem:
+    """`run_app` on *folder*, its serving replaced: returns the system it would have served."""
+    seen: list[AppSystem] = []
+    monkeypatch.setattr(system_module, "_serve", seen.append)
+    monkeypatch.setattr(system_module, "build_system", _built)
+
+    def ensure_persona(path: Path) -> Path:
+        target = path / "persona.md"
+        if not target.exists():
+            target.write_text(_PERSONA, encoding="utf-8")
+        return target
+
+    run_app(
+        _fake_app(default_config),
+        load=load,
+        embodiment=lambda _loaded: FakeEmbodiment(),
+        ensure_persona=ensure_persona,
+        argv=["--folder", str(folder)],
+    )
+    assert len(seen) == 1
+    return seen[0]
+
+
+# The configs `build_system` was handed by `run_app`, newest last.
+_LAST_CONFIG: list[AppConfig] = []
+
+
+def _built(config: AppConfig, embodiment: Embodiment) -> AppSystem:
+    """A stand-in for `build_system`: records the config it was given and builds nothing."""
+    _LAST_CONFIG.append(config)
+    return AppSystem(
+        loop=None,
+        display_name=embodiment.display_name,
+        embodiment=None,
+        wica=None,
+        bridge=None,
+        gesture=None,
+        missing=[],
+        submit_speech=lambda _text: None,
+    )
+
+
+def _load_wica(data: Any, *, base_dir: Path) -> _Loaded:
+    return _Loaded(
+        AppConfig(
+            wica=WicaConfig.from_dict(data["wica"], base_dir=base_dir),
+            asr_engine=_asr_config(),
+        )
+    )
+
+
+_FOLDER_CONFIG = {
+    "wica": {
+        "agent": {
+            "provider": "fake",
+            "model": "scripted",
+            "system_prompt_file": "persona.md",
+        }
+    }
+}
+
+
+def test_run_app_fills_a_new_folder_and_loads_from_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A bare run (no --config) exits with usage guidance before loading anything — it never falls
-    back to a default file (the committed examples are templates to copy and adapt, not configs meant
-    to run unmodified)."""
-    monkeypatch.setattr(sys, "argv", ["wica-interaction-fake"])
-    loaded: list[str] = []
+    """A new folder gets the default config and the persona; the config is loaded from the folder,
+    its relative persona path resolved there whatever the working directory."""
+    folder = tmp_path / "app"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    _LAST_CONFIG.clear()
 
-    def _load(path: str) -> tuple[AppConfig, Embodiment]:
-        loaded.append(path)
-        raise AssertionError("load must not be reached")
+    _run(monkeypatch, folder, default_config=_FOLDER_CONFIG, load=_load_wica)
 
-    with pytest.raises(SystemExit) as exc:
-        run_app(description="a fake body", load=_load)
+    assert json.loads((folder / "config.json").read_text(encoding="utf-8")) == (
+        _FOLDER_CONFIG
+    )
+    assert (folder / "persona.md").read_text(encoding="utf-8") == _PERSONA
+    prompt = _LAST_CONFIG[-1].wica.agent.system_prompt_file
+    assert prompt is not None
+    assert Path(prompt).resolve() == (folder / "persona.md").resolve()
 
-    assert exc.value.code == 2
-    assert "--config" in capsys.readouterr().err
-    assert loaded == []  # no body was ever constructed
+
+def test_run_app_keeps_what_the_user_changed_in_the_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A second launch reads the saved config and leaves an edited persona alone."""
+    folder = tmp_path / "app"
+    _run(monkeypatch, folder, default_config=_FOLDER_CONFIG, load=_load_wica)
+    (folder / "persona.md").write_text("Edited.", encoding="utf-8")
+    saved = json.loads((folder / "config.json").read_text(encoding="utf-8"))
+    saved["wica"]["agent"]["model"] = "another"
+    (folder / "config.json").write_text(json.dumps(saved), encoding="utf-8")
+    _LAST_CONFIG.clear()
+
+    _run(monkeypatch, folder, default_config=_FOLDER_CONFIG, load=_load_wica)
+
+    assert (folder / "persona.md").read_text(encoding="utf-8") == "Edited."
+    assert _LAST_CONFIG[-1].wica.agent.model == "another"
 
 
 def test_run_app_degrades_a_bad_config_into_the_banner(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A `ValueError` from the embodiment's own loader opens the UI with the message in the banner
     rather than a traceback: nothing is built, nothing is served."""
-    monkeypatch.setattr(sys, "argv", ["wica-interaction-fake", "--config", "nope.json"])
-    seen: list[AppSystem] = []
-    monkeypatch.setattr(system_module, "_serve", seen.append)
 
-    def _load(path: str) -> tuple[AppConfig, Embodiment]:
-        raise ValueError(f"could not read config file {path!r}")
+    def load(data: Any, *, base_dir: Path) -> _Loaded:
+        raise ValueError("config: vision 'fps' must be a finite number > 0")
 
-    run_app(description="a fake body", load=_load)
+    system = _run(
+        monkeypatch, tmp_path / "app", default_config=_FOLDER_CONFIG, load=load
+    )
 
-    assert len(seen) == 1
-    assert seen[0].wica is None and seen[0].embodiment is None
-    assert seen[0].display_name is None  # no config ⇒ no body to name the page after
-    assert seen[0].missing == ["could not read config file 'nope.json'"]
+    assert system.wica is None and system.embodiment is None
+    assert system.display_name is None  # no config ⇒ no body to name the page after
+    assert system.missing == ["config: vision 'fps' must be a finite number > 0"]
+
+
+def test_run_app_degrades_an_unreadable_config_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "config.json").write_text("{not json", encoding="utf-8")
+
+    system = _run(monkeypatch, folder, default_config=_FOLDER_CONFIG, load=_load_wica)
+
+    assert system.wica is None
+    assert len(system.missing) == 1 and "config.json" in system.missing[0]
 
 
 # --- Vision in: the hand-sign input (specs/gesture-input.md, "App integration") ----------------

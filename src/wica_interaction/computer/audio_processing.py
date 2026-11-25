@@ -507,7 +507,7 @@ def build_coordinator(config: ComputerConfig) -> AudioProcessingCoordinator:
     audio = config.app.asr_engine.audio_source
     if audio.type != "input-device":
         raise RuntimeError(
-            f"audio processing needs asr.engine.audio_source.type 'input-device' (the "
+            f"audio processing needs asr.audio_source.type 'input-device' (the "
             f"microphone it opens and cleans), got '{audio.type}'"
         )
     # The processor captures at its working format, whatever the module is fed (the engine
@@ -520,7 +520,7 @@ def build_coordinator(config: ComputerConfig) -> AudioProcessingCoordinator:
     ):
         raise RuntimeError(
             "audio processing captures at 16 kHz mono linear16: remove "
-            "asr.engine.audio_source.audio_format, or turn audio processing off"
+            "asr.audio_source.audio_format, or turn audio processing off"
         )
     processor = WebRtcAudioProcessor(
         echo_cancellation=ap.echo_cancellation.enabled,

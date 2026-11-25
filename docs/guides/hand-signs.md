@@ -28,7 +28,7 @@ Anything else, `call` and `mute` among them, a label below the confidence thresh
 
 ## Enabling it
 
-Set `vision.enabled` to `true` ([reference](../reference/configuration.md#vision-hand-signs)) with the `vision` extra installed ([extras](../reference/install.md#extras)); both templates ship it on. An absent section or `enabled: false` opens no camera, loads no model and tells the agent nothing about hands.
+Set `vision.enabled` to `true` ([reference](../reference/configuration.md#vision-hand-signs)) with the `vision` extra installed ([extras](../reference/install.md#extras)); both default configs ship it on. An absent section or `enabled: false` opens no camera, loads no model and tells the agent nothing about hands.
 
 The first run downloads the models, a MediaPipe hand bundle and a gesture classifier of about 340 MB, into the Hugging Face cache ([first-run downloads](../reference/install.md#first-run-downloads)); until they are loaded the Vision line shows no label. The models load on the first frame, so a download that fails, with no network, is reported on the Vision line rather than crashing the app.
 

@@ -8,7 +8,7 @@ tests:
 
 # Audio processing
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
@@ -91,7 +91,7 @@ class AudioProcessingCoordinator:
 
 ### Building the coordinator: `build_coordinator(config)`
 
-The one caught build point, called from `ComputerEmbodiment.enter()` ([computer-embodiment.md](computer-embodiment.md)) through its `coordinator_factory` seam. It checks the ASR audio source first — `asr.engine.audio_source` must be an `"input-device"` (the microphone the coordinator opens and cleans) with no `audio_format` other than the working one, 16 kHz mono linear16, else `RuntimeError`: a file or a custom source leaves it nothing to open, and a format asked for the device is one it cannot honour and does not ignore. The ASR *module's* format is not its concern: the coordinator's `source` declares the working format (`NEAR_FORMAT`) and the engine converts ([asr-bridge.md](asr-bridge.md), "The mic is the embodiment's"). It then builds `WebRtcAudioProcessor(…)` from `config.audio_processing` (`ImportError` if the binding is absent), and — **only when echo cancellation is on** — also imports `samplerate` there, so a partial install (binding present, resampler absent) degrades at this point instead of failing later inside `bind_far_rate`. The embodiment catches `ImportError` / `RuntimeError` / `ValueError` into `missing` (`Audio processing: …`) and runs with no processing.
+The one caught build point, called from `ComputerEmbodiment.enter()` ([computer-embodiment.md](computer-embodiment.md)) through its `coordinator_factory` seam. It checks the ASR audio source first — `asr.audio_source` must be an `"input-device"` (the microphone the coordinator opens and cleans) with no `audio_format` other than the working one, 16 kHz mono linear16, else `RuntimeError`: a file or a custom source leaves it nothing to open, and a format asked for the device is one it cannot honour and does not ignore. The ASR *module's* format is not its concern: the coordinator's `source` declares the working format (`NEAR_FORMAT`) and the engine converts ([asr-bridge.md](asr-bridge.md), "The mic is the embodiment's"). It then builds `WebRtcAudioProcessor(…)` from `config.audio_processing` (`ImportError` if the binding is absent), and — **only when echo cancellation is on** — also imports `samplerate` there, so a partial install (binding present, resampler absent) degrades at this point instead of failing later inside `bind_far_rate`. The embodiment catches `ImportError` / `RuntimeError` / `ValueError` into `missing` (`Audio processing: …`) and runs with no processing.
 
 ## Configuration
 
@@ -126,7 +126,7 @@ class AudioProcessingConfig:
     def any_enabled(self) -> bool: ...
 ```
 
-Absent ⇒ all defaults ⇒ disabled. **Strict, like every other app-owned section:** an unknown key — in the section or in either feature — is a `ValueError` naming it, because the costly typo here is silent (`echo_cancelation` would otherwise load as "echo cancellation off", and the assistant would answer its own voice with nothing on screen to say why); a feature that is present but not an object (`"echo_cancellation": false`) is an error too, while `null`/absent means its defaults. Field types are validated (a string where an int belongs, a bool for an int field, or an out-of-range `level` raises a clear `ValueError`). The committed `config.computer.example.json` turns echo cancellation on with `stream_delay_ms: 50` and leaves noise suppression off (it can hurt as often as help; enable per environment). Grouping AEC and NS under one object matches the reality that both are features of the one WebRTC processor.
+Absent ⇒ all defaults ⇒ disabled. The section's fields are declared once, read by this parser and by the section's setup contract, which draws its form, names the `audio-processing` extra when a feature is on and reports it missing before a session starts ([setup.md](setup.md), "The app's own contracts"). **Strict, like every other app-owned section:** an unknown key — in the section or in either feature — is a `ValueError` naming it, because the costly typo here is silent (`echo_cancelation` would otherwise load as "echo cancellation off", and the assistant would answer its own voice with nothing on screen to say why); a feature that is present but not an object (`"echo_cancellation": false`) is an error too, while `null`/absent means its defaults. Field types are validated (a string where an int belongs, a bool for an int field, or an out-of-range `level` raises a clear `ValueError`). The committed `config.computer.example.json` turns echo cancellation on with `stream_delay_ms: 50` and leaves noise suppression off (it can hurt as often as help; enable per environment). Grouping AEC and NS under one object matches the reality that both are features of the one WebRTC processor.
 
 ## Teardown
 

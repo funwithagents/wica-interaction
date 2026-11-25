@@ -3,33 +3,33 @@ code:
   - src/wica_interaction/computer/embodiment.py
   - src/wica_interaction/computer/config.py
   - src/wica_interaction/computer/app.py
-  - prompts/computer.md
+  - src/wica_interaction/computer/default/config.json
+  - src/wica_interaction/computer/default/computer.md
 tests:
   - tests/computer/test_embodiment.py
   - tests/computer/test_config.py
+  - tests/computer/test_app.py
 ---
 
 # Computer embodiment
 
-**Status:** Implemented
+**Status:** Updated
 
 ## Purpose
 
-The agent embodied in **the machine the app runs on**: speech in from a local microphone, speech out through the local speakers via a `tts-engine` `TTSEngine`, optionally the mic cleaned by [audio processing](audio-processing.md) (WebRTC echo cancellation and noise suppression) and the person's hand signs read through a **webcam**. It has no actions beyond speaking. This is the former `vocal-interaction-wica` app, ported here as one implementation of the [Embodiment](embodiment.md) protocol; its persona is a plain voice assistant, [prompts/computer.md](../prompts/computer.md). It runs as `wica-interaction-computer --config <file>`.
+The agent embodied in **the machine the app runs on**: speech in from a local microphone, speech out through the local speakers via a `tts-engine` `TTSEngine`, optionally the mic cleaned by [audio processing](audio-processing.md) (WebRTC echo cancellation and noise suppression) and the person's hand signs read through a **webcam**. It has no actions beyond speaking. This is the former `vocal-interaction-wica` app, ported here as one implementation of the [Embodiment](embodiment.md) protocol; its persona is a plain voice assistant, `computer.md`. It runs as `wica-interaction-computer`, from its folder (`~/.config/wica-interaction-computer` — [setup.md](setup.md)).
 
 ## Configuration
 
-The file carries the shared sections (`wica`, `asr`, optional `vision` — [configuration.md](configuration.md)) plus this embodiment's own, parsed by `computer/config.py`'s `load_config(path) -> ComputerConfig`:
+The config carries the shared sections (`wica`, `asr`, optional `vision` — [configuration.md](configuration.md)) plus this embodiment's own, parsed by `computer/config.py`'s `load_config(data, *, base_dir) -> ComputerConfig`. Each is a section of the app, described to the Setup tab by its contract ([setup.md](setup.md)): `tts` by tts-engine's, `audio_processing` and `camera` by the app's own.
 
 ```json
 {
-  "wica": { "agent": { "…": "…", "system_prompt_file": "prompts/computer.md" } },
-  "asr": { "engine": { "…": "…" } },
+  "wica": { "agent": { "…": "…", "system_prompt_file": "computer.md" } },
+  "asr": { "module": { "…": "…" } },
   "tts": {
-    "engine": {
-      "module": { "type": "phonon", "voice": "Miles" },
-      "player": { "device": null }
-    }
+    "module": { "type": "phonon", "voice": "Miles" },
+    "player": { "device": null }
   },
   "audio_processing": {
     "echo_cancellation": { "enabled": true, "stream_delay_ms": 50 },
@@ -54,11 +54,11 @@ class ComputerConfig:
     camera: CameraConfig
 ```
 
-- **`tts` (required)** — a tts-engine document; its `engine` block goes verbatim to `TTSEngineConfig.from_dict`, so the provider (`module.type`: `elevenlabs`, `gradium`, `pocket`, …), its key reference and voice, and the `player.device` (the speaker) are the engine's own schema. The provider named must have its extra installed (`tts-<name>`, one per tts-engine provider: `tts-elevenlabs`, `tts-gradium`, `tts-pocket`, … — [project.md](project.md), "Extras").
+- **`tts` (required)** — tts-engine's engine block, handed verbatim to `TTSEngineConfig.from_dict(…, base_dir=base_dir)` (a relative voice file or model path is the folder's), so the provider (`module.type`: `elevenlabs`, `gradium`, `pocket`, …), its key reference and voice, and the `player.device` (the speaker) are the engine's own schema. The provider named must have its extra installed (`tts-<name>`, one per tts-engine provider: `tts-elevenlabs`, `tts-gradium`, `tts-pocket`, … — [project.md](project.md), "Extras").
 - **`audio_processing` (optional)** — absent ⇒ every feature off; the schema and semantics are in [audio-processing.md](audio-processing.md).
-- **`camera` (optional)** — the webcam `GestureInput` reads when `vision.enabled`; `device` is what `cv2.VideoCapture` takes (an index, default `0`, or a path/URL). Absent ⇒ device `0`. A non-object section, an unknown key, or a `device` that is neither an int nor a string raises `ValueError` from `load_config`, naming the file and the field.
-- The microphone is the ASR config's own `asr.engine.audio_source.device` (opened by the engine, or by the audio processing when it is on), so it needs no section here.
-- Any top-level key outside `wica`/`asr`/`vision`/`tts`/`audio_processing`/`camera` is rejected — a `reachy` section in a computer config is a `ValueError`, not silently ignored ([configuration.md](configuration.md), "Each embodiment loads its own file").
+- **`camera` (optional)** — the webcam `GestureInput` reads when `vision.enabled`; `device` is what `cv2.VideoCapture` takes (an index, default `0`, or a path/URL). Absent ⇒ device `0`. A non-object section, an unknown key, or a `device` that is neither an int nor a string raises `ValueError` from `load_config`, naming the section and the field; the fields are declared once, for the loader and for the section's contract ([setup.md](setup.md), "The app's own contracts").
+- The microphone is the ASR config's own `asr.audio_source.device` (opened by the engine, or by the audio processing when it is on), so it needs no section here.
+- Any top-level key outside `wica`/`asr`/`vision`/`tts`/`audio_processing`/`camera` is rejected — a `reachy` section in a computer config is a `ValueError`, not silently ignored ([configuration.md](configuration.md), "Loading").
 
 ## `ComputerEmbodiment`
 
@@ -83,7 +83,7 @@ Construction does no I/O and opens no device; everything happens in `enter()`, o
 The members:
 
 - **`voice`** — the bound `say` below, **always**: with no engine it stays wired and answers with the TTS error, the same contract as the robot's ([embodiment.md](embodiment.md), "A voice that failed to build stays wired").
-- **`mic`** — `coordinator.source` when a coordinator was built (the processed mic, whatever features are on), else `None`: the ASR engine opens its default `AudioCapture` on `asr.engine.audio_source.device`.
+- **`mic`** — `coordinator.source` when a coordinator was built (the processed mic, whatever features are on), else `None`: the ASR engine opens its default `AudioCapture` on `asr.audio_source.device`.
 - **`mic_error`** — the coordinator's `capture_error` when one was built: why the processed mic went silent (its pump failed — [audio-processing.md](audio-processing.md), "Near-end path"), `None` while healthy. Without a coordinator, always `None`: the engine's own capture, when it dies, raises inside the engine, which reports it its own way.
 - **`camera(fps=…)`** — a `StreamFeed(WebcamSource(config.camera.device, fps=fps))`: the paced webcam source below, behind the gesture module's own `StreamProvider` adapter ([gesture-input.md](gesture-input.md), "`StreamFeed`"), so the hand stage samples a latest-value slot here as it does on the robot. `open()` starts the provider (which opens the webcam), `close()` stops it; `capture_error` is the source's.
 - **`view()`** — the webcam on the page: the feed `camera()` built keeps its newest frame, and `view()` returns it through `display_frame`, mirrored ([embodiment.md](embodiment.md), "`view()` is display-ready"), with no status. Before `camera()` was called — vision off, so no webcam is ever opened — or before the feed's first frame, an empty `EmbodimentView()`. It reads the feed the gesture input samples: the page opens no device of its own.
@@ -131,29 +131,47 @@ class WebcamSource:
 
 ## Entry point
 
-`wica_interaction.computer.app:main` — `wica-interaction-computer` in `[project.scripts]`:
+`wica_interaction.computer.app:main` — `wica-interaction-computer` in `[project.scripts]`. The module declares the app ([setup.md](setup.md)) and runs it:
 
 ```python
-def _load(path: str) -> tuple[AppConfig, Embodiment]:
-    config = load_config(path)
-    return config.app, ComputerEmbodiment(config)
+SECTIONS = (
+    Section("wica", wica.setup, title="Agent"),
+    Section("asr", asr_engine.setup, title="Speech recognition"),
+    Section("tts", tts_engine.setup, title="Voice"),
+    Section("audio_processing", AUDIO_PROCESSING, title="Microphone processing"),
+    Section("vision", VISION, title="Hand signs"),
+    Section("camera", CAMERA, title="Camera"),
+)
+APP = App(
+    name="wica-interaction-computer",
+    title="WICA Interaction — Computer",
+    host="wica-interaction",
+    sections=SECTIONS,
+    default_config=DEFAULT_CONFIG,  # computer/default/config.json
+    autostart=True,
+)
 
 
 def main() -> None:
-    run_app(description="Talk to a WICA voice assistant.", load=_load)
+    run_app(
+        APP,
+        load=load_config,
+        embodiment=ComputerEmbodiment,
+        ensure_persona=ensure_persona,
+    )
 ```
 
-`run_app` in `system.py` does the rest ([app.md](app.md), "Wiring and lifecycle"): `--config` (required), load or degrade, build, UI, wire, serve, tear down. The module imports `tts_engine` and this package only — never `reachy_mini_bridge` — so a `wica-interaction[computer]` install has no robot SDK to import ([project.md](project.md)).
+`run_app` in `system.py` does the rest ([app.md](app.md), "Wiring and lifecycle"): the folder, the command line, the session, the page. **The default config** (`computer/default/config.json`) is the Hugging Face Hub agent, the local `mlx-audio` recognizer behind the `silero` gate, the `phonon` voice, echo cancellation on and vision on; it names no key variable (the agent's is `HF_TOKEN`, its provider's own). The module imports `tts_engine` and this package only — never `reachy_mini_bridge` — so a `wica-interaction[computer]` install has no robot SDK to import ([project.md](project.md)).
 
 ## Persona
 
-[prompts/computer.md](../prompts/computer.md): a friendly voice assistant in a spoken conversation; it speaks only through `say`, may choose not to react, knows it can do only what its commands do and its own state only from their results and the World (the shared self-knowledge rules: asked to open an app or set a timer, it says it cannot), and can switch to dictation when asked — including the sentence that an empty dictated passage means nothing came through. It says nothing about hands: the "Hand signs" section is appended at startup by the app when vision is on ([gesture-input.md](gesture-input.md), "What the agent does with it"), so the same file serves with and without a webcam. It does **not** say how a dictated passage ends: that depends on the config's `dictation_default_segmentation_mode`, so `start_dictation`'s reply says it — for the model to know, not to announce ([asr-bridge.md](asr-bridge.md), "Dictation").
+`computer.md` (shipped as `computer/default/computer.md`, copied into the app's folder at first launch and edited there — [setup.md](setup.md)): a friendly voice assistant in a spoken conversation; it speaks only through `say`, may choose not to react, knows it can do only what its commands do and its own state only from their results and the World (the shared self-knowledge rules: asked to open an app or set a timer, it says it cannot), and can switch to dictation when asked — including the sentence that an empty dictated passage means nothing came through. It says nothing about hands: the "Hand signs" section is appended at startup by the app when vision is on ([gesture-input.md](gesture-input.md), "What the agent does with it"), so the same file serves with and without a webcam. It does **not** say how a dictated passage ends: that depends on the config's `dictation_default_segmentation_mode`, so `start_dictation`'s reply says it — for the model to know, not to announce ([asr-bridge.md](asr-bridge.md), "Dictation").
 
 ## Testing
 
 `tests/computer/` — deterministic, no audio device, no camera, no provider ([testing.md](testing.md)):
 
-- **Config:** `load_config` on a computer file yields the shared `AppConfig` plus `tts_engine`, `audio_processing`, `camera`; `tts` missing, `tts` without an `engine` block, a `camera` that is not an object or has an unknown key, a `reachy` section, each raise `ValueError` naming the file; `camera` absent ⇒ device `0`; the `audio_processing` cases are in [audio-processing.md](audio-processing.md).
+- **Config:** `load_config` on a computer document yields the shared `AppConfig` plus `tts_engine`, `audio_processing`, `camera`; `tts` missing, `tts` that is not an object, a `camera` that is not an object or has an unknown key, a `reachy` section, each raise `ValueError` naming the section; `camera` absent ⇒ device `0`; a relative voice file in `tts` resolves against `base_dir`; **the default config loads**; the `audio_processing` cases are in [audio-processing.md](audio-processing.md).
 - **Voice:** with an injected fake `TTSEngine`, WICA reads the voice as a streaming output Command; a tag's pieces reach `say_stream` and `say` returns `"OK"`; the first words reach the engine before the tag closes and `say` returns only after it; an empty, `""`, whitespace-only or punctuation-only tag returns the empty-text error without calling the engine; what reaches the engine is the cleaned text; a `TTSError` maps to `"TTS error: …"`.
 - **Enter:** with a fake engine, `voice` is set, `mic` is `None` with processing off; a `coordinator_factory` returning a fake coordinator makes `mic` its `source`, and with echo cancellation on the engine is built with its `sink` and `bind_far_rate` is called with the engine's rate; a factory raising `ImportError`, or an exception nobody foresaw, degrades to `Audio processing: …` in `missing` with a still-working voice; `mic_error` is the coordinator's `capture_error`, and `None` without one; a `TTSEngine` build raising `ConfigError`, `ImportError` or any other exception degrades to `TTS: …` with `voice` still the `say`, which returns the TTS error naming the cause; `commands()` is empty and `prompt_addendum` is `""`.
 - **Webcam:** `WebcamSource` over an injected fake `OpenCVSource`-like object: `read()` paces to `fps`, the first read returning at once and a later one returning what the device holds when its interval ends (not a frame held back from its start); an `open()` that raises sets `capture_error` and a later success clears it; `close()` makes `read()` return `None` promptly; an open that completes after `close()` is released; a device whose stream ends after each frame (as an image file's does) is reopened in the same poll, delivering every poll with no `capture_error`, while a device that has delivered nothing yet is not reopened; a stream that ends and whose reopen fails sets `capture_error` (`camera open failed`), and the source heals once the device opens again. `camera(fps=…)` returns a `StreamFeed` whose `capture_error` is that webcam's (an unopenable device shows through it) and whose `open()` / `close()` open and close the device.

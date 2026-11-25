@@ -9,7 +9,7 @@ Speech in is a live speech recognizer, speech out real audio, and the robot real
 
 **Start here:**
 
-- [docs/getting-started.md](docs/getting-started.md): install, a template, the keys, the computer app, then the robot in the simulator and on a Reachy Mini.
+- [docs/getting-started.md](docs/getting-started.md): install, the app's folder, the keys, the computer app, then the robot in the simulator and on a Reachy Mini.
 - [docs/index.md](docs/index.md): the documentation, by task.
 - On this page: [what you get](#what-you-get), [install](#install), the [quick start](#quick-start).
 
@@ -46,10 +46,10 @@ Python 3.12+ and [`uv`](https://docs.astral.sh/uv/), from a checkout. Pick a bod
 ```
 git clone https://github.com/funwithagents/wica-interaction.git && cd wica-interaction
 
-# the computer, as the template configures it
+# the computer, as its default config runs it
 uv sync --no-dev --extra computer --extra wica-huggingface-hub --extra asr-mlx-audio --extra asr-silero --extra tts-phonon --extra audio-processing --extra vision
 
-# the Reachy Mini, as the template configures it: in the simulator (drop reachy-sim for a real robot)
+# the Reachy Mini, as its default config runs it: in the simulator (drop reachy-sim for a real robot)
 uv sync --no-dev --extra reachy --extra reachy-sim --extra wica-huggingface-hub --extra asr-mlx-audio --extra asr-silero --extra tts-phonon --extra vision
 
 # the development environment: both bodies, every agent provider, the simulator, the tooling
@@ -60,11 +60,11 @@ Every extra, the platforms, the system packages and the first-run downloads are 
 
 ## Quick start
 
-One config file stands up each embodiment; the committed files are templates to copy and adapt ([docs/reference/configuration.md](docs/reference/configuration.md)). They run speech in and the voice on your machine (the recognizer needs Apple silicon) and the agent on the Hugging Face Hub, so they need one key, referenced by environment variable, never stored:
+Each app runs from its own folder, `~/.config/wica-interaction-computer` or `~/.config/wica-interaction-reachy`, which the first launch fills with its default config and its persona, yours to edit there ([docs/reference/configuration.md](docs/reference/configuration.md)). The default configs run speech in and the voice on your machine (the recognizer needs Apple silicon) and the agent on the Hugging Face Hub, so they need one key, referenced by environment variable, never stored:
 
 ```
-export WICA_HF_TOKEN=hf_...            # the agent
-uv run wica-interaction-computer --config config.computer.example.json
+export HF_TOKEN=hf_...                 # the agent (or HF_TOKEN=… in the folder's .env)
+uv run wica-interaction-computer
 ```
 
 Open the address Gradio prints and talk. Each thing you say shows as 🗣️ on the left; the agent's reply is a **🗣️ say** item that stays running while you hear it. Without a key the page still opens, says what to set, and the text box drives the agent wherever its own key is set.
@@ -72,11 +72,11 @@ Open the address Gradio prints and talk. Each thing you say shows as 🗣️ on 
 The robot, in the simulator the bridge spawns for you (the MuJoCo viewer opens; needs the `reachy-sim` extra, and on macOS an unlocked GUI session):
 
 ```
-export WICA_HF_TOKEN=hf_...            # the agent
-uv run wica-interaction-reachy --config config.reachy.example.json
+export HF_TOKEN=hf_...                 # the agent
+uv run wica-interaction-reachy
 ```
 
-The first run downloads the speech recognizer's model and the voice. Another agent, recognizer or voice is a change of one block plus its extra; [docs/reference/configuration.md](docs/reference/configuration.md#what-the-templates-run-and-the-other-choices) says where each provider is documented. For a Reachy Mini Lite plugged in over USB, set `reachy.backend` to `"real"`; the complete walk-through, the simulator's options and the robot's, continues in [docs/getting-started.md](docs/getting-started.md).
+The first run downloads the speech recognizer's model and the voice. Another agent, recognizer or voice is a change of one block plus its extra; [docs/reference/configuration.md](docs/reference/configuration.md#what-the-default-configs-run-and-the-other-choices) says where each provider is documented. For a Reachy Mini Lite plugged in over USB, set `reachy.backend` to `"real"` in the folder's `config.json`; the complete walk-through, the simulator's options and the robot's, continues in [docs/getting-started.md](docs/getting-started.md).
 
 ## Documentation
 
@@ -84,8 +84,8 @@ Start at [docs/index.md](docs/index.md), the documentation by task. The pages us
 
 | | |
 |---|---|
-| [docs/getting-started.md](docs/getting-started.md) | Install, a template, the keys, the first run on the computer, then the robot |
-| [docs/reference/configuration.md](docs/reference/configuration.md) | The one JSON file section by section, the templates, what a loader rejects |
+| [docs/getting-started.md](docs/getting-started.md) | Install, the app's folder, the keys, the first run on the computer, then the robot |
+| [docs/reference/configuration.md](docs/reference/configuration.md) | The app's folder, its config section by section, the default configs, what a loader rejects |
 | [docs/reference/install.md](docs/reference/install.md) | Every extra, the platforms, the system packages, the first-run downloads |
 | [docs/reference/agent.md](docs/reference/agent.md) | What the model sees and can do: the World entries, the Commands, the persona sections, the transcript |
 | [docs/guides/](docs/index.md#by-task) | The computer, the Reachy Mini, hand signs, dictation, personas, latency, benchmarking (planned, not built yet), limits, troubleshooting |
