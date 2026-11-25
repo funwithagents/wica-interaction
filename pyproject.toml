@@ -20,7 +20,9 @@ dependencies = [
     # panels (specs/setup.md).
     "app-setup[ui]",
     "vision-modules",
-    "gradio>=6",
+    # 6.32 at least: on earlier 6.x, the first switch to a tab drawn lazily (Setup, Secrets)
+    # could freeze the page.
+    "gradio>=6.32",
     "numpy",
     # The latency view collects the spans the agent and the libraries open, on every run
     # (specs/latency-view.md, "Installing the SDK"); they depend on the API alone.
