@@ -53,11 +53,35 @@ STARTING_DOCUMENTS: dict[str, dict[str, Any]] = {
 
 SECTIONS: tuple[Section, ...] = (
     Section("wica", wica.setup, title="Agent"),
-    Section("asr", asr_engine.setup, title="Speech recognition"),
+    Section(
+        "asr",
+        asr_engine.setup,
+        title="Speech recognition",
+        optional=True,
+        default=STARTING_DOCUMENTS["asr"],
+    ),
     Section("tts", tts_engine.setup, title="Voice"),
-    Section("audio_processing", AUDIO_PROCESSING, title="Microphone processing"),
-    Section("vision", VISION, title="Hand signs"),
-    Section("camera", CAMERA, title="Camera"),
+    Section(
+        "audio_processing",
+        AUDIO_PROCESSING,
+        title="Microphone processing",
+        optional=True,
+        default=STARTING_DOCUMENTS["audio_processing"],
+    ),
+    Section(
+        "vision",
+        VISION,
+        title="Hand signs",
+        optional=True,
+        default=STARTING_DOCUMENTS["vision"],
+    ),
+    Section(
+        "camera",
+        CAMERA,
+        title="Camera",
+        optional=True,
+        default=STARTING_DOCUMENTS["camera"],
+    ),
 )
 
 APP = App(

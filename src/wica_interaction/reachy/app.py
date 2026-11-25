@@ -43,9 +43,21 @@ STARTING_DOCUMENTS: dict[str, dict[str, Any]] = {
 
 SECTIONS: tuple[Section, ...] = (
     Section("wica", wica.setup, title="Agent"),
-    Section("asr", asr_engine.setup, title="Speech recognition"),
+    Section(
+        "asr",
+        asr_engine.setup,
+        title="Speech recognition",
+        optional=True,
+        default=STARTING_DOCUMENTS["asr"],
+    ),
     Section("reachy", reachy_mini_bridge.setup, title="Reachy Mini"),
-    Section("vision", VISION, title="Hand signs"),
+    Section(
+        "vision",
+        VISION,
+        title="Hand signs",
+        optional=True,
+        default=STARTING_DOCUMENTS["vision"],
+    ),
 )
 
 APP = App(

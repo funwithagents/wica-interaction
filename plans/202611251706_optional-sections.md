@@ -29,11 +29,13 @@ Implements [specs/configuration.md](../specs/configuration.md) ("Optional sectio
 6. Default configs keep the first launch as it was: every section that was on stays present, `vision` without `enabled`.
 7. Specs, docs, tests.
 
-### Phase 2: the sections declared optional to app-setup
+### Phase 2: the sections declared optional to app-setup (done, on app-setup's `setup-overview` branch)
 
-1. Pick up app-setup's `Section(optional=True, default=…)` (`uv lock --upgrade-package app-setup`).
+1. Pick up app-setup's `Section(optional=True, default=…)`: its source at `rev = "setup-overview"` (app-setup #12), `uv lock --upgrade-package app-setup`; back to `main` once #12 is merged.
 2. Declare `asr`, `vision`, `audio_processing`, `camera` with `optional=True, default=STARTING_DOCUMENTS[name]` in both apps' `SECTIONS`; an absent one is then neither checked nor counted by Start's blockers, and the Setup tab offers Add and Remove.
-3. Tests: an app config without an optional section has no app-setup problem and starts; Add writes the starting document. Then this plan `Done`, and the Updated specs back to `Implemented`.
+3. Tests (`tests/computer/test_app.py`, `tests/reachy/test_app.py`): the optional sections and their defaults; a config leaving them out has no app-setup problem, no blocker from them, and loads with each off; Add writes the starting document, Remove takes it out; hand signs added without the camera pass app-setup's check and the session bar names the camera, adding it clears that.
+
+**Still open before `Done`:** app-setup #12's spec is Draft, awaiting review; once it is merged, the source goes back to `main`, this plan is `Done`, and the specs it left `Updated` (configuration, app, gesture-input, computer-embodiment, audio-processing) go back to `Implemented`.
 
 ## Verification
 
