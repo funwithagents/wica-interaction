@@ -273,7 +273,7 @@ ui = [
 [[package]]
 name = "asr-engine"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/asr-engine?rev=setup-contract#70643887efce1ae3c4fec3d8d2c7a74ed51c62d8" }
+source = { git = "https://github.com/funwithagents/asr-engine?rev=main#5ebd878eeed17b72f9ab834ba831cc8b0cbf2ff7" }
 dependencies = [
     { name = "numpy" },
     { name = "opentelemetry-api" },
@@ -3791,7 +3791,7 @@ wheels = [
 [[package]]
 name = "reachy-mini-bridge"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=setup-contract#984a0814fc2faac803658a74572badd59bea9ea9" }
+source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=setup-contract#1f16c41d4932dd33fe473f22c5532fa1dc60ea0b" }
 dependencies = [
     { name = "numpy" },
     { name = "opentelemetry-api" },
@@ -4624,7 +4624,7 @@ wheels = [
 [[package]]
 name = "tts-engine"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/tts-engine?rev=setup-contract#fad219748fd6a858b39b39f7420f4cbaac7266f7" }
+source = { git = "https://github.com/funwithagents/tts-engine?rev=main#3a69ead2c6123fdd1f7984dac216ba7c4135bbc5" }
 dependencies = [
     { name = "numpy" },
     { name = "opentelemetry-api" },
@@ -4999,7 +4999,7 @@ wheels = [
 [[package]]
 name = "wica"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/wica-framework?rev=setup-contract#375be3ce8303f63a7f4be8eded86631b1de6a7cd" }
+source = { git = "https://github.com/funwithagents/wica-framework?rev=main#56b6a748b31207514f3a51017c45cb755dcf41e9" }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
@@ -5158,12 +5158,12 @@ dev = [
 requires-dist = [
     { name = "aec-audio-processing", marker = "extra == 'audio-processing'", specifier = ">=1.0.1" },
     { name = "app-setup", extras = ["ui"], git = "https://github.com/funwithagents/app-setup?rev=main" },
-    { name = "asr-engine", git = "https://github.com/funwithagents/asr-engine?rev=setup-contract" },
-    { name = "asr-engine", extras = ["deepgram"], marker = "extra == 'asr-deepgram'", git = "https://github.com/funwithagents/asr-engine?rev=setup-contract" },
-    { name = "asr-engine", extras = ["mistral"], marker = "extra == 'asr-mistral'", git = "https://github.com/funwithagents/asr-engine?rev=setup-contract" },
-    { name = "asr-engine", extras = ["mlx-audio"], marker = "extra == 'asr-mlx-audio'", git = "https://github.com/funwithagents/asr-engine?rev=setup-contract" },
-    { name = "asr-engine", extras = ["openai-compatible"], marker = "extra == 'asr-openai-compatible'", git = "https://github.com/funwithagents/asr-engine?rev=setup-contract" },
-    { name = "asr-engine", extras = ["silero"], marker = "extra == 'asr-silero'", git = "https://github.com/funwithagents/asr-engine?rev=setup-contract" },
+    { name = "asr-engine", git = "https://github.com/funwithagents/asr-engine?rev=main" },
+    { name = "asr-engine", extras = ["deepgram"], marker = "extra == 'asr-deepgram'", git = "https://github.com/funwithagents/asr-engine?rev=main" },
+    { name = "asr-engine", extras = ["mistral"], marker = "extra == 'asr-mistral'", git = "https://github.com/funwithagents/asr-engine?rev=main" },
+    { name = "asr-engine", extras = ["mlx-audio"], marker = "extra == 'asr-mlx-audio'", git = "https://github.com/funwithagents/asr-engine?rev=main" },
+    { name = "asr-engine", extras = ["openai-compatible"], marker = "extra == 'asr-openai-compatible'", git = "https://github.com/funwithagents/asr-engine?rev=main" },
+    { name = "asr-engine", extras = ["silero"], marker = "extra == 'asr-silero'", git = "https://github.com/funwithagents/asr-engine?rev=main" },
     { name = "gradio", specifier = ">=6.32" },
     { name = "numpy" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otlp'", specifier = ">=1.20,<2" },
@@ -5171,29 +5171,29 @@ requires-dist = [
     { name = "reachy-mini-bridge", marker = "extra == 'reachy'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=setup-contract" },
     { name = "reachy-mini-bridge", extras = ["sim"], marker = "extra == 'reachy-sim'", git = "https://github.com/funwithagents/reachy-mini-bridge?rev=setup-contract" },
     { name = "samplerate", marker = "extra == 'audio-processing'", specifier = ">=0.2.4" },
-    { name = "tts-engine", marker = "extra == 'computer'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["cartesia"], marker = "extra == 'tts-cartesia'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["deepgram"], marker = "extra == 'tts-deepgram'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["elevenlabs"], marker = "extra == 'tts-elevenlabs'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["gemini"], marker = "extra == 'tts-gemini'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["gradium"], marker = "extra == 'tts-gradium'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["kokoro"], marker = "extra == 'tts-kokoro'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["mistral"], marker = "extra == 'tts-mistral'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["openai"], marker = "extra == 'tts-openai'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["openai-compatible"], marker = "extra == 'tts-openai-compatible'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["phonon"], marker = "extra == 'tts-phonon'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["piper"], marker = "extra == 'tts-piper'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["pocket"], marker = "extra == 'tts-pocket'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
-    { name = "tts-engine", extras = ["qwen3"], marker = "extra == 'tts-qwen3'", git = "https://github.com/funwithagents/tts-engine?rev=setup-contract" },
+    { name = "tts-engine", marker = "extra == 'computer'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["cartesia"], marker = "extra == 'tts-cartesia'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["deepgram"], marker = "extra == 'tts-deepgram'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["elevenlabs"], marker = "extra == 'tts-elevenlabs'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["gemini"], marker = "extra == 'tts-gemini'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["gradium"], marker = "extra == 'tts-gradium'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["kokoro"], marker = "extra == 'tts-kokoro'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["mistral"], marker = "extra == 'tts-mistral'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["openai"], marker = "extra == 'tts-openai'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["openai-compatible"], marker = "extra == 'tts-openai-compatible'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["phonon"], marker = "extra == 'tts-phonon'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["piper"], marker = "extra == 'tts-piper'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["pocket"], marker = "extra == 'tts-pocket'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
+    { name = "tts-engine", extras = ["qwen3"], marker = "extra == 'tts-qwen3'", git = "https://github.com/funwithagents/tts-engine?rev=main" },
     { name = "vision-modules", git = "https://github.com/funwithagents/vision-modules?rev=main" },
     { name = "vision-modules", extras = ["hand", "opencv"], marker = "extra == 'vision'", git = "https://github.com/funwithagents/vision-modules?rev=main" },
-    { name = "wica", extras = ["anthropic"], marker = "extra == 'wica-anthropic'", git = "https://github.com/funwithagents/wica-framework?rev=setup-contract" },
-    { name = "wica", extras = ["gemini"], marker = "extra == 'wica-gemini'", git = "https://github.com/funwithagents/wica-framework?rev=setup-contract" },
-    { name = "wica", extras = ["gradio"], git = "https://github.com/funwithagents/wica-framework?rev=setup-contract" },
-    { name = "wica", extras = ["huggingface-hub"], marker = "extra == 'wica-huggingface-hub'", git = "https://github.com/funwithagents/wica-framework?rev=setup-contract" },
-    { name = "wica", extras = ["mistral"], marker = "extra == 'wica-mistral'", git = "https://github.com/funwithagents/wica-framework?rev=setup-contract" },
-    { name = "wica", extras = ["openai"], marker = "extra == 'wica-openai'", git = "https://github.com/funwithagents/wica-framework?rev=setup-contract" },
-    { name = "wica", extras = ["openai-compatible"], marker = "extra == 'wica-openai-compatible'", git = "https://github.com/funwithagents/wica-framework?rev=setup-contract" },
+    { name = "wica", extras = ["anthropic"], marker = "extra == 'wica-anthropic'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
+    { name = "wica", extras = ["gemini"], marker = "extra == 'wica-gemini'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
+    { name = "wica", extras = ["gradio"], git = "https://github.com/funwithagents/wica-framework?rev=main" },
+    { name = "wica", extras = ["huggingface-hub"], marker = "extra == 'wica-huggingface-hub'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
+    { name = "wica", extras = ["mistral"], marker = "extra == 'wica-mistral'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
+    { name = "wica", extras = ["openai"], marker = "extra == 'wica-openai'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
+    { name = "wica", extras = ["openai-compatible"], marker = "extra == 'wica-openai-compatible'", git = "https://github.com/funwithagents/wica-framework?rev=main" },
     { name = "wica-interaction", extras = ["asr-deepgram", "asr-mistral", "asr-openai-compatible", "asr-mlx-audio", "asr-silero"], marker = "extra == 'all'", editable = "." },
     { name = "wica-interaction", extras = ["computer", "audio-processing", "reachy", "reachy-sim", "vision", "otlp"], marker = "extra == 'all'", editable = "." },
     { name = "wica-interaction", extras = ["tts-elevenlabs", "tts-gradium", "tts-mistral", "tts-deepgram", "tts-gemini", "tts-cartesia", "tts-openai", "tts-openai-compatible"], marker = "extra == 'all'", editable = "." },
