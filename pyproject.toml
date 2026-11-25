@@ -139,9 +139,7 @@ asr-engine = { git = "https://github.com/funwithagents/asr-engine", rev = "main"
 tts-engine = { git = "https://github.com/funwithagents/tts-engine", rev = "main" }
 reachy-mini-bridge = { git = "https://github.com/funwithagents/reachy-mini-bridge", rev = "main" }
 vision-modules = { git = "https://github.com/funwithagents/vision-modules", rev = "main" }
-# app-setup on its `config-file` branch (a config file as the source, the config page): back to
-# `main` once app-setup #11 is merged.
-app-setup = { git = "https://github.com/funwithagents/app-setup", rev = "config-file" }
+app-setup = { git = "https://github.com/funwithagents/app-setup", rev = "main" }
 # PyPI's Linux torch wheel is the CUDA build and drags gigabytes of NVIDIA libraries; on Linux
 # torch resolves from PyTorch's CPU index instead, the same choice as the siblings that pull it
 # (`vision-modules[hand]`, `tts-engine[pocket]`). `explicit`: only `torch` comes from there.
