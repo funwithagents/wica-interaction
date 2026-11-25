@@ -132,13 +132,12 @@ wica-interaction = { workspace = true }
 # funwithagents/tts-engine@main`) — uv refuses two different URLs for one package, and `rev`
 # (not `branch`) is what makes the two references identical, so the graph resolves without an
 # override.
-# TEMPORARY, until their setup pull requests are merged: wica, asr-engine, tts-engine and
-# reachy-mini-bridge on their `setup-contract` branch (tts-engine's must stay the bridge's own
-# `@setup-contract` URL). Back to `rev = "main"` and `uv lock --upgrade-package <name>` for each
-# before this branch merges (plans/202611241956_config-on-app-setup.md, "Verification").
-wica = { git = "https://github.com/funwithagents/wica-framework", rev = "setup-contract" }
-asr-engine = { git = "https://github.com/funwithagents/asr-engine", rev = "setup-contract" }
-tts-engine = { git = "https://github.com/funwithagents/tts-engine", rev = "setup-contract" }
+# TEMPORARY, until its setup pull request is merged: reachy-mini-bridge on its `setup-contract`
+# branch. Back to `rev = "main"` and `uv lock --upgrade-package reachy-mini-bridge` before this
+# branch merges (plans/202611241956_config-on-app-setup.md, "Verification").
+wica = { git = "https://github.com/funwithagents/wica-framework", rev = "main" }
+asr-engine = { git = "https://github.com/funwithagents/asr-engine", rev = "main" }
+tts-engine = { git = "https://github.com/funwithagents/tts-engine", rev = "main" }
 reachy-mini-bridge = { git = "https://github.com/funwithagents/reachy-mini-bridge", rev = "setup-contract" }
 vision-modules = { git = "https://github.com/funwithagents/vision-modules", rev = "main" }
 app-setup = { git = "https://github.com/funwithagents/app-setup", rev = "main" }
