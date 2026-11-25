@@ -260,7 +260,7 @@ wheels = [
 [[package]]
 name = "app-setup"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/app-setup?rev=main#b6b12e9ca5b98b7369e39185ad7754621cecc4a8" }
+source = { git = "https://github.com/funwithagents/app-setup?rev=config-file#a168281e7b43540a254d6a6ca0c43092faebe34c" }
 dependencies = [
     { name = "packaging" },
 ]
@@ -5157,7 +5157,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aec-audio-processing", marker = "extra == 'audio-processing'", specifier = ">=1.0.1" },
-    { name = "app-setup", extras = ["ui"], git = "https://github.com/funwithagents/app-setup?rev=main" },
+    { name = "app-setup", extras = ["ui"], git = "https://github.com/funwithagents/app-setup?rev=config-file" },
     { name = "asr-engine", git = "https://github.com/funwithagents/asr-engine?rev=main" },
     { name = "asr-engine", extras = ["deepgram"], marker = "extra == 'asr-deepgram'", git = "https://github.com/funwithagents/asr-engine?rev=main" },
     { name = "asr-engine", extras = ["mistral"], marker = "extra == 'asr-mistral'", git = "https://github.com/funwithagents/asr-engine?rev=main" },

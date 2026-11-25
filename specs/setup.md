@@ -8,11 +8,13 @@ code:
   - src/wica_interaction/computer/default/computer.md
   - src/wica_interaction/reachy/default/config.json
   - src/wica_interaction/reachy/default/reachy.md
+  - src/wica_interaction/system.py
 tests:
   - tests/test_setup.py
   - tests/test_fields.py
   - tests/computer/test_app.py
   - tests/reachy/test_app.py
+  - tests/test_system.py
 ---
 
 # Setup
@@ -21,7 +23,7 @@ tests:
 
 ## Purpose
 
-Each app (`wica-interaction-computer`, `wica-interaction-reachy`) is set up from its page and run from a folder, not from a hand-written config file. The mechanics are app-setup's (`app-setup/specs/app.md`): an app declares its **sections**, each described by a **setup contract**, and gets a model that keeps the folder, checks a config, installs what it misses and prepares what can be prepared, plus two panels to draw. This spec is what the two apps declare: their sections, the contracts of the sections no library owns, their default config and persona, and their folder. How a section becomes a live config is in [configuration.md](configuration.md); the page and the session are in [app.md](app.md) and [session.md](session.md).
+Each app (`wica-interaction-computer`, `wica-interaction-reachy`) is set up from its page and run from a folder; a config file can also be run as it is, or edited with no session ("Three launches"). The mechanics are app-setup's (`app-setup/specs/app.md`): an app declares its **sections**, each described by a **setup contract**, and gets a model that keeps the folder, checks a config, installs what it misses and prepares what can be prepared, plus two panels to draw. This spec is what the two apps declare: their sections, the contracts of the sections no library owns, their default config and persona, their folder, and the three ways each is launched. How a section becomes a live config is in [configuration.md](configuration.md); the page and the session are in [app.md](app.md) and [session.md](session.md).
 
 ## Decided
 
@@ -76,6 +78,23 @@ APP = App(
 
 **Relative paths are the folder's.** The app builds every section with the folder as `base_dir` ([configuration.md](configuration.md), "Loading"), and app-setup passes the same folder to the contracts' checks, so Check, Prepare, Test and a session look at the same files: the persona, a voice file, a scene.
 
+### Three launches
+
+Each command runs its config from one of two sources, app-setup's (`app_setup.launch`, `app_setup.config_file`): the app's folder, or a single file. The plain launch is unchanged.
+
+| Launch | The config | Edited | Session |
+|---|---|---|---|
+| `wica-interaction-<body> [--folder DIR]` | the folder's `config.json` | on the Setup tab, by Save | at launch per `launch.json`, `--start` / `--no-start` over it ([session.md](session.md), "Autostart") |
+| `wica-interaction-<body> --config FILE` | *FILE*, run as it is | never: the Setup tab is read-only | at launch, unless `--no-start` |
+| `wica-interaction-<body> configure [--config FILE \| --folder DIR]` | *FILE*, else the folder's `config.json` | on the Setup tab, by Save | none: the Setup and Secrets tabs alone |
+
+- **A file has the folder's shape**: one key per section, the same document as a folder's `config.json` (the apps are not bare: they have several sections). A folder's `config.json`, or a default config, runs as a file as it is.
+- **`--folder` and `--config` are one or the other**, on a launch and on `configure` (`add_config_arguments`). `--env PATH` goes with either; `--host` and `--port` with every launch.
+- **From a file** (`open_source` gives a `ConfigFile` that is not writable): the `AppModel` is not editable, so app-setup draws the Setup tab read-only (Check, Install, Prepare and Test still work; there is no Save, no Reset, no launch checkbox); `starts_at_launch` is true unless `--no-start`, since running a given file is asking for it to run; relative paths — the persona first — resolve against **the file's directory** (`model.path`), for the checks and the session alike. **Nothing is copied**: `ensure_persona` runs for a folder only, so a file naming a persona that is not next to it is a blocker on the Interaction tab, like any file the config names that is not there.
+- **A file that is missing or unreadable stops the app at launch**: `ConfigFileError` becomes `parser.error`, the message naming the file, exit status 2, before anything is built or served. A file is never created.
+- **The `.env` sits next to the config** — in the folder, or in the file's directory — unless `--env PATH` names another; the Secrets tab saves to that one. A variable set in the shell wins.
+- **`configure`** is a subcommand of the same entry point, recognized as the first argument (`system.CONFIGURE`): app-setup's `config_page(model)`, the Setup and Secrets tabs, Save writing back to the source. With `--config FILE` it edits that file (a writable `ConfigFile`; it must exist); without, the app's folder, made ready as a launch makes it (the default config into a new folder, the persona copied). It has no session, so its config is never locked: a session another process runs from the same config reads what was saved at its next Start.
+
 ### The defaults ship inside the package
 
 Each embodiment's package has a `default/` folder, installed with it, holding what a new folder starts from:
@@ -128,7 +147,7 @@ So what the form accepts, what `check_config` accepts and what the loader accept
 
 ## Testing
 
-`tests/test_fields.py`: the copied helper's own tests, copied with it. `tests/test_setup.py`: `check_contract` over the three contracts; for each, a bad value reported at its pointer with the loader's message, and the loader refusing the same document; `required_extras` following the switches and never raising on `{}` or a malformed document; `check_setup` with the imports and the caches replaced: the extra missing, then installed with both models missing (not required), one prepared alone, then ready; `prepare` refusing an unknown item; `probe` over fakes returning `ok` and its message, and `ok: false` instead of raising. The carrier test above. `tests/computer/test_app.py`, `tests/reachy/test_app.py`: the app's sections and titles; its default config passing every section's `check_config`; a new folder getting the default config and the persona, an edited persona left alone at the next launch; `used_config` of the default holding exactly the app's sections.
+`tests/test_fields.py`: the copied helper's own tests, copied with it. `tests/test_setup.py`: `check_contract` over the three contracts; for each, a bad value reported at its pointer with the loader's message, and the loader refusing the same document; `required_extras` following the switches and never raising on `{}` or a malformed document; `check_setup` with the imports and the caches replaced: the extra missing, then installed with both models missing (not required), one prepared alone, then ready; `prepare` refusing an unknown item; `probe` over fakes returning `ok` and its message, and `ok: false` instead of raising. The carrier test above. `tests/computer/test_app.py`, `tests/reachy/test_app.py`: the app's sections and titles; its default config passing every section's `check_config`; a new folder getting the default config and the persona, an edited persona left alone at the next launch; `used_config` of the default holding exactly the app's sections; the default config run as a file, read-only, its persona resolved next to it; `configure`'s page built over a file and over the folder. `tests/test_system.py`, the launches with the page replaced: from a file, the session started at launch, the persona next to the file, the model read-only, nothing written (the file, a folder, a persona); `--no-start` from a file building nothing; the `.env` next to the file or the one `--env` names; a missing file refused at launch and by `configure`; `--folder` with `--config` refused; `configure` over a file (Save writes it back) and over the default folder (made ready), with no session.
 
 ## Open questions
 

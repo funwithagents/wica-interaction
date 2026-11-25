@@ -10,8 +10,8 @@ The Interaction tab's **Start** runs the saved config; while stopped, the line o
 |---|---|---|
 | `/<section>/<field>: …` | the config itself has a problem: a missing field, a wrong value, an unknown key, a section left out | fix the field in the section's form, then **Save** |
 | `<section>: The … extra — Not installed …` | the config needs an extra this environment lacks | the line's **Install** (or **Install all**) adds this project's extra that carries it, from the lock; a `reachy-mini-bridge[placo]` has none here: pick the `analytical` kinematics engine |
-| `<section>: <VARIABLE> — Set the environment variable …` | a key the config names is not set | type it on the line, or on the **Secrets** tab: it goes into the folder's `.env` |
-| `<section>: … — No file at …` | a file the config points at is not there (a persona, a scene) | put the file in the app's folder, or fix the path in the form |
+| `<section>: <VARIABLE> — Set the environment variable …` | a key the config names is not set | type it on the line, or on the **Secrets** tab: it goes into the `.env` next to the config (or the one `--env` names) |
+| `<section>: … — No file at …` | a file the config points at is not there (a persona, a scene) | put the file in the app's folder (next to the file, for `--config`), or fix the path in the form |
 | `The session could not start: …` | the config passed the checks, but building the session raised | the message is the owner's; fix the field it names and Start again |
 
 Models a section can download itself (the voice, the recognizer, the hand models) do not block Start: the first session fetches what is missing and starts slower. **Prepare** on the Setup tab gets them ahead.

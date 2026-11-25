@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 
 from app_setup.app import AppModel
+from app_setup.config_file import ConfigFile
 from app_setup.folder import ConfigFolder
+from app_setup.ui import config_page
 
 from wica_interaction.reachy.app import APP, DEFAULT_CONFIG, ensure_persona
 from wica_interaction.reachy.config import SECTIONS, load_config
@@ -63,3 +65,35 @@ def test_the_default_config_has_no_problem_for_app_setup(tmp_path: Path) -> None
     would keep the first Start from running)."""
     model = AppModel(APP, ConfigFolder(tmp_path / "app", APP.default_config))
     assert model.check_config(model.saved_config()) == []
+
+
+def test_a_config_file_runs_with_its_persona_next_to_it(tmp_path: Path) -> None:
+    """`--config FILE`: the same keyed document as the folder's `config.json`, read as it is, its
+    persona resolved against the file's directory (specs/setup.md, "Three launches")."""
+    path = tmp_path / "configs" / "robot.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(DEFAULT_CONFIG, indent=2), encoding="utf-8")
+    (path.parent / "reachy.md").write_text("A persona of my own.", encoding="utf-8")
+
+    model = AppModel(APP, ConfigFile(path))
+
+    assert not model.editable
+    assert model.check_config(model.saved_config()) == []
+    config = load_config(model.used_config(model.saved_config()), base_dir=model.path)
+    prompt = config.app.wica.agent.system_prompt_file
+    assert prompt is not None
+    assert Path(prompt).resolve() == (path.parent / "reachy.md").resolve()
+
+
+def test_configure_builds_its_page_over_a_file_and_over_the_folder(
+    tmp_path: Path,
+) -> None:
+    """`configure`'s page (Setup and Secrets, no session) builds over the app's sections."""
+    path = tmp_path / "robot.json"
+    path.write_text(json.dumps(DEFAULT_CONFIG, indent=2), encoding="utf-8")
+    for source in (
+        ConfigFile(path, writable=True),
+        ConfigFolder(tmp_path / "app", APP.default_config),
+    ):
+        page = config_page(AppModel(APP, source))
+        assert page.title == APP.title

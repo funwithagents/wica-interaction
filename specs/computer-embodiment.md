@@ -17,7 +17,7 @@ tests:
 
 ## Purpose
 
-The agent embodied in **the machine the app runs on**: speech in from a local microphone, speech out through the local speakers via a `tts-engine` `TTSEngine`, optionally the mic cleaned by [audio processing](audio-processing.md) (WebRTC echo cancellation and noise suppression) and the person's hand signs read through a **webcam**. It has no actions beyond speaking. This is the former `vocal-interaction-wica` app, ported here as one implementation of the [Embodiment](embodiment.md) protocol; its persona is a plain voice assistant, `computer.md`. It runs as `wica-interaction-computer`, from its folder (`~/.config/wica-interaction-computer` — [setup.md](setup.md)).
+The agent embodied in **the machine the app runs on**: speech in from a local microphone, speech out through the local speakers via a `tts-engine` `TTSEngine`, optionally the mic cleaned by [audio processing](audio-processing.md) (WebRTC echo cancellation and noise suppression) and the person's hand signs read through a **webcam**. It has no actions beyond speaking. This is the former `vocal-interaction-wica` app, ported here as one implementation of the [Embodiment](embodiment.md) protocol; its persona is a plain voice assistant, `computer.md`. It runs as `wica-interaction-computer`, from its folder (`~/.config/wica-interaction-computer` — [setup.md](setup.md)) or a config file (`--config FILE`).
 
 ## Configuration
 

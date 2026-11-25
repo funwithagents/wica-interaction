@@ -28,8 +28,9 @@ application callables; the output Command is set afterwards):
 - ``close_session(system)`` — the teardown, in isolated and time-bounded steps, the bridge and the
   vision stopped before the embodiment exits, then the loop stopped, its thread joined and the loop
   closed: nothing of the session is left in the process.
-- ``run_app(app, …)`` — each embodiment's ``main()`` is this call: the app's folder, the session,
-  autostart, the page.
+- ``run_app(app, …)`` — each embodiment's ``main()`` is this call: the app's folder or a config
+  file, the session, autostart, the page; or, as ``<app> configure``, the Setup and Secrets tabs
+  alone over the folder or a file, with no session.
 
 ``AppSystem`` is a frozen snapshot of the resolved components (loop, embodiment, wica, bridge,
 gesture) and the typed-text ``submit_speech`` hatch — fully formed at construction, nothing
@@ -49,6 +50,7 @@ import argparse
 import asyncio
 import logging
 import shutil
+import sys
 import threading
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -59,7 +61,10 @@ from typing import Any, Protocol
 
 from app_setup.app import App, AppModel
 from app_setup.autostart import add_start_arguments, starts_at_launch
+from app_setup.config_file import ConfigFile, ConfigFileError
 from app_setup.folder import ConfigFolder, default_folder
+from app_setup.launch import add_config_arguments, open_source
+from app_setup.ui import config_page
 from asr_engine.audio import AudioSource
 from asr_engine.config import ASREngineConfig, AudioSourceConfig
 from asr_engine.engine import ASREngine
@@ -693,6 +698,10 @@ def copy_persona(source: Traversable, target: Path) -> Path:
     return target
 
 
+# The subcommand that edits the config with no session (specs/setup.md, "Three launches").
+CONFIGURE = "configure"
+
+
 def run_app[C: _Loaded](
     app: App,
     *,
@@ -707,40 +716,52 @@ def run_app[C: _Loaded](
     *app* is the embodiment's app-setup declaration (its sections, its default config, autostart);
     *load* is its ``load_config(data, *, base_dir)``; *embodiment* constructs the body from what
     *load* returned (no I/O in the constructor — ``build_system`` enters it); *ensure_persona*
-    copies its persona into the folder. The app runs from its folder (``--folder``, default
-    ``~/.config/<app.name>``): building the ``AppModel`` creates it, writes the default config into
-    a new one and loads its ``.env``. The session starts at launch when ``starts_at_launch`` says
-    so (``--start`` / ``--no-start`` over the folder's choice); what keeps it from starting is
-    logged and shown on the page, which stays up. The page is served until the process is asked to
-    stop; a running session is stopped then.
+    copies its persona into the folder.
+
+    The app runs from its folder (``--folder``, default ``~/.config/<app.name>``): building the
+    ``AppModel`` creates it, writes the default config into a new one and loads its ``.env``. Or it
+    runs a config file as it is (``--config FILE``): never written, read-only on the Setup tab, its
+    relative paths and its ``.env`` next to it, nothing copied anywhere; a file that is missing or
+    unreadable stops the app at launch. ``--env PATH`` names another ``.env`` for either. The
+    session starts at launch when ``starts_at_launch`` says so (from a file, unless
+    ``--no-start``; else ``--start`` / ``--no-start`` over the folder's choice); what keeps it from
+    starting is logged and shown on the page, which stays up. The page is served until the process
+    is asked to stop; a running session is stopped then.
+
+    ``<app> configure …`` serves the Setup and Secrets tabs alone, with no session
+    (``_configure``).
     """
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("wica").setLevel(logging.INFO)
 
-    folder = default_folder(app.name)
-    parser = argparse.ArgumentParser(description=app.title)
-    parser.add_argument(
-        "--folder",
-        type=Path,
-        default=folder,
-        help=f"the app's folder: its config, its keys, its persona (default: {folder})",
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == [CONFIGURE]:
+        _configure(app, ensure_persona, args[1:])
+        return
+
+    parser = argparse.ArgumentParser(
+        description=app.title,
+        epilog=f"{app.name} {CONFIGURE} --help: edit the config, with no session.",
     )
-    parser.add_argument("--host", default="127.0.0.1", help="the address to serve on")
-    parser.add_argument("--port", type=int, default=None, help="the port to serve on")
+    add_config_arguments(parser, app)
+    _add_serve_arguments(parser)
     add_start_arguments(parser)
-    options = parser.parse_args(argv)
+    options = parser.parse_args(args)
 
     def opened(used_config: Mapping[str, Any], path: Path) -> Running:
         return open_session(used_config, path, load=load, embodiment=embodiment)
 
     session = Session(opened)
-    # Building the model makes the folder ready and loads its .env; the config is locked while a
-    # session runs.
-    model = AppModel(
-        app, ConfigFolder(options.folder, app.default_config), locked=session.locked
-    )
-    logger.warning("folder: %s", model.path)
-    ensure_persona(model.path)
+    try:
+        source = open_source(options, app)
+    except ConfigFileError as exc:
+        parser.error(str(exc))
+    # Building the model makes the folder ready and loads the .env; the config is locked while a
+    # session runs. A file is run as it is: nothing is copied next to it.
+    model = AppModel(app, source, locked=session.locked)
+    logger.warning("config: %s", source.config_path)
+    if isinstance(source, ConfigFolder):
+        ensure_persona(model.path)
     starts = starts_at_launch(model, options.start)
     if starts:
         for reason in session.start(model):
@@ -751,3 +772,60 @@ def run_app[C: _Loaded](
         )
     finally:
         session.stop()
+
+
+def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--host", default="127.0.0.1", help="the address to serve on")
+    parser.add_argument("--port", type=int, default=None, help="the port to serve on")
+
+
+def _configure(
+    app: App, ensure_persona: Callable[[Path], Path], argv: Sequence[str]
+) -> None:
+    """``<app> configure``: the Setup and Secrets tabs (app-setup's ``config_page``) and no
+    session. With ``--config FILE`` it edits that file (Save writes it back; it must exist);
+    without, the app's folder, made ready as a launch would (the default config, the persona)."""
+    parser = argparse.ArgumentParser(
+        prog=f"{app.name} {CONFIGURE}",
+        description=f"{app.title}: edit the config, with no session.",
+    )
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument(
+        "--folder",
+        type=Path,
+        default=default_folder(app.name),
+        metavar="DIR",
+        help="the app's folder whose config.json is edited (default: %(default)s)",
+    )
+    where.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="the config file to edit instead (it must exist)",
+    )
+    parser.add_argument(
+        "--env",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="the .env file the keys are read from and saved to "
+        "(default: the .env next to the config)",
+    )
+    _add_serve_arguments(parser)
+    options = parser.parse_args(argv)
+    source: ConfigFolder | ConfigFile
+    try:
+        if options.config is not None:
+            source = ConfigFile(options.config, env_path=options.env, writable=True)
+        else:
+            source = ConfigFolder(
+                options.folder, app.default_config, env_path=options.env
+            )
+    except ConfigFileError as exc:
+        parser.error(str(exc))
+    model = AppModel(app, source)
+    logger.warning("config: %s", source.config_path)
+    if isinstance(source, ConfigFolder):
+        ensure_persona(model.path)
+    config_page(model).launch(server_name=options.host, server_port=options.port)

@@ -79,6 +79,16 @@ uv run wica-interaction-reachy
 
 The first run downloads the speech recognizer's model and the voice. Another agent, recognizer or voice is a change of one block plus its extra; [docs/reference/configuration.md](docs/reference/configuration.md#what-the-default-configs-run-and-the-other-choices) says where each provider is documented. For a Reachy Mini Lite plugged in over USB, set `reachy.backend` to `"real"` in the folder's `config.json`; the complete walk-through, the simulator's options and the robot's, continues in [docs/getting-started.md](docs/getting-started.md).
 
+The folder is one of three launches; a config file of the same shape can be run as it is, or edited with no session:
+
+```
+uv run wica-interaction-reachy --config robot.json      # run this file as it is; the session starts
+uv run wica-interaction-reachy configure                # Setup and Secrets only: the folder's config
+uv run wica-interaction-reachy configure --config robot.json   # ... or that file
+```
+
+The keys come from the `.env` next to the config (the folder's, or the file's directory), or the one `--env PATH` names ([docs/reference/configuration.md](docs/reference/configuration.md#three-launches)).
+
 ## Documentation
 
 Start at [docs/index.md](docs/index.md), the documentation by task. The pages used most:

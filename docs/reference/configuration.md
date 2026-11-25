@@ -1,6 +1,6 @@
 # Configuration reference
 
-Each app is stood up from **one JSON config**, the `config.json` of its folder: the sections every embodiment shares (`wica`, `asr`, `vision`) plus the sections of the app's body (`tts`, `audio_processing`, `camera` for the computer; `reachy` for the robot). Switching the model, the voice, the speech recognizer, the robot backend, the camera or the persona is an edit of that file. This page is the config section by section; the design is [specs/configuration.md](../../specs/configuration.md) and [specs/setup.md](../../specs/setup.md).
+Each app is stood up from **one JSON config**, the `config.json` of its folder (or a config file of the same shape, [Three launches](#three-launches)): the sections every embodiment shares (`wica`, `asr`, `vision`) plus the sections of the app's body (`tts`, `audio_processing`, `camera` for the computer; `reachy` for the robot). Switching the model, the voice, the speech recognizer, the robot backend, the camera or the persona is an edit of that file. This page is the config section by section; the design is [specs/configuration.md](../../specs/configuration.md) and [specs/setup.md](../../specs/setup.md).
 
 Each engine section is **that engine's own document, nested verbatim**: the `wica` section is a WICA config, `asr` an asr-engine engine block, `tts` a tts-engine engine block, `reachy` a reachy-mini-bridge config. The app hands each to its owner's loader, so every field, default and validation rule is the engine's, and this page summarizes the fields you will touch and links to the engine's own reference for the rest. The two sections the app owns, `vision` and the computer's `audio_processing` / `camera`, are complete here.
 
@@ -23,6 +23,20 @@ Each engine section is **that engine's own document, nested verbatim**: the `wic
 **The first launch fills an empty folder**: the app writes its default config as `config.json` and copies its persona there. Both ship inside the package ([computer](../../src/wica_interaction/computer/default/config.json), [robot](../../src/wica_interaction/reachy/default/config.json)). Neither is ever overwritten: what is in the folder is yours. A relative path in any section (the persona, a voice file, a scene) resolves against the folder.
 
 The default configs spell out the app's own `vision` and `audio_processing` sections in full. The robot's `reachy` section, long otherwise, keeps to the fields that matter here and shows each motion switch, on or off; every field left out takes its owner's default, documented on the pages linked below.
+
+## Three launches
+
+Each command runs one of three ways:
+
+| Launch | The config | Edited | The session |
+|---|---|---|---|
+| `wica-interaction-reachy` (or `--folder DIR`) | the folder's `config.json` | on the **Setup** tab | starts at launch unless the Setup tab's checkbox or `--no-start` says otherwise |
+| `wica-interaction-reachy --config robot.json` | `robot.json`, run as it is | never: the Setup tab is read-only (Check, Install, Prepare and Test still work) | starts at launch unless `--no-start` |
+| `wica-interaction-reachy configure [--config robot.json]` | `robot.json`, or the folder's `config.json` without `--config` | on the **Setup** tab, Save writes it back | none: only the Setup and Secrets tabs |
+
+The same goes for `wica-interaction-computer`. A config file has the shape of a folder's `config.json`, one key per section: copy a folder's `config.json` (or a [default config](../../src/wica_interaction/computer/default/config.json)) to start one. Its relative paths resolve against **the file's directory**, so its persona sits next to it; nothing is copied there for you. A file that is missing or is not a JSON object stops the command at launch with the error; `configure` never creates one either. `--folder` and `--config` are one or the other; `--host` and `--port` say where the page is served, for every launch.
+
+**The `.env` sits next to the config**: in the folder, or in the file's directory. `--env PATH` names another, for any of the three launches; the Secrets tab writes to that one. A variable set in the shell wins.
 
 Which body runs is decided by the command, not by the config: each command accepts its own sections only, so a `reachy` section in the computer's config is rejected rather than silently ignored ([What a loader rejects](#what-a-loader-rejects)).
 
@@ -256,7 +270,7 @@ Absent, the section means the `real` backend with the bridge's defaults and no v
 
 Every section references its key by **environment variable name** (`api_key_env`), never by value: a config holding `api_key` is refused. Left out, `api_key_env` is the provider's usual variable, so the default configs name none and need one, `HF_TOKEN`, a Hugging Face token for the agent; their speech recognizer and voice run locally and need none. A hosted recognizer or voice adds its own variable (`DEEPGRAM_API_KEY`, `GRADIUM_API_KEY`, …), or the one its `api_key_env` names (the e2e tier's configs use `WICA_ANTHROPIC_API_KEY`).
 
-Set each variable on the **Secrets** tab, or on its line in the Setup tab, both of which write the folder's `.env`; or export it in the shell that runs the command, which wins when both set it. A non-interactive shell does not read your `~/.zshrc`. A variable that is unset keeps the session from starting, and the Interaction tab names it ([guides/troubleshooting.md](../guides/troubleshooting.md#the-session-does-not-start)).
+Set each variable on the **Secrets** tab, or on its line in the Setup tab, both of which write the `.env` next to the config (the folder's, a `--config` file's directory, or the one `--env` names: [Three launches](#three-launches)); or export it in the shell that runs the command, which wins when both set it. A non-interactive shell does not read your `~/.zshrc`. A variable that is unset keeps the session from starting, and the Interaction tab names it ([guides/troubleshooting.md](../guides/troubleshooting.md#the-session-does-not-start)).
 
 ## What a loader rejects
 

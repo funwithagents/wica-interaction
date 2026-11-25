@@ -25,7 +25,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from app_setup.app import App, Section
+from app_setup.app import App, AppModel, Section
 from asr_engine.audio import AudioFormat
 from asr_engine.config import ASREngineConfig
 from asr_engine.segmenter import SpeechSegment
@@ -883,9 +883,10 @@ class _Page:
         self.open_on: str | None = None
         self.launched: dict[str, Any] | None = None
         self.session: Session | None = None
+        self.model: AppModel | None = None
 
-    def build(self, _model: Any, session: Session, *, open_on: str) -> _Page:
-        self.session, self.open_on = session, open_on
+    def build(self, model: AppModel, session: Session, *, open_on: str) -> _Page:
+        self.model, self.session, self.open_on = model, session, open_on
         return self
 
     def launch(self, **options: Any) -> None:
@@ -926,6 +927,38 @@ def _load_wica(data: Any, *, base_dir: Path) -> _Loaded:
     )
 
 
+# The folders `ensure_persona` was called on, newest last.
+_PERSONA_COPIED: list[Path] = []
+
+
+def _ensure_persona(path: Path) -> Path:
+    _PERSONA_COPIED.append(path)
+    target = path / "persona.md"
+    if not target.exists():
+        target.write_text(_PERSONA, encoding="utf-8")
+    return target
+
+
+def _run_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    *argv: str,
+    page: _Page | None = None,
+    default_config: dict[str, Any] | None = None,
+) -> _Page:
+    """`run_app` with *argv*, the page and `build_system` replaced."""
+    page = page if page is not None else _Page()
+    monkeypatch.setattr(system_module, "build_page", page.build)
+    monkeypatch.setattr(system_module, "build_system", _built)
+    run_app(
+        _fake_app(default_config),
+        load=_load_wica,
+        embodiment=lambda _loaded: FakeEmbodiment(),
+        ensure_persona=_ensure_persona,
+        argv=list(argv),
+    )
+    return page
+
+
 def _run(
     monkeypatch: pytest.MonkeyPatch,
     folder: Path,
@@ -934,24 +967,14 @@ def _run(
     default_config: dict[str, Any] | None = None,
 ) -> _Page:
     """`run_app` on *folder* with *flags*, the page and `build_system` replaced."""
-    page = page if page is not None else _Page()
-    monkeypatch.setattr(system_module, "build_page", page.build)
-    monkeypatch.setattr(system_module, "build_system", _built)
-
-    def ensure_persona(path: Path) -> Path:
-        target = path / "persona.md"
-        if not target.exists():
-            target.write_text(_PERSONA, encoding="utf-8")
-        return target
-
-    run_app(
-        _fake_app(default_config),
-        load=_load_wica,
-        embodiment=lambda _loaded: FakeEmbodiment(),
-        ensure_persona=ensure_persona,
-        argv=["--folder", str(folder), *flags],
+    return _run_argv(
+        monkeypatch,
+        "--folder",
+        str(folder),
+        *flags,
+        page=page,
+        default_config=default_config,
     )
-    return page
 
 
 def test_run_app_fills_a_new_folder_and_starts_from_it(
@@ -1036,6 +1059,174 @@ def test_a_session_running_when_serving_raises_is_stopped(
 
     assert page.status_while_served == "running"
     assert page.session is not None and page.session.status == "stopped"
+
+
+# --- From a config file, and `configure` (specs/setup.md, "Three launches") ---------------------
+
+
+def _config_file(directory: Path) -> Path:
+    """A config file in *directory*, its persona next to it."""
+    directory.mkdir(parents=True)
+    (directory / "persona.md").write_text(
+        "You are the persona next to the file.", "utf-8"
+    )
+    path = directory / "robot.json"
+    path.write_text(json.dumps(_FOLDER_CONFIG, indent=2), encoding="utf-8")
+    return path
+
+
+def test_run_app_from_a_file_runs_it_as_it_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--config FILE`: the session starts at launch with no flag, the persona resolved next to
+    the file whatever the working directory, the Setup tab read-only; nothing is written — not
+    the file, not a folder, no persona copied."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    path = _config_file(tmp_path / "configs")
+    before = path.read_text(encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    _OPENED.clear()
+    _PERSONA_COPIED.clear()
+
+    page = _run_argv(monkeypatch, "--config", str(path))
+
+    prompt = _OPENED[-1].wica.agent.system_prompt_file
+    assert prompt is not None
+    assert Path(prompt).resolve() == (path.parent / "persona.md").resolve()
+    assert page.open_on == "interaction"
+    assert page.status_while_served == "running"
+    assert page.model is not None and not page.model.editable
+    assert page.model.path == path.parent.resolve()
+    assert path.read_text(encoding="utf-8") == before
+    assert sorted(p.name for p in path.parent.iterdir()) == ["persona.md", "robot.json"]
+    assert _PERSONA_COPIED == []
+    assert not (tmp_path / "xdg").exists()
+
+
+def test_run_app_from_a_file_with_no_start_builds_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = _config_file(tmp_path / "configs")
+    _OPENED.clear()
+
+    page = _run_argv(monkeypatch, "--config", str(path), "--no-start")
+
+    assert _OPENED == []
+    assert page.open_on == "setup"
+
+
+def test_run_app_from_a_file_takes_its_keys_from_the_env_named(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The `.env` is the one next to the file, unless `--env` names another."""
+    path = _config_file(tmp_path / "configs")
+    keys = tmp_path / "keys" / "robot.env"
+
+    beside = _run_argv(monkeypatch, "--config", str(path), "--no-start")
+    named = _run_argv(
+        monkeypatch, "--config", str(path), "--env", str(keys), "--no-start"
+    )
+
+    assert beside.model is not None and named.model is not None
+    assert beside.model.source.env_path == path.parent / ".env"
+    assert named.model.source.env_path == keys
+
+
+@pytest.mark.parametrize("command", [[], ["configure"]])
+def test_a_missing_config_file_stops_the_app_at_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: list[str],
+) -> None:
+    """A file that is not there is a command-line error naming it, before anything is built or
+    served — for a launch and for `configure` alike."""
+    missing = tmp_path / "nowhere.json"
+    page = _Page()
+    _OPENED.clear()
+
+    with pytest.raises(SystemExit) as exited:
+        _run_argv(monkeypatch, *command, "--config", str(missing), page=page)
+
+    assert exited.value.code == 2
+    assert str(missing) in capsys.readouterr().err
+    assert page.launched is None and _OPENED == []
+
+
+def test_folder_and_config_are_one_or_the_other(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = _config_file(tmp_path / "configs")
+    with pytest.raises(SystemExit):
+        _run_argv(monkeypatch, "--folder", str(tmp_path / "app"), "--config", str(path))
+
+
+class _ConfigPage:
+    """Stands in for app-setup's `config_page`: records the model and how it was launched."""
+
+    def __init__(self) -> None:
+        self.model: AppModel | None = None
+        self.launched: dict[str, Any] | None = None
+
+    def build(self, model: AppModel) -> _ConfigPage:
+        self.model = model
+        return self
+
+    def launch(self, **options: Any) -> None:
+        self.launched = options
+
+
+def _configure(monkeypatch: pytest.MonkeyPatch, *argv: str) -> _ConfigPage:
+    config = _ConfigPage()
+    monkeypatch.setattr(system_module, "config_page", config.build)
+    page = _Page()
+    _OPENED.clear()
+    _run_argv(monkeypatch, "configure", *argv, page=page)
+    # No session: neither the session's page nor a build.
+    assert page.launched is None and _OPENED == []
+    return config
+
+
+def test_configure_edits_a_config_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`configure --config FILE`: the Setup and Secrets page over that file, which Save writes
+    back; the page served where asked; no session."""
+    path = _config_file(tmp_path / "configs")
+
+    config = _configure(
+        monkeypatch, "--config", str(path), "--host", "0.0.0.0", "--port", "7861"
+    )
+
+    model = config.model
+    assert model is not None and model.editable
+    assert model.source.config_path == path
+    assert config.launched == {"server_name": "0.0.0.0", "server_port": 7861}
+    edited = model.saved_config()
+    edited["wica"]["agent"]["model"] = "another"
+    model.save(edited)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["wica"]["agent"]["model"] == "another"
+
+
+def test_configure_edits_the_app_folder_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without `--config`, `configure` edits the app's folder (the default one here), made ready
+    as a launch would: the default config, the persona."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    folder = tmp_path / "xdg" / "wica-interaction-fake"
+
+    config = _configure(monkeypatch)
+
+    assert config.model is not None and config.model.editable
+    assert config.model.path == folder
+    assert json.loads((folder / "config.json").read_text(encoding="utf-8")) == (
+        _FOLDER_CONFIG
+    )
+    assert (folder / "persona.md").read_text(encoding="utf-8") == _PERSONA
 
 
 # --- Vision in: the hand-sign input (specs/gesture-input.md, "App integration") ----------------
