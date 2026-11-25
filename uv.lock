@@ -273,7 +273,7 @@ ui = [
 [[package]]
 name = "asr-engine"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/asr-engine?rev=main#5ebd878eeed17b72f9ab834ba831cc8b0cbf2ff7" }
+source = { git = "https://github.com/funwithagents/asr-engine?rev=main#66adb21c9eefaab7ae2f975a2f7e377b3a6cf802" }
 dependencies = [
     { name = "numpy" },
     { name = "opentelemetry-api" },
@@ -3791,7 +3791,7 @@ wheels = [
 [[package]]
 name = "reachy-mini-bridge"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main#d97f972c9e6174938e6f220a6abbc60fe8fc76db" }
+source = { git = "https://github.com/funwithagents/reachy-mini-bridge?rev=main#81d0eb5a6b9a0ae271fec7b1f9a05d2e6e423b8e" }
 dependencies = [
     { name = "numpy" },
     { name = "opentelemetry-api" },
@@ -4624,7 +4624,7 @@ wheels = [
 [[package]]
 name = "tts-engine"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/tts-engine?rev=main#3a69ead2c6123fdd1f7984dac216ba7c4135bbc5" }
+source = { git = "https://github.com/funwithagents/tts-engine?rev=main#4e2b389a2a45b2661c1985fe8691ec73d045bad4" }
 dependencies = [
     { name = "numpy" },
     { name = "opentelemetry-api" },
@@ -4999,7 +4999,7 @@ wheels = [
 [[package]]
 name = "wica"
 version = "0.1.0"
-source = { git = "https://github.com/funwithagents/wica-framework?rev=main#56b6a748b31207514f3a51017c45cb755dcf41e9" }
+source = { git = "https://github.com/funwithagents/wica-framework?rev=main#e0f15d8e7e7828350992f0e3d838c498f3c13556" }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
