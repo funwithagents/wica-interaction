@@ -9,6 +9,7 @@ every requirement a section of either app can return is installed by one of this
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -213,23 +214,36 @@ class _Models:
 def models(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Models]:
     fake = _Models()
     fake.install(monkeypatch)
-    monkeypatch.setattr(VISION, "try_imports", lambda: None)
+    monkeypatch.setattr(VISION, "modules", ("json",))
     yield fake
 
 
-def _missing_import() -> None:
-    raise ImportError("No module named 'mediapipe'")
+_MISSING = ("json", "no_such_module_for_wica_tests")
 
 
 def test_a_missing_vision_extra_is_the_only_item(
     models: _Models, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(VISION, "try_imports", _missing_import)
+    monkeypatch.setattr(VISION, "modules", _MISSING)
     [item] = VISION.check_setup({})
     assert item["id"] == "extra:wica-interaction[vision]"
     assert item["status"] == "missing"
     assert item["required"] is True and item["preparable"] is False
-    assert "mediapipe" in item["detail"]
+    assert "missing: no_such_module_for_wica_tests)" in item["detail"]
+
+
+def test_the_extra_is_found_without_loading_its_libraries(
+    models: _Models, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A library that would fail (or stall the app) if it were loaded: found, not loaded.
+    (tmp_path / "heavy_library_for_wica_tests.py").write_text(
+        "raise RuntimeError('loaded')\n", encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(VISION, "modules", ("heavy_library_for_wica_tests",))
+    items = {item["id"]: item for item in VISION.check_setup({})}
+    assert items["extra:wica-interaction[vision]"]["status"] == "ready"
+    assert "heavy_library_for_wica_tests" not in sys.modules
 
 
 def test_with_the_extra_the_models_are_optional_items_to_prepare(
@@ -294,7 +308,7 @@ def test_prepare_refuses_an_item_that_is_not_one_of_the_configs(
 def test_audio_processing_reports_its_extra_only_when_a_feature_is_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(AUDIO_PROCESSING, "try_imports", _missing_import)
+    monkeypatch.setattr(AUDIO_PROCESSING, "modules", _MISSING)
     assert AUDIO_PROCESSING.check_setup({}) == []
     [item] = AUDIO_PROCESSING.check_setup({"noise_suppression": {"enabled": True}})
     assert item["id"] == "extra:wica-interaction[audio-processing]"
