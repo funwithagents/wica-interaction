@@ -54,7 +54,7 @@ class ComputerConfig:
     camera: CameraConfig | None = None  # None: absent, no webcam
 
 
-def config_problems(data: Mapping[str, Any]) -> list[str]: ...  # the rule across sections
+def config_problems(data: Mapping[str, Any]) -> list[str]: ...  # across sections
 ```
 
 - **`tts` (required)** — tts-engine's engine block, handed verbatim to `TTSEngineConfig.from_dict(…, base_dir=base_dir)` (a relative voice file or model path is the folder's), so the provider (`module.type`: `elevenlabs`, `gradium`, `pocket`, …), its key reference and voice, and the `player.device` (the speaker) are the engine's own schema. The provider named must have its extra installed (`tts-<name>`, one per tts-engine provider: `tts-elevenlabs`, `tts-gradium`, `tts-pocket`, … — [project.md](project.md), "Extras").

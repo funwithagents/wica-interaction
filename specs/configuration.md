@@ -91,7 +91,7 @@ class AppConfig:
     """The shared sections, what the lifecycle (system.py) is built from."""
 
     wica: WicaConfig
-    asr_engine: ASREngineConfig | None = None  # None: no `asr` section, speech input off
+    asr_engine: ASREngineConfig | None = None  # None: no `asr`, speech off
     vision: VisionConfig | None = None  # None: no `vision` section, hand signs off
 
 
