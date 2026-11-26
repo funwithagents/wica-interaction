@@ -536,9 +536,19 @@ def _load_with(tmp_path: Path, section: object | None) -> ComputerConfig:
     return load_config(config, base_dir=tmp_path)
 
 
-def test_audio_processing_absent_defaults_to_disabled(tmp_path: Path) -> None:
+def test_audio_processing_absent_is_off(tmp_path: Path) -> None:
+    # Optional (specs/configuration.md, "Optional sections"): absent means no processing at all.
     cfg = _load_with(tmp_path, None)
+    assert cfg.audio_processing is None
+
+
+def test_audio_processing_empty_is_present_with_both_features_off(
+    tmp_path: Path,
+) -> None:
+    # Present is on, each feature by its own switch: `{}` builds no processor either.
+    cfg = _load_with(tmp_path, {})
     assert cfg.audio_processing == AudioProcessingConfig()
+    assert cfg.audio_processing is not None
     assert not cfg.audio_processing.any_enabled
 
 
@@ -554,6 +564,7 @@ def test_audio_processing_parses_both_features(tmp_path: Path) -> None:
         echo_cancellation=EchoCancellationConfig(enabled=True, stream_delay_ms=60),
         noise_suppression=NoiseSuppressionConfig(enabled=True, level=3),
     )
+    assert cfg.audio_processing is not None
     assert cfg.audio_processing.any_enabled
 
 
@@ -561,6 +572,7 @@ def test_audio_processing_partial_sections_keep_defaults(tmp_path: Path) -> None
     # Noise suppression enabled alone: echo cancellation and the ns level keep their defaults, and
     # `any_enabled` is still true (the mic is routed through the processor, the sink is not wired).
     cfg = _load_with(tmp_path, {"noise_suppression": {"enabled": True}})
+    assert cfg.audio_processing is not None
     assert cfg.audio_processing.echo_cancellation == EchoCancellationConfig(
         enabled=False
     )

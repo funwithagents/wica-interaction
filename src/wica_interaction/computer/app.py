@@ -2,12 +2,15 @@
 
 The app runs from its folder (`~/.config/wica-interaction-computer`, or `--folder`), whose
 `config.json` holds the sections below, each described to the Setup tab by its owner's setup
-contract (specs/setup.md). `SECTIONS` and `APP` are public: a host built on this app composes its
-own `App` from the same sections.
+contract (specs/setup.md). `wica` and `tts` are required; `asr`, `audio_processing`, `vision` and
+`camera` are optional — absent means off — each with the starting document the Setup tab writes
+when the user adds it (`STARTING_DOCUMENTS`). `SECTIONS`, `APP` and `STARTING_DOCUMENTS` are public:
+a host built on this app composes its own `App` from the same sections.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 from importlib.resources import files
 from pathlib import Path
@@ -18,9 +21,16 @@ import tts_engine.setup
 import wica.setup
 from app_setup.app import App, Section
 
-from wica_interaction.computer.config import load_config
+from wica_interaction.computer.config import config_problems, load_config
 from wica_interaction.computer.embodiment import ComputerEmbodiment
-from wica_interaction.setup import AUDIO_PROCESSING, CAMERA, VISION
+from wica_interaction.setup import (
+    AUDIO_PROCESSING,
+    AUDIO_PROCESSING_START,
+    CAMERA,
+    CAMERA_START,
+    VISION,
+    VISION_START,
+)
 from wica_interaction.system import copy_persona, run_app
 
 # The default config and the persona, shipped in the package (specs/setup.md, "The defaults ship
@@ -31,13 +41,47 @@ DEFAULT_CONFIG: dict[str, Any] = json.loads(
     (_DEFAULT / "config.json").read_text(encoding="utf-8")
 )
 
+# What each optional section starts from when the user adds it (specs/configuration.md, "Optional
+# sections"): speech recognition as the default config has it, the app's own sections their
+# constants (setup.py).
+STARTING_DOCUMENTS: dict[str, dict[str, Any]] = {
+    "asr": copy.deepcopy(DEFAULT_CONFIG["asr"]),
+    "audio_processing": copy.deepcopy(AUDIO_PROCESSING_START),
+    "vision": copy.deepcopy(VISION_START),
+    "camera": copy.deepcopy(CAMERA_START),
+}
+
 SECTIONS: tuple[Section, ...] = (
     Section("wica", wica.setup, title="Agent"),
-    Section("asr", asr_engine.setup, title="Speech recognition"),
+    Section(
+        "asr",
+        asr_engine.setup,
+        title="Speech recognition",
+        optional=True,
+        default=STARTING_DOCUMENTS["asr"],
+    ),
     Section("tts", tts_engine.setup, title="Voice"),
-    Section("audio_processing", AUDIO_PROCESSING, title="Microphone processing"),
-    Section("vision", VISION, title="Hand signs"),
-    Section("camera", CAMERA, title="Camera"),
+    Section(
+        "audio_processing",
+        AUDIO_PROCESSING,
+        title="Microphone processing",
+        optional=True,
+        default=STARTING_DOCUMENTS["audio_processing"],
+    ),
+    Section(
+        "vision",
+        VISION,
+        title="Hand signs",
+        optional=True,
+        default=STARTING_DOCUMENTS["vision"],
+    ),
+    Section(
+        "camera",
+        CAMERA,
+        title="Camera",
+        optional=True,
+        default=STARTING_DOCUMENTS["camera"],
+    ),
 )
 
 APP = App(
@@ -62,6 +106,7 @@ def main() -> None:
         load=load_config,
         embodiment=ComputerEmbodiment,
         ensure_persona=ensure_persona,
+        check=config_problems,
     )
 
 

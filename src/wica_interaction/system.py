@@ -1,37 +1,36 @@
 """The app's wiring + lifecycle, written against an embodiment rather than a body.
 
-Stands up the WICA agent, the ASR engine and the vision pipeline around whatever
-[Embodiment](embodiment.py) the entry point hands it — the computer it runs on, a Reachy Mini — on
-one app-owned event loop: [AsrBridge](asr_bridge.py) in (over the embodiment's mic),
+Stands up one **session** — the WICA agent, the ASR engine and the vision pipeline around whatever
+[Embodiment](embodiment.py) the entry point hands it (the computer it runs on, a Reachy Mini) — on
+an event loop of its own: [AsrBridge](asr_bridge.py) in (over the embodiment's mic),
 [GestureInput](gesture_input.py) in (over its camera), the WICA Agent in the middle, the
 embodiment's ``voice`` and action Commands out. Nothing here knows what kind of body it has; the
-Gradio presentation layer (the page, the presenters it owns, the live views) lives in
-[app_ui.py](app_ui.py). See specs/app.md.
+Gradio page lives in [app_ui.py](app_ui.py), the start/stop cycle in [session.py](session.py). See
+specs/app.md and specs/session.md.
 
-The composition follows WICA's conversation demo — **build → UI → wire → start → launch → close** —
-which is the order the framework's output-wiring setters exist for (``Wica.init`` takes no
-application callables; the sink and the output Command are set afterwards):
+A session's composition follows WICA's conversation demo — **build → presenters → wire → start**,
+then **close** — the order the framework's output-wiring setters exist for (``Wica.init`` takes no
+application callables; the output Command is set afterwards):
 
-- ``build_system(config, embodiment)`` — pure build, no Gradio, no wiring: owns the loop, *enters*
-  the embodiment on it, folds the embodiment's ``prompt_addendum`` (and, with vision on, the
-  hand-signs section) into the persona (an inline-prompt variant of the WICA config — see
-  ``_seeded_wica_config``), ``Wica.init``s the agent and registers the ``speech_input`` entry,
-  registers the embodiment's own inputs (``embodiment.inputs()``, each with a guarded ``deliver``),
-  builds the ASR bridge over ``embodiment.mic`` and the gesture input over ``embodiment.camera``.
-  Its ``asr_engine_factory=`` / ``gesture_models=`` kwargs are test seams for injecting fakes.
-- ``build_ui(system)`` — the Gradio page (in [app_ui.py](app_ui.py)); it owns the contrib presenters
-  (``TranscriptLog`` / ``ReactionLog``, subscribed to the agent's Events in their constructors, so
-  built before ``start()``) and returns the page.
+- ``build_system(config, embodiment)`` — pure build, no Gradio, no wiring: owns the session's loop
+  and its thread, *enters* the embodiment on it, folds the embodiment's ``prompt_addendum`` (and,
+  with vision on, the hand-signs section) into the persona (an inline-prompt variant of the WICA
+  config — see ``_seeded_wica_config``), ``Wica.init``s the agent and registers the
+  ``speech_input`` entry, registers the embodiment's own inputs (``embodiment.inputs()``, each with a
+  guarded ``deliver``), builds the ASR bridge over ``embodiment.mic`` and the gesture input over
+  ``embodiment.camera``. Its ``asr_engine_factory=`` / ``gesture_models=`` kwargs are test seams.
 - ``wire(system)`` — Gradio-free: sets the embodiment's ``voice`` as the output Command on the
   agent (the model speaks it as a ``<say>`` tag in its text), registers the dictation Commands and
   each of ``embodiment.commands()``.
-- ``run_app(app, load=…, embodiment=…, ensure_persona=…)`` — each embodiment's ``main()`` is this
-  call: open the app's folder (``--folder``) through app-setup's ``AppModel`` (the default config
-  written into a new one, its ``.env`` loaded), copy the persona there, ``load`` the saved config
-  against the folder, construct the embodiment, build, then ``_serve`` — UI, wire, start and launch,
-  all inside the one ``try`` whose ``finally`` runs ``_shutdown`` (isolated, time-bounded steps; the
-  bridge and the vision are stopped before the embodiment exits), since the body is already
-  entered by then.
+- ``open_session(used_config, folder, …)`` — one session in order: load the config against the
+  app's folder, construct the embodiment, build, the presenters (subscribed to the agent's Events
+  before it starts), wire, start; whatever raises after the build closes what was built.
+- ``close_session(system)`` — the teardown, in isolated and time-bounded steps, the bridge and the
+  vision stopped before the embodiment exits, then the loop stopped, its thread joined and the loop
+  closed: nothing of the session is left in the process.
+- ``run_app(app, …)`` — each embodiment's ``main()`` is this call: the app's folder or a config
+  file, the session, autostart, the page; or, as ``<app> configure``, the Setup and Secrets tabs
+  alone over the folder or a file, with no session.
 
 ``AppSystem`` is a frozen snapshot of the resolved components (loop, embodiment, wica, bridge,
 gesture) and the typed-text ``submit_speech`` hatch — fully formed at construction, nothing
@@ -41,8 +40,8 @@ lets every reference resolve forward with no placeholder.
 
 WICA exposes no accessor for the loop it runs on, so the app *owns* the loop and injects it into
 ``Wica.init(loop=…)`` — the only way to schedule the ASR engine and the embodiment's async verbs
-onto the same loop the Agent runs on. Each build that can raise on an unset key is caught so the app
-opens even with credentials missing and says what to set.
+onto the same loop the Agent runs on. Each build that can raise on an unset key is caught, so a
+session still starts with something missing and says what.
 """
 
 from __future__ import annotations
@@ -51,6 +50,7 @@ import argparse
 import asyncio
 import logging
 import shutil
+import sys
 import threading
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -60,7 +60,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from app_setup.app import App, AppModel
+from app_setup.autostart import add_start_arguments, starts_at_launch
+from app_setup.config_file import ConfigFile, ConfigFileError
 from app_setup.folder import ConfigFolder, default_folder
+from app_setup.launch import add_config_arguments, open_source
+from app_setup.ui import config_page
 from asr_engine.audio import AudioSource
 from asr_engine.config import ASREngineConfig, AudioSourceConfig
 from asr_engine.engine import ASREngine
@@ -71,8 +75,9 @@ from wica.config import (
     WicaConfig,
     resolve_system_prompt,
 )
+from wica.contrib.gradio import ReactionLog, TranscriptLog
 
-from wica_interaction.app_ui import build_ui
+from wica_interaction.app_ui import build_page, entry_display, entry_label
 from wica_interaction.asr_bridge import AsrBridge, DictatedPassage
 from wica_interaction.config import AppConfig
 from wica_interaction.embodiment import Deliver, Embodiment, Input
@@ -85,6 +90,7 @@ from wica_interaction.gesture_input import (
     sign_shown,
 )
 from wica_interaction.latency import LatencyCollector, install_tracing
+from wica_interaction.session import Running, Session
 
 logger = logging.getLogger(__name__)
 
@@ -177,12 +183,14 @@ class AppSystem:
     still opens and the surviving paths still work — notably typed text, which reaches the agent
     whenever ``wica`` is running, needing neither ASR nor a body. ``build_system`` *enters* the
     embodiment (so its voice and mic are live), but neither wires the output channel (``wire``
-    does, once the UI's transcript exists) nor *starts* the agent or ASR capture (``_serve`` does),
-    so a test can inspect a built-but-not-listening system. ``_shutdown`` is what tears it down
+    does, once the session's presenters exist) nor *starts* the agent or ASR capture (``_start`` does),
+    so a test can inspect a built-but-not-listening system. ``close_session`` is what tears it down
     (agent, then vision, then ASR bridge, then ``embodiment.exit()``, then the loop).
     """
 
     loop: asyncio.AbstractEventLoop | None
+    # The thread running `loop`, joined by `close_session` once the loop stops.
+    loop_thread: threading.Thread | None
     # The launched embodiment's `display_name` — kept even when its `enter()` raised, so the page
     # still says which body it was launched for; None only when the config never loaded.
     display_name: str | None
@@ -192,15 +200,19 @@ class AppSystem:
     wica: Wica | None
     bridge: AsrBridge | None
     # Vision-in: the hand-sign input over the embodiment's camera; None without a `vision` config
-    # section or without an embodiment. See specs/gesture-input.md.
+    # section (hand signs off) or without an embodiment. See specs/gesture-input.md.
     gesture: GestureInput | None
     missing: list[str]
     # The typed-text hatch: writes the same `speech_input` World update a closed ASR segment makes (so
     # both flow through the identical reason → say → sink path), but ignores empty/whitespace input —
     # a guard ASR finals deliberately bypass. Built in build_system.
     submit_speech: Callable[[str], None]
+    # Whether the config turns speech input (an `asr` section) and hand signs (a `vision` section)
+    # on: absent means off, by choice — the page says "off" rather than "unavailable" then.
+    speech_on: bool = True
+    signs_on: bool = False
     # The body's own perceptions (`embodiment.inputs()`), each with the guarded `deliver` built for
-    # it: registered at build, started by `_start` once the agent runs, stopped by `_shutdown` right
+    # it: registered at build, started by `_start` once the agent runs, stopped by `close_session` right
     # after it. Empty without a body or an agent. See specs/embodiment.md, "`inputs()` is the mirror
     # of `commands()`".
     inputs: tuple[tuple[Input, Deliver], ...] = ()
@@ -243,15 +255,18 @@ def build_system(
     ``mic`` — so a test sees the source the engine was given.
     """
     loop = asyncio.new_event_loop()
-    threading.Thread(
+    # A daemon so an interrupted process never waits on it; `close_session` joins it.
+    loop_thread = threading.Thread(
         target=loop.run_forever, name="wica-interaction-loop", daemon=True
-    ).start()
+    )
+    loop_thread.start()
 
     missing: list[str] = []
 
     # MediaPipe before the body: imported once the robot's media runs, it aborts the process on
     # Linux (see `preload_mediapipe`). Only for the shipped detector — an injected one needs none.
-    vision_on = config.vision is not None and config.vision.enabled
+    # Hand signs are on when the config has a `vision` section (absent means off).
+    vision_on = config.vision is not None
     if vision_on and (gesture_models is None or gesture_models.detector is None):
         preload_mediapipe()
     # Transformers before any worker thread: imported on two at once (the classifier's stage and
@@ -280,7 +295,7 @@ def build_system(
     # vocabulary — so a persona never describes hands it cannot see or emotions it cannot play. ---
     addenda = [body.prompt_addendum if body is not None else ""]
     vision = config.vision
-    if vision is not None and vision.enabled and body is not None:
+    if vision is not None and body is not None:
         addenda.append(hand_signs_prompt_section())
 
     # --- The latency view's collection, before the agent so its first spans are seen: the SDK is
@@ -353,31 +368,34 @@ def build_system(
     # --- Speech in: the ASR bridge, or None with a captured reason. Built after the agent, so its
     # on_final_segment callback (_deliver_speech) resolves forward with no placeholder. The engine
     # reads the embodiment's mic (None there means it opens its own default device), so speech-in
-    # needs a body: with none, the bridge stays None and typed text still drives the agent. -------
+    # needs a body: with none, the bridge stays None and typed text still drives the agent. With no
+    # `asr` section speech input is off: no engine, no bridge, no dictation Commands, and no banner
+    # line either — off is the config's choice, not something missing. -------------------------
     bridge: AsrBridge | None = None
-    if body is not None:
+    asr_config = config.asr_engine
+    if body is not None and asr_config is not None:
         embodied = body  # bound for the closure below: `body` is not reassigned after this point
         try:
-            asr = asr_engine_factory(config.asr_engine, body.mic)
+            asr = asr_engine_factory(asr_config, body.mic)
             bridge = AsrBridge(
                 asr,
                 on_final_segment=_deliver_speech,
                 mic_error=lambda: embodied.mic_error,
                 # The engine keeps its trigger words private; `start_dictation`'s reply names them.
-                trigger_words=config.asr_engine.segmentation.trigger_words,
+                trigger_words=asr_config.segmentation.trigger_words,
                 # The person speaking, for the latency timeline's You row.
                 on_speech=latency.speech if wica is not None else None,
             )
         except (ValueError, ImportError) as exc:
             missing.append(f"ASR: {exc}")
 
-    # --- Vision in: the hand-sign input over the embodiment's camera, only with `vision.enabled`
+    # --- Vision in: the hand-sign input over the embodiment's camera, only with a `vision` section
     # and a body (no embodiment ⇒ no camera) and an agent (there is nothing else to deliver to). The
     # World entries are registered only then, so a vision-less run never tells the model about hands
     # it cannot see. Construction loads no model and opens no camera (both happen on start()), so a
     # failure here is a programming/config error — still a banner line, never a crash. -----------
     gesture: GestureInput | None = None
-    if vision is not None and vision.enabled and body is not None and wica is not None:
+    if vision is not None and body is not None and wica is not None:
         world = wica.world
 
         def _deliver_gesture(hand: int, value: str | None) -> None:
@@ -419,6 +437,7 @@ def build_system(
 
     return AppSystem(
         loop=loop,
+        loop_thread=loop_thread,
         display_name=embodiment.display_name,
         embodiment=body,
         wica=wica,
@@ -426,6 +445,8 @@ def build_system(
         gesture=gesture,
         missing=missing,
         submit_speech=submit_speech,
+        speech_on=asr_config is not None,
+        signs_on=vision is not None,
         inputs=tuple(inputs),
         input_displays=input_displays,
         latency=latency if wica is not None else None,
@@ -545,20 +566,6 @@ def _start(system: AppSystem) -> None:
                     logger.exception("an embodiment input failed to start")
 
 
-def _degraded_system(message: str) -> AppSystem:
-    """A do-nothing system that only carries a banner message (e.g. a config that failed to load)."""
-    return AppSystem(
-        loop=None,
-        display_name=None,
-        embodiment=None,
-        wica=None,
-        bridge=None,
-        gesture=None,
-        missing=[message],
-        submit_speech=lambda _text: None,
-    )
-
-
 # Per-step bound on each teardown coroutine, so a hung provider connection or media session cannot
 # wedge exit.
 _SHUTDOWN_TIMEOUT_S = 5.0
@@ -579,16 +586,17 @@ def _run_on_loop(
         logger.exception("teardown step %r failed", step)
 
 
-def _shutdown(system: AppSystem) -> None:
-    """Tear the system down in dependency order: the agent, then the body's inputs, then vision, then
-    ASR capture, then the embodiment, then the loop. Vision and the bridge are stopped *before* the embodiment exits so the
-    camera poll is joined and the mic pump cancelled while the body is still live, rather than
-    polling a closed session.
+def close_session(system: AppSystem) -> None:
+    """Tear the session down in dependency order: the agent, then the body's inputs, then vision,
+    then ASR capture, then the embodiment, then the loop — stopped, its thread joined, closed.
+    Vision and the bridge are stopped *before* the embodiment exits so the camera poll is joined
+    and the mic pump cancelled while the body is still live, rather than polling a closed session.
 
-    Runs on the Gradio thread once ``launch()`` returns (never from a sink, Command, or Event
-    subscriber — those run on the loop). Each step is isolated (and each loop hop time-bounded): a
-    step that raises or hangs is logged and the rest still run, so one failure cannot strand the
-    body's session or the loop thread."""
+    Runs on the thread that stops the session (a Gradio worker, or the main thread at exit — never
+    from a sink, Command, or Event subscriber, which run on the loop). Each step is isolated (and
+    each loop hop, the thread's join included, time-bounded): a step that raises or hangs is logged
+    and the rest still run, so one failure cannot strand the body's session or the loop thread.
+    Afterwards nothing of the session is left in the process (specs/session.md, "Stop")."""
     loop = system.loop
     if system.wica is not None:
         try:
@@ -617,24 +625,28 @@ def _shutdown(system: AppSystem) -> None:
         # Release the body (a media session, a robot connection, …) on the loop before it stops.
         _run_on_loop(loop, system.embodiment.exit(), step="embodiment.exit")
     if loop is not None:
-        loop.call_soon_threadsafe(loop.stop)
+        _stop_loop(loop, system.loop_thread)
 
 
-def _serve(system: AppSystem) -> None:
-    """Everything after the build — UI → wire → start → launch — tearing down whatever happens.
-
-    All four sit *inside* the ``try``: ``build_system`` has already entered the embodiment (a robot
-    session, a daemon the bridge spawned), so a raise anywhere from here on — the page failing to
-    build, ``wire`` rejecting a Command name, ``wica.start()`` / ``asr_bridge.start()`` — must still
-    exit it and stop the loop. The UI owns the presenters, which subscribe to the agent's Events
-    as they are built, so it comes before start; everything is wired before start."""
+def _stop_loop(
+    loop: asyncio.AbstractEventLoop, thread: threading.Thread | None
+) -> None:
+    """Stop *loop*, wait for its *thread* to return from ``run_forever``, and close it. A thread
+    that does not return in time is logged and the loop left open: closing a running loop raises."""
+    if loop.is_closed():
+        return
+    loop.call_soon_threadsafe(loop.stop)
+    if thread is not None:
+        thread.join(_SHUTDOWN_TIMEOUT_S)
+        if thread.is_alive():
+            logger.error(
+                "the session's loop did not stop within %ss", _SHUTDOWN_TIMEOUT_S
+            )
+            return
     try:
-        page = build_ui(system)
-        wire(system)
-        _start(system)
-        page.launch()
-    finally:
-        _shutdown(system)
+        loop.close()
+    except Exception:  # one teardown step must not abort the rest
+        logger.exception("teardown step 'loop.close' failed")
 
 
 class _Loaded(Protocol):
@@ -642,6 +654,48 @@ class _Loaded(Protocol):
 
     @property
     def app(self) -> AppConfig: ...
+
+
+def open_session(
+    used_config: Mapping[str, Any],
+    folder: Path,
+    *,
+    load: Callable[..., _Loaded],
+    embodiment: Callable[[Any], Embodiment],
+    asr_engine_factory: AsrEngineFactory = _build_asr_engine,
+    gesture_models: GestureModels | None = None,
+) -> Running:
+    """One session, in order (specs/app.md, "Wiring and lifecycle"): *load* the config document
+    against the app's *folder*, construct the *embodiment* from it, ``build_system``, the presenters
+    (subscribed to the agent's Events before it starts, so they see the first reaction), ``wire``,
+    ``_start``. A raise after the build closes what was built before it propagates: the body is
+    already entered by then (a robot session, a daemon the bridge spawned). The test seams of
+    ``build_system`` pass through."""
+    loaded = load(used_config, base_dir=folder)
+    system = build_system(
+        loaded.app,
+        embodiment(loaded),
+        asr_engine_factory=asr_engine_factory,
+        gesture_models=gesture_models,
+    )
+    try:
+        display = entry_display(system)
+        transcript = TranscriptLog(system.wica, display)
+        reactions = ReactionLog(system.wica, display)
+        if system.latency is not None:
+            # The latency table's "heard / seen" reads like the transcript's labels.
+            system.latency.describe = lambda entry: entry_label(display, entry)
+        wire(system)
+        _start(system)
+    except BaseException:
+        close_session(system)
+        raise
+    return Running(
+        system=system,
+        transcript=transcript,
+        reactions=reactions,
+        close=lambda: close_session(system),
+    )
 
 
 def copy_persona(source: Traversable, target: Path) -> Path:
@@ -654,47 +708,137 @@ def copy_persona(source: Traversable, target: Path) -> Path:
     return target
 
 
+# The subcommand that edits the config with no session (specs/setup.md, "Three launches").
+CONFIGURE = "configure"
+
+
 def run_app[C: _Loaded](
     app: App,
     *,
     load: Callable[..., C],
     embodiment: Callable[[C], Embodiment],
     ensure_persona: Callable[[Path], Path],
+    check: Callable[[Mapping[str, Any]], list[str]] | None = None,
     argv: Sequence[str] | None = None,
 ) -> None:
-    """The whole app, from the command line: each embodiment's ``main()`` is one call to this.
+    """The whole app, from the command line: each embodiment's ``main()`` is one call to this
+    (specs/app.md, "The entry point").
 
-    *app* is the embodiment's app-setup declaration (its sections, its default config); *load* is
-    its ``load_config(data, *, base_dir)``; *embodiment* constructs the body from what *load*
-    returned (no I/O in the constructor — ``build_system`` enters it); *ensure_persona* copies its
-    persona into the folder. The app runs from its folder (``--folder``, default
-    ``~/.config/<app.name>``): building the ``AppModel`` creates it, writes the default config into
-    a new one and loads its ``.env``; the saved config is then loaded against the folder. A
-    ``ValueError`` — a document a loader refuses, an unreadable ``config.json`` — opens the UI with
-    the message in the banner rather than a traceback.
+    *app* is the embodiment's app-setup declaration (its sections, its default config, autostart);
+    *load* is its ``load_config(data, *, base_dir)``; *embodiment* constructs the body from what
+    *load* returned (no I/O in the constructor — ``build_system`` enters it); *ensure_persona*
+    copies its persona into the folder; *check*, when given, says what is wrong across the
+    config's sections (the computer's hand signs without a camera), which Start refuses like a
+    blocker (``Session``).
+
+    The app runs from its folder (``--folder``, default ``~/.config/<app.name>``): building the
+    ``AppModel`` creates it, writes the default config into a new one and loads its ``.env``. Or it
+    runs a config file as it is (``--config FILE``): never written, read-only on the Setup tab, its
+    relative paths and its ``.env`` next to it, nothing copied anywhere; a file that is missing or
+    unreadable stops the app at launch. ``--env PATH`` names another ``.env`` for either. The
+    session starts at launch when ``starts_at_launch`` says so (from a file, unless
+    ``--no-start``; else ``--start`` / ``--no-start`` over the folder's choice); what keeps it from
+    starting is logged and shown on the page, which stays up. The page is served until the process
+    is asked to stop; a running session is stopped then.
+
+    ``<app> configure …`` serves the Setup and Secrets tabs alone, with no session
+    (``_configure``).
     """
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("wica").setLevel(logging.INFO)
 
-    folder = default_folder(app.name)
-    parser = argparse.ArgumentParser(description=app.title)
-    parser.add_argument(
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == [CONFIGURE]:
+        _configure(app, ensure_persona, args[1:])
+        return
+
+    parser = argparse.ArgumentParser(
+        description=app.title,
+        epilog=f"{app.name} {CONFIGURE} --help: edit the config, with no session.",
+    )
+    add_config_arguments(parser, app)
+    _add_serve_arguments(parser)
+    add_start_arguments(parser)
+    options = parser.parse_args(args)
+
+    def opened(used_config: Mapping[str, Any], path: Path) -> Running:
+        return open_session(used_config, path, load=load, embodiment=embodiment)
+
+    session = Session(opened, check=check)
+    try:
+        source = open_source(options, app)
+    except ConfigFileError as exc:
+        parser.error(str(exc))
+    # Building the model makes the folder ready and loads the .env; the config is locked while a
+    # session runs. A file is run as it is: nothing is copied next to it.
+    model = AppModel(app, source, locked=session.locked)
+    logger.warning("config: %s", source.config_path)
+    if isinstance(source, ConfigFolder):
+        ensure_persona(model.path)
+    starts = starts_at_launch(model, options.start)
+    if starts:
+        for reason in session.start(model):
+            logger.warning("the session did not start at launch: %s", reason)
+    try:
+        build_page(model, session, open_on="interaction" if starts else "setup").launch(
+            server_name=options.host, server_port=options.port
+        )
+    finally:
+        session.stop()
+
+
+def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--host", default="127.0.0.1", help="the address to serve on")
+    parser.add_argument("--port", type=int, default=None, help="the port to serve on")
+
+
+def _configure(
+    app: App, ensure_persona: Callable[[Path], Path], argv: Sequence[str]
+) -> None:
+    """``<app> configure``: the Setup and Secrets tabs (app-setup's ``config_page``) and no
+    session. With ``--config FILE`` it edits that file (Save writes it back; it must exist);
+    without, the app's folder, made ready as a launch would (the default config, the persona)."""
+    parser = argparse.ArgumentParser(
+        prog=f"{app.name} {CONFIGURE}",
+        description=f"{app.title}: edit the config, with no session.",
+    )
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument(
         "--folder",
         type=Path,
-        default=folder,
-        help=f"the app's folder: its config, its keys, its persona (default: {folder})",
+        default=default_folder(app.name),
+        metavar="DIR",
+        help="the app's folder whose config.json is edited (default: %(default)s)",
     )
+    where.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="the config file to edit instead (it must exist)",
+    )
+    parser.add_argument(
+        "--env",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="the .env file the keys are read from and saved to "
+        "(default: the .env next to the config)",
+    )
+    _add_serve_arguments(parser)
     options = parser.parse_args(argv)
-
+    source: ConfigFolder | ConfigFile
     try:
-        model = AppModel(app, ConfigFolder(options.folder, app.default_config))
+        if options.config is not None:
+            source = ConfigFile(options.config, env_path=options.env, writable=True)
+        else:
+            source = ConfigFolder(
+                options.folder, app.default_config, env_path=options.env
+            )
+    except ConfigFileError as exc:
+        parser.error(str(exc))
+    model = AppModel(app, source)
+    logger.warning("config: %s", source.config_path)
+    if isinstance(source, ConfigFolder):
         ensure_persona(model.path)
-        config = load(model.used_config(model.saved_config()), base_dir=model.path)
-    except ValueError as exc:
-        # A config that does not load still opens the UI with an explanation, not a traceback.
-        system = _degraded_system(str(exc))
-    else:
-        system = build_system(config.app, embodiment(config))
-    # build → UI → wire → start → launch → close; everything after the build is `_serve`'s, under
-    # the one `finally` that tears the entered body down.
-    _serve(system)
+    config_page(model).launch(server_name=options.host, server_port=options.port)

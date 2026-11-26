@@ -12,8 +12,14 @@ from pathlib import Path
 import pytest
 from tts_engine.config import TTSEngineConfig
 
-from wica_interaction.computer.app import DEFAULT_CONFIG
-from wica_interaction.computer.config import CameraConfig, ComputerConfig, load_config
+from wica_interaction.computer.app import DEFAULT_CONFIG, STARTING_DOCUMENTS
+from wica_interaction.computer.config import (
+    VISION_NEEDS_CAMERA,
+    CameraConfig,
+    ComputerConfig,
+    config_problems,
+    load_config,
+)
 
 
 def _composed() -> dict:
@@ -58,6 +64,7 @@ def test_happy_path_yields_the_shared_config_plus_this_bodys_sections(
     assert isinstance(cfg, ComputerConfig)
     # The shared sections live under `.app`, untouched by this loader.
     assert cfg.app.wica.agent.provider == "anthropic"
+    assert cfg.app.asr_engine is not None
     assert cfg.app.asr_engine.module.type == "deepgram-v2"
     assert cfg.app.vision is None
 
@@ -65,8 +72,8 @@ def test_happy_path_yields_the_shared_config_plus_this_bodys_sections(
     # The section goes verbatim to tts-engine's own loader, module dict and all.
     assert cfg.tts_engine.module["type"] == "elevenlabs"
     assert cfg.tts_engine.module["voice_id"] == "JBFqnCBsd6RMkjVDRZzb"
-    assert not cfg.audio_processing.any_enabled  # absent ⇒ every feature off
-    assert cfg.camera == CameraConfig(device=0)  # absent ⇒ the default device
+    assert cfg.audio_processing is None  # absent ⇒ no processing
+    assert cfg.camera is None  # absent ⇒ no webcam
 
 
 def test_missing_tts_section_names_it(tmp_path: Path) -> None:
@@ -133,9 +140,9 @@ def test_camera_empty_object_takes_the_default(tmp_path: Path) -> None:
     assert cfg.camera == CameraConfig(device=0)
 
 
-def test_camera_null_takes_the_default(tmp_path: Path) -> None:
+def test_camera_null_is_off(tmp_path: Path) -> None:
     cfg = _load(tmp_path, {**_composed(), "camera": None})
-    assert cfg.camera == CameraConfig(device=0)
+    assert cfg.camera is None
 
 
 def test_camera_not_an_object_raises(tmp_path: Path) -> None:
@@ -163,11 +170,70 @@ def test_the_default_config_loads(tmp_path: Path) -> None:
     a local voice, echo cancellation and hand signs on, everything else at its default (the
     webcam is device 0), the persona the folder's copy."""
     cfg = _load(tmp_path, DEFAULT_CONFIG)
+    assert cfg.app.asr_engine is not None
     assert cfg.app.asr_engine.module.type == "mlx-audio"
     assert cfg.tts_engine.module["type"] == "phonon"
+    assert cfg.audio_processing is not None
     assert cfg.audio_processing.echo_cancellation.enabled is True
-    assert cfg.app.vision is not None and cfg.app.vision.enabled is True
+    assert cfg.app.vision is not None  # present: hand signs on
     assert cfg.camera == CameraConfig()
     prompt = cfg.app.wica.agent.system_prompt_file
     assert prompt is not None
     assert Path(prompt).resolve() == (tmp_path / "computer.md").resolve()
+
+
+# --- Optional sections and the rule across them (specs/configuration.md, "Optional sections") ---
+
+
+def test_only_the_required_sections_load_with_everything_optional_off(
+    tmp_path: Path,
+) -> None:
+    config = _composed()
+    del config["asr"]
+    cfg = _load(tmp_path, config)
+    assert cfg.app.asr_engine is None
+    assert cfg.app.vision is None
+    assert cfg.audio_processing is None
+    assert cfg.camera is None
+
+
+def test_hand_signs_without_the_camera_are_refused(tmp_path: Path) -> None:
+    config = {**_composed(), "vision": {}}
+    assert config_problems(config) == [VISION_NEEDS_CAMERA]
+    with pytest.raises(ValueError, match="Hand signs need a camera"):
+        _load(tmp_path, config)
+    # `null` is absent too: app-setup hands an absent section as `None`.
+    assert config_problems({**config, "camera": None}) == [VISION_NEEDS_CAMERA]
+
+
+def test_hand_signs_with_the_camera_and_a_camera_alone_are_fine(tmp_path: Path) -> None:
+    with_both = {**_composed(), "vision": {}, "camera": {}}
+    assert config_problems(with_both) == []
+    assert _load(tmp_path, with_both).camera == CameraConfig(device=0)
+    camera_alone = {**_composed(), "camera": {"device": 1}}
+    assert config_problems(camera_alone) == []
+    assert _load(tmp_path, camera_alone).app.vision is None
+
+
+@pytest.mark.parametrize("name", sorted(STARTING_DOCUMENTS))
+def test_each_starting_document_loads_as_its_section(tmp_path: Path, name: str) -> None:
+    """What the Setup tab writes when the user adds a section is a document the loader takes
+    (hand signs added with their camera, as the rule across sections asks)."""
+    config = {**_composed(), name: STARTING_DOCUMENTS[name]}
+    if name == "vision":
+        config["camera"] = STARTING_DOCUMENTS["camera"]
+    cfg = _load(tmp_path, config)
+    loaded = {
+        "asr": cfg.app.asr_engine,
+        "audio_processing": cfg.audio_processing,
+        "vision": cfg.app.vision,
+        "camera": cfg.camera,
+    }
+    assert loaded[name] is not None
+
+
+def test_the_starting_documents_are_what_the_defaults_say() -> None:
+    assert STARTING_DOCUMENTS["asr"] == DEFAULT_CONFIG["asr"]
+    assert STARTING_DOCUMENTS["audio_processing"] == DEFAULT_CONFIG["audio_processing"]
+    assert STARTING_DOCUMENTS["vision"] == {}
+    assert STARTING_DOCUMENTS["camera"] == {"device": 0}

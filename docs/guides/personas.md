@@ -9,7 +9,7 @@ The persona is what makes the agent a voice assistant or a small robot: a Markdo
 | the computer | `computer.md` in `~/.config/wica-interaction-computer` ([shipped](../../src/wica_interaction/computer/default/computer.md)) | `wica.agent.system_prompt_file` in the computer's config |
 | the Reachy Mini | `reachy.md` in `~/.config/wica-interaction-reachy` ([shipped](../../src/wica_interaction/reachy/default/reachy.md)) | `wica.agent.system_prompt_file` in the robot's config |
 
-The first launch copies the shipped file into the app's folder, and never overwrites it after: the copy in the folder is the one to edit. The path resolves relative to the folder ([../reference/configuration.md](../reference/configuration.md#wica-the-agent)). A persona that cannot be read is an `Agent:` banner line: the page opens, the agent does not.
+The first launch copies the shipped file into the app's folder, and never overwrites it after: the copy in the folder is the one to edit. The path resolves relative to the folder, or to a `--config` file's directory, where nothing is copied: put the persona next to the file ([../reference/configuration.md](../reference/configuration.md#three-launches)). A persona that cannot be read is an `Agent:` banner line: the page opens, the agent does not.
 
 ## What the files say
 

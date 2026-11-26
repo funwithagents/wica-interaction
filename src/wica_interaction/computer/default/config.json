@@ -37,12 +37,14 @@
     }
   },
   "vision": {
-    "enabled": true,
     "threshold": 0.65,
     "fps": 10,
     "max_hands": 2,
     "hold_s": 0.3,
     "release_hold_s": 0.5,
     "device": null
+  },
+  "camera": {
+    "device": 0
   }
 }

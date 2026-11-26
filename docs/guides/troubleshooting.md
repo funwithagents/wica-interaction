@@ -2,13 +2,29 @@
 
 The checks for each symptom, in the order to make them, each pointing at the page that owns the explanation. The app's own signals come first: the **banner** at the top of the page, the **ASR** status line, the **Vision** line, and the result of each Command in the transcript (a ❌ item shows the reply the model got, a `TTS error: …` among them). For a full trace, run with WICA's logs on: the app configures Python logging, and `logging.getLogger("wica")` at `DEBUG` shows every trigger, step, Command and cancellation.
 
+## The session does not start
+
+The Interaction tab's **Start** runs the saved config; while stopped, the line over it says why a Start cannot run, one reason per line, and Start builds nothing until they are gone. Each is fixed on the **Setup** tab, in the block of the section it names:
+
+| Reason | What it means | Fix |
+|---|---|---|
+| `/<section>/<field>: …` | the config itself has a problem: a missing field, a wrong value, an unknown key, a section left out | fix the field in the section's form, then **Save** |
+| `<section>: The … extra — Not installed …` | the config needs an extra this environment lacks | the line's **Install** (or **Install all**) adds this project's extra that carries it, from the lock; a `reachy-mini-bridge[placo]` has none here: pick the `analytical` kinematics engine |
+| `<section>: <VARIABLE> — Set the environment variable …` | a key the config names is not set | type it on the line, or on the **Secrets** tab: it goes into the `.env` next to the config (or the one `--env` names) |
+| `<section>: … — No file at …` | a file the config points at is not there (a persona, a scene) | put the file in the app's folder (next to the file, for `--config`), or fix the path in the form |
+| `The session could not start: …` | the config passed the checks, but building the session raised | the message is the owner's; fix the field it names and Start again |
+
+Models a section can download itself (the voice, the recognizer, the hand models) do not block Start: the first session fetches what is missing and starts slower. **Prepare** on the Setup tab gets them ahead.
+
+**Save is greyed** while a session runs: the config is locked. Stop, edit, Save, Start.
+
 ## The banner
 
-The page opens even when something could not be built, with one line per failure. What each prefix means, and what to do:
+A session starts even when something could not be built, with one line per failure over its surfaces: what only a real start can tell. Fix it on the Setup tab, then Stop and Start. What each prefix means, and what to do:
 
 | Line | Cause | Fix |
 |---|---|---|
-| `Agent: environment variable 'X' is not set` | the agent's key variable is unset in the shell that ran the command | export it and restart; a non-interactive shell does not read your `~/.zshrc` |
+| `Agent: … no key under 'X' …` | the agent's key variable is unset (it was unset since Start's check) | set it on the Secrets tab, or export it in the shell that runs the command, then Stop and Start |
 | `Agent: …` (any other message) | WICA rejected the config, or the persona file could not be read, or the provider's extra is not installed (`ImportError` naming it) | the message is WICA's: an unknown `agent` key, a bad `system_prompt_file` path (relative to the config file), `uv sync --extra wica-<provider>` ([../reference/configuration.md](../reference/configuration.md#wica-the-agent)) |
 | `ASR: …` | the speech recognizer could not be built: its key variable unset, a bad `module`, or an extra absent (the recognizer's, or `asr-silero` for the `vad` gate) | export the key, check `asr.module`, `uv sync --extra asr-deepgram --extra asr-silero`; meanwhile the text box drives the agent ([../reference/configuration.md](../reference/configuration.md#asr-speech-in)) |
 | `TTS: …` | the voice could not be built: its key unset, its `tts-<type>` extra absent, a local model that failed to load, or (robot) no `reachy.tts` block | fix the `tts` block or install the extra. The body is up and `say` stays wired: the model gets `TTS error: …` as the Command's reply, so you see in the transcript what it tried to say ([../guides/computer.md](../guides/computer.md), [../guides/reachy-mini.md](../guides/reachy-mini.md#the-voice)) |
@@ -17,7 +33,6 @@ The page opens even when something could not be built, with one line per failure
 | `Robot: emotions unavailable: …` | the robot is up, but the recorded-moves library could not be read (no network on first run) | the prompt carries no emotion names and `play_emotion` keeps its plain description; connect once so the library downloads ([../reference/install.md](../reference/install.md#first-run-downloads)) |
 | `Users: …` | the robot is up, but its face detection could not be set up (the detector's build failed) | the robot speaks, plays emotions and manages its motors, but sees nobody: no user entries in the World, no `start_tracking` / `stop_tracking`, no "The users around you" section; check `reachy.face_detection` ([../guides/reachy-mini.md](../guides/reachy-mini.md#the-users-in-front-of-the-robot)) |
 | `Vision: …` | the hand-sign input could not be constructed | a config or programming error at build time; a model that fails to load after start shows on the Vision line instead ([../guides/hand-signs.md](../guides/hand-signs.md#the-vision-line)) |
-| a message with no prefix, and no agent at all | the config file itself did not load: missing, not JSON, a required section absent, a section the command does not accept, a field an engine rejected | the message names the file and the field ([../reference/configuration.md](../reference/configuration.md#what-a-loader-rejects)). A reachy file handed to the computer command fails on `reachy` |
 
 ## Nothing happens after I speak
 
@@ -38,7 +53,7 @@ The transcript shows the agent's own sentences coming back as 🗣️ input, and
 
 ## No camera frame, or no sign
 
-- **Is vision on?** `_Vision off_` on the Vision line means `vision.enabled` is false, or there is no body. With it on, the line reads `running` and the hand-stage and classifier rates climb once the models are loaded ([hand-signs.md](hand-signs.md#the-vision-line)).
+- **Is vision on?** `Hand signs are off` on the Vision line means the config has no `vision` section; `Hand signs unavailable` means there is no body, or the banner says what failed. With it on, the line reads `running` and the hand-stage and classifier rates climb once the models are loaded ([hand-signs.md](hand-signs.md#the-vision-line)).
 - **`⚠️ error:` on the line.** A model failed to load: no network on the first run (the download is a few hundred megabytes), or the `vision` extra is not installed. Fix it and restart; the app itself keeps running.
 - **`⚠️ camera: no camera frame for 3 s`.** The camera publishes nothing. The computer: the wrong `camera.device`, no camera permission for the terminal (macOS), the webcam held by another application; a `camera open failed: …` tail says which, and the source retries so plugging the camera in heals it. The robot: a headless simulator on macOS has no camera (no GL context without a window), a daemon that has not delivered its first frame yet, a Lite whose camera is held by another process; the bridge's [troubleshooting page](https://github.com/funwithagents/reachy-mini-bridge/blob/main/docs/guides/troubleshooting.md) has the robot's camera checks.
 - **Hands are seen, no sign is delivered.** The label is `below threshold`: lower `vision.threshold`, or improve the light. The sign flickers between two classes: the hold filter needs it unbroken for `hold_s`; hold it steadier, or lower `hold_s`. A sign arrives late: see the tuning notes in [hand-signs.md](hand-signs.md#tuning). `no crop` means the hand is at the frame's edge.
@@ -76,5 +91,5 @@ The banner reads `Reachy Mini: …`. The message is the bridge's or upstream's, 
 
 - **Typing raises `World is not running`.** The agent was not built (see the banner) or the app is shutting down.
 - **The World panel shows a note instead of a table.** No agent: the banner says why.
-- **The Vision section says `No camera frame yet`.** On the computer the webcam opens only with `vision.enabled`; with it on, the Vision line's `⚠️ camera:` tail says why no frame came. On the robot, the session has not published a frame yet, or the body is absent (the banner says why).
+- **The Vision section says `No camera frame yet`.** On the computer the webcam opens only with a `vision` section (and its `camera` section); with it on, the Vision line's `⚠️ camera:` tail says why no frame came. On the robot, the session has not published a frame yet, or the body is absent (the banner says why).
 - **Closing.** Stop the command with Ctrl-C: the app closes the agent, stops vision and the recognizer, exits the body (the robot goes to sleep, a daemon the bridge spawned is stopped) and ends. A step that hangs is given five seconds and skipped, so a stuck device cannot strand the process.

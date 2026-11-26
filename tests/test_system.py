@@ -2,9 +2,9 @@
 
 Deterministic, no browser/mic/camera/network/body: the agent runs against WICA's `fake` provider (a
 scripted model), the body is a `FakeEmbodiment` that only records, the ASR engine is an injected
-fake, and only the wiring `run_app` does — minus the Gradio page — is exercised: `build_system`,
-then `wire` after a `TranscriptLog` (and a `ReactionLog`) the test builds itself, playing the UI's
-role exactly as `build_ui` would, then `_start`. Covers the two input paths (typed text and a closed
+fake, and only the wiring a session goes through — minus the Gradio page — is exercised:
+`build_system`, then `wire` after a `TranscriptLog` (and a `ReactionLog`) the test builds itself,
+exactly as `open_session` does, then `_start`. Covers the two input paths (typed text and a closed
 ASR segment) reaching the agent and its `say` reaching the embodiment's voice (proving the output
 Command is set), the model's private text reaching the transcript (outside the `<say>` tag), an action
 Command routing back to the body (proving `wire` registers `embodiment.commands()`), the persona
@@ -18,15 +18,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-import gradio as gr
 import numpy as np
 import pytest
-from app_setup.app import App, Section
-from asr_engine.audio import AudioFormat
+from app_setup.app import App, AppModel, Section
+from asr_engine.audio import AudioFormat, AudioSource
 from asr_engine.config import ASREngineConfig
 from asr_engine.segmenter import SpeechSegment
 from opentelemetry import trace
@@ -49,17 +50,17 @@ from wica_interaction.config import AppConfig, VisionConfig
 from wica_interaction.embodiment import Embodiment, InputEntry
 from wica_interaction.gesture_input import GestureModels
 from wica_interaction.latency import EffectStart
+from wica_interaction.session import Running, Session
 from wica_interaction.system import (
     HAND_GESTURE_TTL,
     SPEECH_INPUT_TTL,
     AppSystem,
-    _degraded_system,
     _hand_gesture,
-    _serve,
-    _shutdown,
     _speech_input,
     _start,
     build_system,
+    close_session,
+    open_session,
     run_app,
     wire,
 )
@@ -124,9 +125,8 @@ def _build(
 
 
 def _wire(system: AppSystem) -> tuple[TranscriptLog, ReactionLog]:
-    """Play the UI's role: build the two contrib presenters over the agent (exactly what `build_ui`
-    creates, subscribing before start), then wire the output Command + the Commands, as `run_app`
-    does before starting."""
+    """Play `open_session`'s role: build the two contrib presenters over the agent (subscribing
+    before start), then wire the output Command + the Commands, before starting."""
     transcript = TranscriptLog(system.wica, display_entry)
     reactions = ReactionLog(system.wica, display_entry)
     wire(system)
@@ -168,7 +168,7 @@ def test_typed_text_drives_agent_and_speaks_through_the_body() -> None:
         system.submit_speech("hi")
         assert _wait_until(lambda: embodiment.said == ["hello there"])
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_a_body_without_a_voice_sets_no_output_command() -> None:
@@ -186,7 +186,7 @@ def test_a_body_without_a_voice_sets_no_output_command() -> None:
         assert _wait_until(lambda: _reaction_captured(reactions))
         assert embodiment.said == []
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_private_text_lands_in_the_transcript_and_only_the_tag_is_spoken() -> None:
@@ -210,13 +210,23 @@ def test_private_text_lands_in_the_transcript_and_only_the_tag_is_spoken() -> No
         assert _wait_until(private_item_shown)
         assert _wait_until(lambda: embodiment.said == ["hello"])
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_wire_without_agent_is_a_noop() -> None:
     """With no agent there is nothing to wire into: `wire` returns quietly (the banner already says
     why), so `run_app` stays linear in degraded mode."""
-    system = _degraded_system("config unreadable")
+    system = AppSystem(
+        loop=None,
+        loop_thread=None,
+        display_name=None,
+        embodiment=None,
+        wica=None,
+        bridge=None,
+        gesture=None,
+        missing=["Agent: no key"],
+        submit_speech=lambda _text: None,
+    )
     wire(system)  # must not raise
     assert system.wica is None
 
@@ -237,7 +247,7 @@ def test_the_bodys_action_commands_are_registered_and_route_back_to_it() -> None
         system.submit_speech("say hi with your hand")
         assert _wait_until(lambda: embodiment.waved == 1)
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_a_body_with_no_actions_registers_none() -> None:
@@ -250,7 +260,7 @@ def test_a_body_with_no_actions_registers_none() -> None:
         # The voice is still set — as the output Command, not one of the invokable ones.
         assert system.wica.agent.output_command_name == "say"
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_prompt_addendum_is_seeded_into_the_persona() -> None:
@@ -266,7 +276,7 @@ def test_prompt_addendum_is_seeded_into_the_persona() -> None:
         assert prompt.startswith("You are a test double.")
         assert "\n\n## Test section\n\nhello from the body" in prompt
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_missing_lines_from_enter_reach_the_banner() -> None:
@@ -280,7 +290,7 @@ def test_missing_lines_from_enter_reach_the_banner() -> None:
         assert "TTS: key unset" in system.missing
         assert "Audio processing: no binding" in system.missing
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_the_mic_is_what_the_asr_engine_reads() -> None:
@@ -297,7 +307,7 @@ def test_the_mic_is_what_the_asr_engine_reads() -> None:
         assert system.bridge is not None
         assert system.bridge.status()["capture_error"] == "mic stream ended"
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_empty_typed_text_is_ignored() -> None:
@@ -317,7 +327,7 @@ def test_empty_typed_text_is_ignored() -> None:
         # transcript is complete for inputs by now.
         assert _user_items(transcript) == ['🗣️ "a real turn"']
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 # --- Speech in -----------------------------------------------------------------------------------
@@ -355,7 +365,7 @@ def test_closed_segment_reaches_agent_like_typed_text() -> None:
         _emit_segment(system, fake_asr, _final_segment("please reply"))
         assert _wait_until(lambda: embodiment.said == ["segment reply"])
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_a_dictated_passage_reaches_the_prompt_as_complete() -> None:
@@ -385,7 +395,7 @@ def test_a_dictated_passage_reaches_the_prompt_as_complete() -> None:
             in prompt
         )
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_empty_final_segment_wakes_agent() -> None:
@@ -400,7 +410,7 @@ def test_empty_final_segment_wakes_agent() -> None:
         _emit_segment(system, fake_asr, _final_segment(""))
         assert _wait_until(lambda: embodiment.said == ["you went quiet"])
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 # --- Transient inputs: the serializers and the TTLs (specs/app.md, "Inputs are transient") ------
@@ -473,7 +483,7 @@ def test_an_utterance_is_gone_from_the_world_and_the_prompt_after_its_ttl() -> N
         time.sleep(0.3)  # long enough for a step the reset might (wrongly) have woken
         assert reactions.snapshot().count == 1
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 # --- Degraded start ------------------------------------------------------------------------------
@@ -511,7 +521,7 @@ def test_a_body_that_fails_to_enter_degrades_but_the_agent_still_reasons() -> No
         system.submit_speech("are you there")
         assert _wait_until(lambda: _reaction_captured(reactions))
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_no_body_means_no_prompt_addendum() -> None:
@@ -524,7 +534,7 @@ def test_no_body_means_no_prompt_addendum() -> None:
         assert system.wica is not None
         assert "Test section" not in system.wica.agent.system_prompt
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 class _Mic16k:
@@ -605,6 +615,30 @@ def _asr_degrade_config() -> AppConfig:
     return AppConfig(wica=scripted_wica_config([], persona="double"), asr_engine=asr)
 
 
+def test_no_asr_section_is_speech_input_off_and_typing_still_drives_the_agent() -> None:
+    """Optional (specs/configuration.md, "Optional sections"): without an `asr` section no engine is
+    built, no bridge and no dictation Commands exist, nothing is said missing (off is the config's
+    choice), and a typed turn still reaches the agent and its voice."""
+    embodiment = FakeEmbodiment()
+    calls: list[AudioSource | None] = []
+    config = replace(_config(script=_say_once("typed, heard")), asr_engine=None)
+    system = build_system(
+        config, embodiment, asr_engine_factory=asr_factory(FakeASREngine(), calls)
+    )
+    try:
+        assert calls == []  # no engine built
+        assert system.bridge is None and not system.speech_on
+        assert system.missing == []
+        _wire(system)
+        _start(system)
+        assert system.wica is not None
+        assert "start_dictation" not in system.wica.agent.commands
+        system.submit_speech("hello")
+        assert _wait_until(lambda: embodiment.said == ["typed, heard"])
+    finally:
+        close_session(system)
+
+
 def test_missing_asr_key_degrades_but_the_body_survives(monkeypatch: Any) -> None:
     """With the body up but the ASR key unset, ASR degrades (bridge None) while the voice survives."""
     monkeypatch.delenv("WICA_TEST_UNSET_ASR_KEY", raising=False)
@@ -619,7 +653,7 @@ def test_missing_asr_key_degrades_but_the_body_survives(monkeypatch: Any) -> Non
         assert any(m.startswith("ASR:") for m in system.missing)
         assert not any(m.startswith("fake body:") for m in system.missing)
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_bad_system_prompt_file_degrades(tmp_path: Path) -> None:
@@ -647,14 +681,14 @@ def test_bad_system_prompt_file_degrades(tmp_path: Path) -> None:
         )
         assert system.embodiment is not None  # the body is unaffected
     finally:
-        _shutdown(system)
+        close_session(system)
     assert embodiment.exited
 
 
 # --- Teardown -------------------------------------------------------------------------------------
 
 
-def test_shutdown_stops_asr_before_the_body_exits() -> None:
+def test_close_session_stops_asr_before_the_body_exits() -> None:
     """Teardown stops the ASR bridge (cancelling the mic pump) *before* the body is released, then
     exits it — the order specs/app.md lists."""
     log: list[str] = []
@@ -668,7 +702,7 @@ def test_shutdown_stops_asr_before_the_body_exits() -> None:
     _start(system)
     assert fake_asr.started  # capture was live before teardown
 
-    _shutdown(system)
+    close_session(system)
 
     assert not fake_asr.started
     assert embodiment.exited
@@ -676,74 +710,103 @@ def test_shutdown_stops_asr_before_the_body_exits() -> None:
     assert system.wica is not None and not system.wica.is_running
 
 
-class _NeverLaunched:
-    """Stands in for the built page in `_serve`: something raises first, so `launch` must never run."""
-
-    def launch(self, **_options: object) -> None:
-        raise AssertionError("launch() must not be reached when an earlier step raises")
+class _Loaded:
+    def __init__(self, app: AppConfig) -> None:
+        self.app = app
 
 
-def _never_launched_ui(system: AppSystem) -> gr.Blocks:
-    """Stand in for `build_ui` (no browser): a real transcript, a page that must not launch."""
-    TranscriptLog(system.wica, display_entry)
-    return cast(gr.Blocks, _NeverLaunched())
+def _open(
+    embodiment: FakeEmbodiment,
+    *,
+    script: list[dict],
+    asr: FakeASREngine | None = None,
+) -> Running:
+    """`open_session` over *embodiment*, its config the scripted agent (the document is ignored)."""
+    config = _config(script=script)
+    return open_session(
+        {},
+        Path("."),
+        load=lambda _data, *, base_dir: _Loaded(config),
+        embodiment=lambda _loaded: embodiment,
+        asr_engine_factory=asr_factory(asr if asr is not None else FakeASREngine()),
+    )
+
+
+def _closed(system: AppSystem) -> bool:
+    """The session's loop stopped, its thread joined, the loop closed: nothing left running."""
+    loop = system.loop
+    thread = system.loop_thread
+    assert loop is not None and thread is not None
+    return loop.is_closed() and not thread.is_alive()
 
 
 def _loop_stopped(system: AppSystem) -> bool:
-    """Wait for the app loop's thread to leave run_forever (loop.stop is scheduled, not immediate)."""
-    loop = system.loop
-    assert loop is not None
-    return _wait_until(lambda: not loop.is_running())
+    """Wait for the session's loop thread to leave run_forever and the loop to be closed."""
+    return _wait_until(lambda: _closed(system))
 
 
-def test_start_failure_still_tears_down_the_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A raise while starting — after build_system has entered the body — still exits it and stops
-    the loop, instead of leaking both (the UI is never launched)."""
-    monkeypatch.setattr(system_module, "build_ui", _never_launched_ui)
+def test_open_session_runs_a_session_that_closes_without_a_trace() -> None:
+    """A session opened then closed: it answered, and its loop and thread are gone afterwards."""
+    before = set(threading.enumerate())
     embodiment = FakeEmbodiment()
-    system = _build(
-        embodiment,
-        script=[{"text": "<noop/>"}],
-        asr=FakeASREngine(raise_on_start="mic unavailable"),
+    running = _open(embodiment, script=_say_once("Hello there."))
+    system = running.system
+    assert system.wica is not None and system.wica.is_running
+
+    system.submit_speech("hi")
+    assert _wait_until(lambda: embodiment.said == ["Hello there."])
+    running.close()
+
+    assert embodiment.exited
+    assert _closed(system)
+    assert _wait_until(lambda: set(threading.enumerate()) <= before)
+
+
+def test_a_start_failure_closes_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A raise while starting — after build_system has entered the body — still exits it and
+    closes the loop, instead of leaking both."""
+    built: list[AppSystem] = []
+    real_build = system_module.build_system
+    monkeypatch.setattr(
+        system_module,
+        "build_system",
+        lambda *a, **k: built.append(real_build(*a, **k)) or built[-1],
     )
-    assert embodiment.entered
+    embodiment = FakeEmbodiment()
 
     with pytest.raises(RuntimeError, match="mic unavailable"):
-        _serve(system)
+        _open(
+            embodiment,
+            script=[{"text": "<noop/>"}],
+            asr=FakeASREngine(raise_on_start="mic unavailable"),
+        )
 
-    assert embodiment.exited
-    assert _loop_stopped(system)
-    assert system.wica is not None and not system.wica.is_running
+    assert embodiment.entered and embodiment.exited
+    assert _loop_stopped(built[0])
+    assert built[0].wica is not None and not built[0].wica.is_running
 
 
-def test_a_page_that_fails_to_build_still_tears_down_the_body(
+def test_presenters_that_fail_still_close_the_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The body is entered by `build_system`, before the page exists: a raise while building the
-    page must exit it (a robot session, a spawned daemon) like a raise while starting does."""
+    """The body is entered by `build_system`, before the presenters exist: a raise while building
+    them must exit it (a robot session, a spawned daemon) like a raise while starting does."""
 
-    def _broken_ui(_system: AppSystem) -> Any:
-        raise RuntimeError("gradio could not build the page")
+    def broken(*_args: object) -> TranscriptLog:
+        raise RuntimeError("the transcript could not subscribe")
 
-    monkeypatch.setattr(system_module, "build_ui", _broken_ui)
+    monkeypatch.setattr(system_module, "TranscriptLog", broken)
     embodiment = FakeEmbodiment()
-    system = _build(embodiment, script=[])
 
-    with pytest.raises(RuntimeError, match="could not build the page"):
-        _serve(system)
+    with pytest.raises(RuntimeError, match="could not subscribe"):
+        _open(embodiment, script=[])
 
     assert embodiment.exited
-    assert _loop_stopped(system)
 
 
-def test_a_wiring_failure_still_tears_down_the_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_wiring_failure_still_closes_the_session() -> None:
     """`wire` can raise on its own — here the body offers two Commands under one name, which WICA
     rejects — and that, too, happens with the body already entered."""
-    monkeypatch.setattr(system_module, "build_ui", _never_launched_ui)
 
     async def wave() -> str:
         """A second `wave`, colliding with the first."""
@@ -751,16 +814,14 @@ def test_a_wiring_failure_still_tears_down_the_body(
 
     embodiment = FakeEmbodiment(commands=None)
     embodiment._commands = (embodiment.wave, wave)
-    system = _build(embodiment, script=[])
 
     with pytest.raises(ValueError, match="wave"):
-        _serve(system)
+        _open(embodiment, script=[])
 
     assert embodiment.exited
-    assert _loop_stopped(system)
 
 
-def test_shutdown_isolates_a_failing_step() -> None:
+def test_close_session_isolates_a_failing_step() -> None:
     """An ASR stop that raises is logged and skipped past: the body still exits, the loop stops."""
     embodiment = FakeEmbodiment()
     system = _build(
@@ -770,13 +831,13 @@ def test_shutdown_isolates_a_failing_step() -> None:
     )
     _start(system)
 
-    _shutdown(system)  # must not raise
+    close_session(system)  # must not raise
 
     assert embodiment.exited
     assert _loop_stopped(system)
 
 
-def test_shutdown_bounds_a_hung_step(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_close_session_bounds_a_hung_step(monkeypatch: pytest.MonkeyPatch) -> None:
     """An ASR stop that never returns is abandoned after the per-step timeout; teardown continues."""
     monkeypatch.setattr(system_module, "_SHUTDOWN_TIMEOUT_S", 0.1)
     embodiment = FakeEmbodiment()
@@ -787,13 +848,13 @@ def test_shutdown_bounds_a_hung_step(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     _start(system)
 
-    _shutdown(system)
+    close_session(system)
 
     assert embodiment.exited
     assert _loop_stopped(system)
 
 
-def test_shutdown_skips_never_started_bridge() -> None:
+def test_close_session_skips_never_started_bridge() -> None:
     """A bridge that was built but never started (nothing ran _start) is not stopped at teardown —
     the running-guard holds — while the body is still released."""
     log: list[str] = []
@@ -804,13 +865,10 @@ def test_shutdown_skips_never_started_bridge() -> None:
         asr=FakeASREngine(log=log),
     )
 
-    _shutdown(system)
+    close_session(system)
 
     assert log == ["embodiment.exit"]  # no "asr.stop"
     assert _loop_stopped(system)
-
-
-# --- The entry point ------------------------------------------------------------------------------
 
 
 # --- The entry point: the app's folder (specs/app.md, "The entry point"; specs/setup.md) -------
@@ -818,62 +876,63 @@ def test_shutdown_skips_never_started_bridge() -> None:
 
 _PERSONA = "You are the persona from the folder."
 
+_FOLDER_CONFIG = {
+    "wica": {
+        "agent": {
+            "provider": "fake",
+            "model": "scripted",
+            "system_prompt_file": "persona.md",
+        }
+    }
+}
 
-def _fake_app(default_config: dict[str, Any]) -> App:
-    """An app with one section, `wica`, described by WICA's own contract."""
+
+def _fake_app(default_config: dict[str, Any] | None = None) -> App:
+    """An app with one section, `wica`, described by WICA's own contract; autostart on."""
     import wica.setup
 
     return App(
         name="wica-interaction-fake",
         host="wica-interaction",
         sections=(Section("wica", wica.setup),),
-        default_config=default_config,
+        default_config=default_config if default_config is not None else _FOLDER_CONFIG,
+        autostart=True,
     )
 
 
-class _Loaded:
-    def __init__(self, app: AppConfig) -> None:
-        self.app = app
+class _Page:
+    """Stands in for the built page: records how it was built and launched."""
+
+    def __init__(self, raises: BaseException | None = None) -> None:
+        self.raises = raises
+        self.open_on: str | None = None
+        self.launched: dict[str, Any] | None = None
+        self.session: Session | None = None
+        self.model: AppModel | None = None
+
+    def build(self, model: AppModel, session: Session, *, open_on: str) -> _Page:
+        self.model, self.session, self.open_on = model, session, open_on
+        return self
+
+    def launch(self, **options: Any) -> None:
+        self.launched = options
+        assert self.session is not None
+        # While the page is served, the session runs (or not) as launch decided.
+        self.status_while_served = self.session.status
+        if self.raises is not None:
+            raise self.raises
 
 
-def _run(
-    monkeypatch: pytest.MonkeyPatch,
-    folder: Path,
-    *,
-    default_config: dict[str, Any],
-    load: Any,
-) -> AppSystem:
-    """`run_app` on *folder*, its serving replaced: returns the system it would have served."""
-    seen: list[AppSystem] = []
-    monkeypatch.setattr(system_module, "_serve", seen.append)
-    monkeypatch.setattr(system_module, "build_system", _built)
-
-    def ensure_persona(path: Path) -> Path:
-        target = path / "persona.md"
-        if not target.exists():
-            target.write_text(_PERSONA, encoding="utf-8")
-        return target
-
-    run_app(
-        _fake_app(default_config),
-        load=load,
-        embodiment=lambda _loaded: FakeEmbodiment(),
-        ensure_persona=ensure_persona,
-        argv=["--folder", str(folder)],
-    )
-    assert len(seen) == 1
-    return seen[0]
+# The configs the session was opened with, newest last.
+_OPENED: list[AppConfig] = []
 
 
-# The configs `build_system` was handed by `run_app`, newest last.
-_LAST_CONFIG: list[AppConfig] = []
-
-
-def _built(config: AppConfig, embodiment: Embodiment) -> AppSystem:
+def _built(config: AppConfig, embodiment: Embodiment, **_seams: Any) -> AppSystem:
     """A stand-in for `build_system`: records the config it was given and builds nothing."""
-    _LAST_CONFIG.append(config)
+    _OPENED.append(config)
     return AppSystem(
         loop=None,
+        loop_thread=None,
         display_name=embodiment.display_name,
         embodiment=None,
         wica=None,
@@ -893,37 +952,93 @@ def _load_wica(data: Any, *, base_dir: Path) -> _Loaded:
     )
 
 
-_FOLDER_CONFIG = {
-    "wica": {
-        "agent": {
-            "provider": "fake",
-            "model": "scripted",
-            "system_prompt_file": "persona.md",
-        }
-    }
-}
+# The folders `ensure_persona` was called on, newest last.
+_PERSONA_COPIED: list[Path] = []
 
 
-def test_run_app_fills_a_new_folder_and_loads_from_it(
+def _ensure_persona(path: Path) -> Path:
+    _PERSONA_COPIED.append(path)
+    target = path / "persona.md"
+    if not target.exists():
+        target.write_text(_PERSONA, encoding="utf-8")
+    return target
+
+
+def _run_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    *argv: str,
+    page: _Page | None = None,
+    default_config: dict[str, Any] | None = None,
+) -> _Page:
+    """`run_app` with *argv*, the page and `build_system` replaced."""
+    page = page if page is not None else _Page()
+    monkeypatch.setattr(system_module, "build_page", page.build)
+    monkeypatch.setattr(system_module, "build_system", _built)
+    run_app(
+        _fake_app(default_config),
+        load=_load_wica,
+        embodiment=lambda _loaded: FakeEmbodiment(),
+        ensure_persona=_ensure_persona,
+        argv=list(argv),
+    )
+    return page
+
+
+def _run(
+    monkeypatch: pytest.MonkeyPatch,
+    folder: Path,
+    *flags: str,
+    page: _Page | None = None,
+    default_config: dict[str, Any] | None = None,
+) -> _Page:
+    """`run_app` on *folder* with *flags*, the page and `build_system` replaced."""
+    return _run_argv(
+        monkeypatch,
+        "--folder",
+        str(folder),
+        *flags,
+        page=page,
+        default_config=default_config,
+    )
+
+
+def test_run_app_fills_a_new_folder_and_starts_from_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A new folder gets the default config and the persona; the config is loaded from the folder,
-    its relative persona path resolved there whatever the working directory."""
+    """A new folder gets the default config and the persona; with autostart the session starts
+    from the saved config before the page is served, the persona resolved in the folder whatever
+    the working directory, and the page opens on the Interaction tab."""
     folder = tmp_path / "app"
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    _LAST_CONFIG.clear()
+    _OPENED.clear()
 
-    _run(monkeypatch, folder, default_config=_FOLDER_CONFIG, load=_load_wica)
+    page = _run(monkeypatch, folder, "--port", "7999")
 
     assert json.loads((folder / "config.json").read_text(encoding="utf-8")) == (
         _FOLDER_CONFIG
     )
     assert (folder / "persona.md").read_text(encoding="utf-8") == _PERSONA
-    prompt = _LAST_CONFIG[-1].wica.agent.system_prompt_file
+    prompt = _OPENED[-1].wica.agent.system_prompt_file
     assert prompt is not None
     assert Path(prompt).resolve() == (folder / "persona.md").resolve()
+    assert page.open_on == "interaction"
+    assert page.status_while_served == "running"
+    assert page.launched == {"server_name": "127.0.0.1", "server_port": 7999}
+    # Serving returned: the session was stopped.
+    assert page.session is not None and page.session.status == "stopped"
+
+
+def test_run_app_with_no_start_opens_on_setup_and_builds_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _OPENED.clear()
+    page = _run(monkeypatch, tmp_path / "app", "--no-start")
+
+    assert _OPENED == []
+    assert page.open_on == "setup"
+    assert page.status_while_served == "stopped"
 
 
 def test_run_app_keeps_what_the_user_changed_in_the_folder(
@@ -931,48 +1046,212 @@ def test_run_app_keeps_what_the_user_changed_in_the_folder(
 ) -> None:
     """A second launch reads the saved config and leaves an edited persona alone."""
     folder = tmp_path / "app"
-    _run(monkeypatch, folder, default_config=_FOLDER_CONFIG, load=_load_wica)
+    _run(monkeypatch, folder, "--no-start")
     (folder / "persona.md").write_text("Edited.", encoding="utf-8")
     saved = json.loads((folder / "config.json").read_text(encoding="utf-8"))
     saved["wica"]["agent"]["model"] = "another"
     (folder / "config.json").write_text(json.dumps(saved), encoding="utf-8")
-    _LAST_CONFIG.clear()
+    _OPENED.clear()
 
-    _run(monkeypatch, folder, default_config=_FOLDER_CONFIG, load=_load_wica)
+    _run(monkeypatch, folder)
 
     assert (folder / "persona.md").read_text(encoding="utf-8") == "Edited."
-    assert _LAST_CONFIG[-1].wica.agent.model == "another"
+    assert _OPENED[-1].wica.agent.model == "another"
 
 
-def test_run_app_degrades_a_bad_config_into_the_banner(
+def test_a_config_with_blockers_keeps_the_page_up_and_says_why(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A `ValueError` from the embodiment's own loader opens the UI with the message in the banner
-    rather than a traceback: nothing is built, nothing is served."""
+    """At launch, a config that cannot run starts nothing; the page is served all the same, the
+    reason on the session for every browser tab — a service started at boot never crash-loops."""
+    broken = {"wica": {"agent": {"provider": "fake"}}}  # no model
+    _OPENED.clear()
 
-    def load(data: Any, *, base_dir: Path) -> _Loaded:
-        raise ValueError("config: vision 'fps' must be a finite number > 0")
+    page = _run(monkeypatch, tmp_path / "app", default_config=broken)
 
-    system = _run(
-        monkeypatch, tmp_path / "app", default_config=_FOLDER_CONFIG, load=load
+    assert _OPENED == []
+    assert page.launched is not None
+    assert page.session is not None and page.session.status == "stopped"
+    assert any("model" in reason for reason in page.session.reasons)
+
+
+def test_a_session_running_when_serving_raises_is_stopped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    page = _Page(raises=KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        _run(monkeypatch, tmp_path / "app", page=page)
+
+    assert page.status_while_served == "running"
+    assert page.session is not None and page.session.status == "stopped"
+
+
+# --- From a config file, and `configure` (specs/setup.md, "Three launches") ---------------------
+
+
+def _config_file(directory: Path) -> Path:
+    """A config file in *directory*, its persona next to it."""
+    directory.mkdir(parents=True)
+    (directory / "persona.md").write_text(
+        "You are the persona next to the file.", "utf-8"
+    )
+    path = directory / "robot.json"
+    path.write_text(json.dumps(_FOLDER_CONFIG, indent=2), encoding="utf-8")
+    return path
+
+
+def test_run_app_from_a_file_runs_it_as_it_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--config FILE`: the session starts at launch with no flag, the persona resolved next to
+    the file whatever the working directory, the Setup tab read-only; nothing is written — not
+    the file, not a folder, no persona copied."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    path = _config_file(tmp_path / "configs")
+    before = path.read_text(encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    _OPENED.clear()
+    _PERSONA_COPIED.clear()
+
+    page = _run_argv(monkeypatch, "--config", str(path))
+
+    prompt = _OPENED[-1].wica.agent.system_prompt_file
+    assert prompt is not None
+    assert Path(prompt).resolve() == (path.parent / "persona.md").resolve()
+    assert page.open_on == "interaction"
+    assert page.status_while_served == "running"
+    assert page.model is not None and not page.model.editable
+    assert page.model.path == path.parent.resolve()
+    assert path.read_text(encoding="utf-8") == before
+    assert sorted(p.name for p in path.parent.iterdir()) == ["persona.md", "robot.json"]
+    assert _PERSONA_COPIED == []
+    assert not (tmp_path / "xdg").exists()
+
+
+def test_run_app_from_a_file_with_no_start_builds_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = _config_file(tmp_path / "configs")
+    _OPENED.clear()
+
+    page = _run_argv(monkeypatch, "--config", str(path), "--no-start")
+
+    assert _OPENED == []
+    assert page.open_on == "setup"
+
+
+def test_run_app_from_a_file_takes_its_keys_from_the_env_named(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The `.env` is the one next to the file, unless `--env` names another."""
+    path = _config_file(tmp_path / "configs")
+    keys = tmp_path / "keys" / "robot.env"
+
+    beside = _run_argv(monkeypatch, "--config", str(path), "--no-start")
+    named = _run_argv(
+        monkeypatch, "--config", str(path), "--env", str(keys), "--no-start"
     )
 
-    assert system.wica is None and system.embodiment is None
-    assert system.display_name is None  # no config ⇒ no body to name the page after
-    assert system.missing == ["config: vision 'fps' must be a finite number > 0"]
+    assert beside.model is not None and named.model is not None
+    assert beside.model.source.env_path == path.parent / ".env"
+    assert named.model.source.env_path == keys
 
 
-def test_run_app_degrades_an_unreadable_config_file(
+@pytest.mark.parametrize("command", [[], ["configure"]])
+def test_a_missing_config_file_stops_the_app_at_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: list[str],
+) -> None:
+    """A file that is not there is a command-line error naming it, before anything is built or
+    served — for a launch and for `configure` alike."""
+    missing = tmp_path / "nowhere.json"
+    page = _Page()
+    _OPENED.clear()
+
+    with pytest.raises(SystemExit) as exited:
+        _run_argv(monkeypatch, *command, "--config", str(missing), page=page)
+
+    assert exited.value.code == 2
+    assert str(missing) in capsys.readouterr().err
+    assert page.launched is None and _OPENED == []
+
+
+def test_folder_and_config_are_one_or_the_other(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    folder = tmp_path / "app"
-    folder.mkdir()
-    (folder / "config.json").write_text("{not json", encoding="utf-8")
+    path = _config_file(tmp_path / "configs")
+    with pytest.raises(SystemExit):
+        _run_argv(monkeypatch, "--folder", str(tmp_path / "app"), "--config", str(path))
 
-    system = _run(monkeypatch, folder, default_config=_FOLDER_CONFIG, load=_load_wica)
 
-    assert system.wica is None
-    assert len(system.missing) == 1 and "config.json" in system.missing[0]
+class _ConfigPage:
+    """Stands in for app-setup's `config_page`: records the model and how it was launched."""
+
+    def __init__(self) -> None:
+        self.model: AppModel | None = None
+        self.launched: dict[str, Any] | None = None
+
+    def build(self, model: AppModel) -> _ConfigPage:
+        self.model = model
+        return self
+
+    def launch(self, **options: Any) -> None:
+        self.launched = options
+
+
+def _configure(monkeypatch: pytest.MonkeyPatch, *argv: str) -> _ConfigPage:
+    config = _ConfigPage()
+    monkeypatch.setattr(system_module, "config_page", config.build)
+    page = _Page()
+    _OPENED.clear()
+    _run_argv(monkeypatch, "configure", *argv, page=page)
+    # No session: neither the session's page nor a build.
+    assert page.launched is None and _OPENED == []
+    return config
+
+
+def test_configure_edits_a_config_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`configure --config FILE`: the Setup and Secrets page over that file, which Save writes
+    back; the page served where asked; no session."""
+    path = _config_file(tmp_path / "configs")
+
+    config = _configure(
+        monkeypatch, "--config", str(path), "--host", "0.0.0.0", "--port", "7861"
+    )
+
+    model = config.model
+    assert model is not None and model.editable
+    assert model.source.config_path == path
+    assert config.launched == {"server_name": "0.0.0.0", "server_port": 7861}
+    edited = model.saved_config()
+    edited["wica"]["agent"]["model"] = "another"
+    model.save(edited)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["wica"]["agent"]["model"] == "another"
+
+
+def test_configure_edits_the_app_folder_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without `--config`, `configure` edits the app's folder (the default one here), made ready
+    as a launch would: the default config, the persona."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    folder = tmp_path / "xdg" / "wica-interaction-fake"
+
+    config = _configure(monkeypatch)
+
+    assert config.model is not None and config.model.editable
+    assert config.model.path == folder
+    assert json.loads((folder / "config.json").read_text(encoding="utf-8")) == (
+        _FOLDER_CONFIG
+    )
+    assert (folder / "persona.md").read_text(encoding="utf-8") == _PERSONA
 
 
 # --- Vision in: the hand-sign input (specs/gesture-input.md, "App integration") ----------------
@@ -1017,7 +1296,7 @@ def _vision_system(
         embodiment,
         script=script,
         # No hold: these tests are about the wiring, not the filter (tested with the module).
-        vision=VisionConfig(enabled=True, fps=100.0, hold_s=0.0),
+        vision=VisionConfig(fps=100.0, hold_s=0.0),
         models=GestureModels(detector=_ScriptedDetector(), classifier=classifier),
     )
 
@@ -1085,7 +1364,7 @@ def test_a_sign_wakes_the_agent_and_is_gone_from_the_prompt_after_its_ttl() -> N
         assert not any("no sign" in label for label, _ in reactions.snapshot().choices)
         assert embodiment.said == ["okay, stopping"]
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_another_sign_wakes_the_agent_again() -> None:
@@ -1114,7 +1393,7 @@ def test_another_sign_wakes_the_agent_again() -> None:
         assert prompt is not None
         assert 'detected on hand 1: "five"' in prompt
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_vision_is_off_without_a_config_section() -> None:
@@ -1126,21 +1405,20 @@ def test_vision_is_off_without_a_config_section() -> None:
         assert "## Hand signs" not in system.wica.agent.system_prompt
         assert not any(m.startswith("Vision:") for m in system.missing)
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
-def test_vision_section_present_but_disabled_builds_nothing() -> None:
-    """`enabled: false` (the default) with the body up: no gesture input, no `hand_gesture_<n>`
-    entry, no hand-signs section — the section can sit in the file, tuned, without vision running."""
+def test_a_vision_section_present_is_hand_signs_on() -> None:
+    """The section is the switch (specs/configuration.md, "Optional sections"): present, even
+    `{}`, builds the gesture input with its entries and the persona's section."""
     system = _build(FakeEmbodiment(), script=[], vision=VisionConfig(fps=100.0))
     try:
-        assert system.gesture is None
+        assert system.gesture is not None and system.signs_on
         assert system.wica is not None
-        assert not system.wica.world.is_registered("hand_gesture_1")
-        assert "## Hand signs" not in system.wica.agent.system_prompt
-        assert not any(m.startswith("Vision:") for m in system.missing)
+        assert system.wica.world.is_registered("hand_gesture_1")
+        assert "## Hand signs" in system.wica.agent.system_prompt
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_vision_max_hands_fps_and_hold_reach_the_gesture_input() -> None:
@@ -1150,9 +1428,7 @@ def test_vision_max_hands_fps_and_hold_reach_the_gesture_input() -> None:
     system = _build(
         embodiment,
         script=[],
-        vision=VisionConfig(
-            enabled=True, max_hands=1, fps=20.0, hold_s=0.25, release_hold_s=0.75
-        ),
+        vision=VisionConfig(max_hands=1, fps=20.0, hold_s=0.25, release_hold_s=0.75),
         models=GestureModels(
             detector=_ScriptedDetector(), classifier=_ScriptedClassifier(fist=0.9)
         ),
@@ -1166,14 +1442,14 @@ def test_vision_max_hands_fps_and_hold_reach_the_gesture_input() -> None:
         # The camera the body handed over was asked for the same rate.
         assert [camera.fps for camera in embodiment.cameras] == [20.0]
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_vision_needs_a_body() -> None:
     """No body ⇒ no camera ⇒ no gesture input and no `hand_gesture_<n>` entry (the agent is never
     told about hands it cannot see); the banner carries only the body's line."""
     system = build_system(
-        _config(script=[], vision=VisionConfig(enabled=True)),
+        _config(script=[], vision=VisionConfig()),
         FakeEmbodiment(raise_on_enter="no body"),
         asr_engine_factory=asr_factory(FakeASREngine()),
     )
@@ -1184,10 +1460,10 @@ def test_vision_needs_a_body() -> None:
         assert "## Hand signs" not in system.wica.agent.system_prompt
         assert [m for m in system.missing if m.startswith("Vision:")] == []
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
-def test_shutdown_stops_vision_before_the_body_exits() -> None:
+def test_close_session_stops_vision_before_the_body_exits() -> None:
     embodiment = FakeEmbodiment(frames=_HAND_FRAME)
     system = _vision_system(embodiment, _ScriptedClassifier(fist=0.1), [])
     try:
@@ -1196,7 +1472,7 @@ def test_shutdown_stops_vision_before_the_body_exits() -> None:
         assert system.gesture is not None and system.gesture.running
         assert _wait_until(lambda: _camera_frames(embodiment) > 0)
     finally:
-        _shutdown(system)
+        close_session(system)
     assert system.gesture is not None and not system.gesture.running
     assert embodiment.exited
     frames_then = _camera_frames(embodiment)
@@ -1254,7 +1530,7 @@ def test_a_body_input_is_registered_delivered_and_wakes_the_agent() -> None:
         assert _input_steps(reactions) == 1
         assert "👀 a cat" in _user_items(transcript)
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_an_input_writes_only_its_own_keys() -> None:
@@ -1271,7 +1547,7 @@ def test_an_input_writes_only_its_own_keys() -> None:
         assert system.wica.world.get("speech_input") is None
         assert not _reaction_captured(reactions)
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_a_delivery_outside_the_running_agent_is_dropped() -> None:
@@ -1286,7 +1562,7 @@ def test_a_delivery_outside_the_running_agent_is_dropped() -> None:
         _wire(system)
         _start(system)
     finally:
-        _shutdown(system)
+        close_session(system)
     deliver("seen", "too late")  # the World is stopped: dropped, no raise
     assert system.wica is not None and system.wica.world.get("seen") is None
 
@@ -1316,7 +1592,7 @@ def test_an_entry_the_world_refuses_drops_that_input_with_a_banner_line() -> Non
         _start(system)
         assert clashing.started == 0 and fine.started == 1
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_an_input_that_fails_to_start_leaves_the_app_running() -> None:
@@ -1336,7 +1612,7 @@ def test_an_input_that_fails_to_start_leaves_the_app_running() -> None:
         system.submit_speech("hi")
         assert _wait_until(lambda: embodiment.said == ["hello"])
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_no_inputs_without_a_body_or_without_an_agent(tmp_path: Path) -> None:
@@ -1347,7 +1623,7 @@ def test_no_inputs_without_a_body_or_without_an_agent(tmp_path: Path) -> None:
     try:
         assert system.inputs == () and no_body.inputs_asked == 0
     finally:
-        _shutdown(system)
+        close_session(system)
 
     body_input = ScriptedInput()
     wica = WicaConfig.from_dict(
@@ -1370,11 +1646,11 @@ def test_no_inputs_without_a_body_or_without_an_agent(tmp_path: Path) -> None:
         _start(system)
         assert body_input.started == 0
     finally:
-        _shutdown(system)
+        close_session(system)
     assert body_input.stopped == 0
 
 
-def test_shutdown_stops_the_inputs_right_after_the_agent() -> None:
+def test_close_session_stops_the_inputs_right_after_the_agent() -> None:
     """Teardown stops each input before anything the body owns: the agent first, then the inputs,
     then the ASR bridge, then the body — the order specs/app.md lists."""
     log: list[str] = []
@@ -1384,7 +1660,7 @@ def test_shutdown_stops_the_inputs_right_after_the_agent() -> None:
     _wire(system)
     _start(system)
 
-    _shutdown(system)
+    close_session(system)
 
     assert body_input.stopped == 1
     assert log == ["input.stop", "asr.stop", "embodiment.exit"]
@@ -1442,7 +1718,7 @@ def test_a_typed_turn_is_measured_from_its_write_to_the_voices_declared_sound() 
             "first (cold)" in record.flags
         )  # the run's first reaction that called the model
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_an_exporter_that_cannot_be_had_is_a_banner_line(
@@ -1454,7 +1730,7 @@ def test_an_exporter_that_cannot_be_had_is_a_banner_line(
         assert any("WICA_INTERACTION_TRACES" in line for line in system.missing)
         assert system.latency is not None  # collection itself goes on
     finally:
-        _shutdown(system)
+        close_session(system)
 
 
 def test_with_no_agent_there_is_nothing_to_measure(tmp_path: Path) -> None:
@@ -1475,4 +1751,4 @@ def test_with_no_agent_there_is_nothing_to_measure(tmp_path: Path) -> None:
     try:
         assert system.wica is None and system.latency is None
     finally:
-        _shutdown(system)
+        close_session(system)

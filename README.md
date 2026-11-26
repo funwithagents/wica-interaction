@@ -33,11 +33,12 @@ Speech in is a live speech recognizer, speech out real audio, and the robot real
 | **Hand signs** | The body's camera runs through [`vision-modules`](https://github.com/funwithagents/vision-modules)' hand pipeline; a small vocabulary (`stop`, `like`, `dislike`, `ok`, `one` to `five`), one sign per hand, reaches the agent once it has held for half a second, and the agent decides what a sign means, except `stop` ([docs/guides/hand-signs.md](docs/guides/hand-signs.md)) |
 | **Dictation** | The agent switches speech capture to one longer passage when asked, ended by a pause or a trigger word, and reverts on its own ([docs/guides/dictation.md](docs/guides/dictation.md)) |
 | **Echo cancellation** | The agent is kept from hearing its own voice: the robot's XVF3800 cancels it in hardware, the computer runs an opt-in WebRTC echo canceller fed with what the voice plays, which can still let short bursts through ([docs/guides/computer.md](docs/guides/computer.md#echo-cancellation)) |
-| **One JSON config** | The agent provider, the speech recognizer, the voice, the robot backend, the camera and the persona are one file; each engine section is that engine's own document, nested verbatim ([docs/reference/configuration.md](docs/reference/configuration.md)) |
+| **One JSON config** | The agent provider, the speech recognizer, the voice, the robot backend, the camera and the persona are one file; each engine section is that engine's own document, nested verbatim; speech input, hand signs, the microphone processing and the webcam are optional sections, off when left out ([docs/reference/configuration.md](docs/reference/configuration.md)) |
 | **Provider choice** | Anthropic, OpenAI, Gemini, Mistral, the Hugging Face Hub or any OpenAI-compatible server for the agent; Deepgram, Mistral, an OpenAI-compatible server or a local mlx-audio model for speech in; thirteen voices, hosted or local, for speech out, each an extra you install only if you use it ([docs/reference/install.md](docs/reference/install.md#extras)) |
 | **Watch it work** | A Gradio page: the conversation with every Command's execution state live, the live speech recognition and the Vision line, a typed-text box, and WICA's World and reaction panels behind a debug toggle |
 | **See how long it takes to react** | Every reaction measured from the end of the person's input to its first effect, the first sound or the robot moving, each step on the way named: a glance line and a live timeline above the conversation, the statistics, a table and a waterfall per reaction on a Latency tab ([docs/guides/latency.md](docs/guides/latency.md)) |
-| **Opens even when degraded** | A missing key, an absent extra, a robot that cannot be reached: each lands as one banner line, and what still works keeps working, typed text driving the agent at the least ([docs/guides/troubleshooting.md](docs/guides/troubleshooting.md#the-banner)) |
+| **Set up from the page** | Each app runs from its own folder; its **Setup** tab edits every section of the config, says what the machine misses (an extra, a key, a model), installs and downloads it, and tests each section; **Start** and **Stop** run the session again without relaunching ([docs/guides/troubleshooting.md](docs/guides/troubleshooting.md#the-session-does-not-start)) |
+| **Degrades, not crashes** | What only a real start can tell (a robot that cannot be reached, a voice that fails to build) lands as one banner line, and what still works keeps working, typed text driving the agent at the least ([docs/guides/troubleshooting.md](docs/guides/troubleshooting.md#the-banner)) |
 
 ## Install
 
@@ -63,11 +64,11 @@ Every extra, the platforms, the system packages and the first-run downloads are 
 Each app runs from its own folder, `~/.config/wica-interaction-computer` or `~/.config/wica-interaction-reachy`, which the first launch fills with its default config and its persona, yours to edit there ([docs/reference/configuration.md](docs/reference/configuration.md)). The default configs run speech in and the voice on your machine (the recognizer needs Apple silicon) and the agent on the Hugging Face Hub, so they need one key, referenced by environment variable, never stored:
 
 ```
-export HF_TOKEN=hf_...                 # the agent (or HF_TOKEN=… in the folder's .env)
+export HF_TOKEN=hf_...                 # the agent (or set it on the page's Secrets tab)
 uv run wica-interaction-computer
 ```
 
-Open the address Gradio prints and talk. Each thing you say shows as 🗣️ on the left; the agent's reply is a **🗣️ say** item that stays running while you hear it. Without a key the page still opens, says what to set, and the text box drives the agent wherever its own key is set.
+Open the address Gradio prints: the **Interaction** tab runs the session (Start, Stop), **Setup** edits, checks and installs each section of the config, **Secrets** holds the keys. Then talk. Each thing you say shows as 🗣️ on the left; the agent's reply is a **🗣️ say** item that stays running while you hear it. Without a key the page still opens and says what to set; the session starts once it is.
 
 The robot, in the simulator the bridge spawns for you (the MuJoCo viewer opens; needs the `reachy-sim` extra, and on macOS an unlocked GUI session):
 
@@ -77,6 +78,16 @@ uv run wica-interaction-reachy
 ```
 
 The first run downloads the speech recognizer's model and the voice. Another agent, recognizer or voice is a change of one block plus its extra; [docs/reference/configuration.md](docs/reference/configuration.md#what-the-default-configs-run-and-the-other-choices) says where each provider is documented. For a Reachy Mini Lite plugged in over USB, set `reachy.backend` to `"real"` in the folder's `config.json`; the complete walk-through, the simulator's options and the robot's, continues in [docs/getting-started.md](docs/getting-started.md).
+
+The folder is one of three launches; a config file of the same shape can be run as it is, or edited with no session:
+
+```
+uv run wica-interaction-reachy --config robot.json      # run this file as it is; the session starts
+uv run wica-interaction-reachy configure                # Setup and Secrets only: the folder's config
+uv run wica-interaction-reachy configure --config robot.json   # ... or that file
+```
+
+The keys come from the `.env` next to the config (the folder's, or the file's directory), or the one `--env PATH` names ([docs/reference/configuration.md](docs/reference/configuration.md#three-launches)).
 
 ## Documentation
 

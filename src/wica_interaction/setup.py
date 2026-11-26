@@ -12,10 +12,16 @@ their contracts itself, in the same shape, as the objects ``VISION``, ``AUDIO_PR
 them through ``read_section``, raising ``ValueError`` on the first invalid one; ``check_config``
 reports every invalid one with the same message; ``config_schema`` is drawn from them. So the
 form, the check and the loader cannot disagree.
+
+**The three sections are optional**, like ``asr``: absent from the config means off, present (any
+document) means on (specs/configuration.md, "Optional sections"). Each has a **starting
+document** here (``VISION_START``, ``AUDIO_PROCESSING_START``, ``CAMERA_START``): what the Setup tab
+writes when the user adds the section.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -26,12 +32,16 @@ from wica_interaction.fields import Field, field_problems, fields_schema, read_f
 __all__ = [
     "AUDIO_PROCESSING",
     "AUDIO_PROCESSING_FEATURES",
+    "AUDIO_PROCESSING_START",
     "CAMERA",
     "CAMERA_FIELDS",
+    "CAMERA_START",
     "ECHO_CANCELLATION_FIELDS",
     "NOISE_SUPPRESSION_FIELDS",
     "VISION",
+    "VISION_ENABLED_GONE",
     "VISION_FIELDS",
+    "VISION_START",
     "read_audio_processing",
     "read_section",
 ]
@@ -43,13 +53,6 @@ DISTRIBUTION = "wica-interaction"
 # --- The fields ----------------------------------------------------------------------------
 
 VISION_FIELDS: tuple[Field, ...] = (
-    Field(
-        "enabled",
-        "boolean",
-        "Whether the agent sees hand signs through the body's camera. Off: no camera is "
-        "opened and no model is loaded.",
-        default=False,
-    ),
     Field(
         "threshold",
         "number",
@@ -143,6 +146,34 @@ NOISE_SUPPRESSION_FIELDS: tuple[Field, ...] = (
         maximum=3,
     ),
 )
+
+# `vision` had an `enabled` switch; the section's presence is the switch now. A config still
+# holding it is refused with this, rather than the field silently ignored (an `enabled: false`
+# would then turn hand signs on).
+VISION_ENABLED_GONE = (
+    "config: vision.enabled is no longer a field: hand signs are on when the vision section "
+    "is present and off when it is absent. Remove 'enabled' (and, to turn hand signs off, "
+    "remove the whole vision section)."
+)
+
+# The starting documents: what the Setup tab writes into the config when the user adds the
+# section (one an app wants on at first launch is in its default config instead). Hand signs at
+# every default; the computer's microphone processing as its default config has it (echo
+# cancellation on, at the delay the default config starts from); the first webcam.
+VISION_START: dict[str, Any] = {}
+AUDIO_PROCESSING_START: dict[str, Any] = {
+    "echo_cancellation": {
+        "enabled": True,
+        "stream_delay_ms": 50,
+    },
+    "noise_suppression": {
+        "enabled": False,
+        "level": 2,
+    },
+}
+CAMERA_START: dict[str, Any] = {
+    "device": 0,
+}
 
 # The two features of `audio_processing`: name, title, description, fields.
 AUDIO_PROCESSING_FEATURES: tuple[tuple[str, str, str, tuple[Field, ...]], ...] = (
@@ -239,15 +270,24 @@ def _description(title: str, schema: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _extra_item(extra: str, try_imports: Callable[[], None]) -> dict[str, Any]:
-    """The item of one of the app's extras, found by trying the imports it provides."""
-    requirement = f"{DISTRIBUTION}[{extra}]"
+def _installed(module: str) -> bool:
     try:
-        try_imports()
-    except ImportError as exc:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _extra_item(extra: str, modules: Sequence[str]) -> dict[str, Any]:
+    """The item of one of the app's extras: ready when every module it provides is
+    installed. Found without loading them: the libraries behind the extras (torch among
+    them) take seconds to load and stall the whole app meanwhile; Start and Test load
+    them, and a library installed but broken shows there."""
+    requirement = f"{DISTRIBUTION}[{extra}]"
+    missing = [module for module in modules if not _installed(module)]
+    if missing:
         status = "missing"
         detail = (
-            f"Not installed ({exc}): install the {extra} extra, "
+            f"Not installed (missing: {', '.join(missing)}): install the {extra} extra, "
             f"pip install '{requirement}'."
         )
     else:
@@ -288,11 +328,7 @@ _LANDMARKER = "model:hand-landmarker"
 _CLASSIFIER = "model:gesture-classifier"
 
 
-def _vision_imports() -> None:
-    import cv2  # noqa: F401
-    import mediapipe  # noqa: F401
-    import torch  # noqa: F401
-    import transformers  # noqa: F401
+_VISION_MODULES = ("cv2", "mediapipe", "torch", "transformers")
 
 
 def _landmarker_path() -> Path:
@@ -350,8 +386,8 @@ def _load_vision(max_hands: int, device: str | None) -> str:
 class _Vision:
     """The `vision` section: the hand-sign input (specs/configuration.md)."""
 
-    # Seams the tests replace: the imports tried, each model's cache lookup and download.
-    try_imports: Callable[[], None] = staticmethod(_vision_imports)
+    # Seams the tests replace: the extra's modules, each model's cache lookup and download.
+    modules: ClassVar[tuple[str, ...]] = _VISION_MODULES
     models: ClassVar[
         dict[str, tuple[str, str, Callable[[], bool], Callable[[], None]]]
     ] = {
@@ -375,17 +411,23 @@ class _Vision:
             "Hand signs",
             _object_schema(
                 "Hand signs",
-                "The hand signs the agent sees through the body's camera.",
+                "The hand signs the agent sees through the body's camera. Left out: no "
+                "camera is read for them and no model is loaded.",
                 VISION_FIELDS,
             ),
         )
 
     def required_extras(self, config: dict[str, Any]) -> list[str]:
-        if isinstance(config, dict) and config.get("enabled") is True:
-            return [f"{DISTRIBUTION}[vision]"]
-        return []
+        # The section present is hand signs on: they need the extra.
+        return [f"{DISTRIBUTION}[vision]"]
 
     def check_config(self, config: dict[str, Any]) -> list[dict[str, Any]]:
+        if isinstance(config, dict) and "enabled" in config:
+            rest = {k: v for k, v in config.items() if k != "enabled"}
+            return [
+                {"path": "/enabled", "message": VISION_ENABLED_GONE},
+                *_section_problems(rest, VISION_FIELDS, name="vision"),
+            ]
         return _section_problems(config, VISION_FIELDS, name="vision")
 
     def _model_item(self, item_id: str) -> dict[str, Any]:
@@ -413,9 +455,7 @@ class _Vision:
     def check_setup(
         self, config: dict[str, Any], *, base_dir: str | None = None
     ) -> list[dict[str, Any]]:
-        if config.get("enabled") is not True:
-            return []
-        extra = _extra_item("vision", self.try_imports)
+        extra = _extra_item("vision", self.modules)
         if extra["status"] != "ready":
             return [extra]
         return [extra, *(self._model_item(item_id) for item_id in self.models)]
@@ -428,7 +468,7 @@ class _Vision:
         on_progress: Callable[[dict[str, Any]], None] | None = None,
         base_dir: str | None = None,
     ) -> None:
-        if config.get("enabled") is not True or item not in self.models:
+        if item not in self.models:
             raise _no_item(item)
         title, _, cached, fetch = self.models[item]
         if cached():
@@ -449,9 +489,6 @@ class _Vision:
     def probe(
         self, config: dict[str, Any], *, base_dir: str | None = None
     ) -> dict[str, Any]:
-        if config.get("enabled") is not True:
-            return _probed(lambda: "Hand signs are off: nothing to run.")
-
         def run() -> str:
             values = read_section(config, VISION_FIELDS, name="vision")
             return self.load(values["max_hands"], values["device"])
@@ -462,9 +499,7 @@ class _Vision:
 # --- audio_processing ----------------------------------------------------------------------
 
 
-def _audio_processing_imports() -> None:
-    import aec_audio_processing  # noqa: F401
-    import samplerate  # noqa: F401
+_AUDIO_PROCESSING_MODULES = ("aec_audio_processing", "samplerate")
 
 
 def _feature_on(config: Any, feature: str) -> bool:
@@ -510,7 +545,7 @@ def read_audio_processing(data: Any) -> dict[str, dict[str, Any]]:
 class _AudioProcessing:
     """The computer's `audio_processing` section (specs/audio-processing.md)."""
 
-    try_imports: Callable[[], None] = staticmethod(_audio_processing_imports)
+    modules: ClassVar[tuple[str, ...]] = _AUDIO_PROCESSING_MODULES
     build: Callable[[Mapping[str, dict[str, Any]]], str] = staticmethod(
         _build_processor
     )
@@ -526,7 +561,8 @@ class _AudioProcessing:
                 "type": "object",
                 "title": "Microphone processing",
                 "description": "Echo cancellation and noise suppression on the microphone, "
-                "before speech recognition. Both off when left out.",
+                "before speech recognition, each on by its own switch. Left out: the "
+                "microphone goes to speech recognition as it is.",
                 "properties": properties,
                 "required": [],
             },
@@ -562,7 +598,7 @@ class _AudioProcessing:
     ) -> list[dict[str, Any]]:
         if not self.required_extras(config):
             return []
-        return [_extra_item("audio-processing", self.try_imports)]
+        return [_extra_item("audio-processing", self.modules)]
 
     def prepare(
         self,
@@ -620,7 +656,8 @@ class _Camera:
             "Camera",
             _object_schema(
                 "Camera",
-                "The webcam the hand signs are read from, when they are on.",
+                "The webcam the hand signs are read from. Left out: no webcam is opened, "
+                "and hand signs cannot be on.",
                 CAMERA_FIELDS,
             ),
         )

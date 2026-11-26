@@ -90,7 +90,7 @@ class AsrBridge:
     async def stop_dictation(self) -> str: ...
 ```
 
-- The constructor wires `engine.on_speech_segment = self._on_segment`. The engine is built from `AppConfig.asr_engine` and the embodiment's mic by the app and injected here.
+- The constructor wires `engine.on_speech_segment = self._on_segment`. The engine is built from `AppConfig.asr_engine` and the embodiment's mic by the app and injected here. With no `asr` section in the config, speech input is off: no engine and no bridge are built, so no dictation Commands are registered ([configuration.md](configuration.md), "Optional sections").
 - `start()` starts the engine in its default **`utterance`** mode (the engine always begins there; the app does **not** auto-start dictation — normal conversation is one segment per utterance). The ASR config's `auto_start` / `auto_start_dictation` signals are not honored: this app always starts the engine itself and stays in conversation mode until the agent asks otherwise.
 - `status()["vad"]` is the engine's voice activity, read from `engine.vad_state` (asr-engine's VAD gate, "meant to be polled, e.g. by a UI"): `"speech"` while the gate lets audio through to the recognizer, `"silence"` while it holds it back, `"failed_open"` when the VAD failed and everything passes ungated, `None` with no VAD configured — a module that ends utterances itself (a cloud recognizer's own endpointing), so there is no local speech detection to show. Before the first start and once stopped, `"silence"`.
 - `display_text` and `status()` are cheap reads the Gradio timer polls; `_on_segment` only mutates in-memory state and calls the callback, so it never blocks the ASR loop.

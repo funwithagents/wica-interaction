@@ -16,26 +16,27 @@ To install only what you run, pick extras instead ([reference/install.md](refere
 
 ## The app's folder
 
-Each app runs from **its own folder**: `~/.config/wica-interaction-computer` for the computer, `~/.config/wica-interaction-reachy` for the robot (`--folder` names another). The first launch fills it: `config.json`, the app's default config, and the persona (`computer.md`, `reachy.md`), both yours to edit there; the app reads them at each launch and never overwrites them.
+Each app runs from **its own folder**: `~/.config/wica-interaction-computer` for the computer, `~/.config/wica-interaction-reachy` for the robot (`--folder` names another). The first launch fills it: `config.json`, the app's default config, and the persona (`computer.md`, `reachy.md`), both yours to edit there; the app never overwrites them. The config is edited on the page's **Setup** tab (or by hand in `config.json`); each session runs what was saved last. The session starts at launch unless you untick "Start the session when the app launches" on the Setup tab, or pass `--no-start`; `--start` forces it for one launch, and `--host` / `--port` say where the page is served.
 
-Both default configs run speech in and the voice **on your machine**, and the agent on the Hugging Face Hub, so they need **one key**: a [Hugging Face token](https://huggingface.co/settings/tokens) in `HF_TOKEN`. Keys never go in the config: each section names an **environment variable** (`api_key_env`, the provider's usual one when left out), which you export in the shell that runs the command or write in the folder's `.env` (`HF_TOKEN=hf_...`).
+The folder is one of three launches. `--config FILE` runs a config file of the same shape as it is, read-only on the page, its persona and its `.env` next to it, and starts the session at launch; `configure` (`uv run wica-interaction-computer configure [--config FILE]`) opens only the Setup and Secrets tabs, with no session, to edit the folder's config or that file. The details are in [reference/configuration.md](reference/configuration.md#three-launches).
 
-The local speech recognizer, `mlx-audio`, runs on **Apple silicon** only. On another machine, or for another agent, recognizer or voice, change that block in the folder's `config.json` and install its extra: [reference/configuration.md](reference/configuration.md#what-the-default-configs-run-and-the-other-choices) lists what the default configs run and links each provider's own documentation.
+Both default configs run speech in and the voice **on your machine**, and the agent on the Hugging Face Hub, so they need **one key**: a [Hugging Face token](https://huggingface.co/settings/tokens) in `HF_TOKEN`. Keys never go in the config: each section names an **environment variable** (`api_key_env`, the provider's usual one when left out), which you set on the page's **Secrets** tab (saved to the folder's `.env`) or export in the shell that runs the command; the shell wins.
+
+The local speech recognizer, `mlx-audio`, runs on **Apple silicon** only. On another machine, or for another agent, recognizer or voice, change that block on the Setup tab and install its extra there (its **Install** button): [reference/configuration.md](reference/configuration.md#what-the-default-configs-run-and-the-other-choices) lists what the default configs run and links each provider's own documentation.
 
 ## The computer
 
 ```
-export HF_TOKEN=hf_...
 uv run wica-interaction-computer
 ```
 
-Open the address Gradio prints (`http://127.0.0.1:7860`) and say something. What happens:
+Open the address Gradio prints (`http://127.0.0.1:7860`). The page has four tabs: **Interaction**, where you talk to the agent; **Latency**; **Setup**, where each section of the config is edited, checked, installed, downloaded and tested; **Secrets**, the keys. The session starts at launch: on a new folder it cannot yet, since `HF_TOKEN` is not set, so the Interaction tab says so. Set the key on the Setup tab's Agent block (or the Secrets tab; it goes into the folder's `.env`), go back to **Interaction** and press **Start**. Then say something. What happens:
 
 1. The **ASR** panel on the right shows your words as they are recognized, then clears when the utterance closes.
 2. The closed utterance shows on the left as **🗣️ "what you said"**, and the agent reasons: a **💬 reaction** group opens.
 3. Inside it, **🗣️ say** is what you hear, with a spinner while it plays and ✅ with its duration once done. A **💭 private text** item is the model's private thinking, written outside its `<say>` tag, if it produced any; **🚫 noop** means it chose not to react.
 
-As the default config has it, **echo cancellation** is on, so the agent does not answer its own voice, and **hand signs** are on, reading your webcam: the Vision section shows what the camera sees, and showing the camera a flat hand or a fist stops the agent mid-sentence ([guides/hand-signs.md](guides/hand-signs.md)). The first start downloads the speech recognizer's model, the voice and the hand models, so give it a few minutes: the ASR line says `running` once the recognizer is ready. To run without a camera, set `vision.enabled` to `false` in the folder's `config.json`.
+As the default config has it, **echo cancellation** is on, so the agent does not answer its own voice, and **hand signs** are on, reading your webcam: the Vision section shows what the camera sees, and showing the camera a flat hand or a fist stops the agent mid-sentence ([guides/hand-signs.md](guides/hand-signs.md)). The first start downloads the speech recognizer's model, the voice and the hand models, so give it a few minutes: the ASR line says `running` once the recognizer is ready. To run without a camera, remove the `vision` section from the folder's `config.json` (a section left out is off: [optional sections](reference/configuration.md#optional-sections-absent-means-off)).
 
 Three more things on the page. The **camera**, beside the Conversation, shows what the body sees, mirrored like a selfie: the webcam on the computer once hand signs are on, the robot's camera with each detected face boxed and numbered; who is present is listed in the **Vision** section, beside the ASR one ([guides/reachy-mini.md](guides/reachy-mini.md#the-users-in-front-of-the-robot)). The **text box** sends a typed turn through the same path as speech, so the app works with only the agent's key set. And **Show debug panels**, at the bottom, reveals WICA's own views: the World as the agent sees it, and every reasoning step with its prompt and timing.
 
@@ -46,11 +47,10 @@ macOS asks for microphone and camera permission for the terminal that runs the c
 The robot's default config targets the **MuJoCo simulator**, which the bridge spawns for you with its viewer window, and uses your **webcam** as the robot's camera, so the simulated robot turns to follow you and reads your hand signs. It needs the simulator, the `reachy-sim` extra, part of `uv sync --dev`, and an unlocked GUI session; on macOS `mjpython`, which the MuJoCo wheel installs.
 
 ```
-export HF_TOKEN=hf_...
 uv run wica-interaction-reachy
 ```
 
-Its folder is `~/.config/wica-interaction-reachy`, filled at this first launch as the computer's was.
+Its folder is `~/.config/wica-interaction-reachy`, filled at this first launch as the computer's was; its keys are its own, so set `HF_TOKEN` there too, or export it in the shell.
 
 The viewer opens with the webcam picture in its corner, the page opens as before, and the robot speaks with the local `phonon` voice, as the computer does. Ask it to show you it is happy: a **🦾 play_emotion** item runs, the simulated robot moves, and the robot confirms out loud in its next turn. The first emotion loads the recorded-moves library, another first-run download.
 
@@ -58,7 +58,7 @@ A windowless simulator is `reachy.daemon.headless` set to `true`; the rendered s
 
 ## On a Reachy Mini Lite
 
-Plug the robot in over USB and change one field of `~/.config/wica-interaction-reachy/config.json`:
+Plug the robot in over USB and, on the Setup tab (Stop first), change one field of the Reachy Mini block, then Save and Start:
 
 ```json
 "reachy": { "backend": "real", ... }

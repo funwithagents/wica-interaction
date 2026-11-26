@@ -30,11 +30,15 @@ class Running:
     system: AppSystem
     transcript: TranscriptLog
     reactions: ReactionLog
+    close: Callable[[], None]  # system.close_session over this system
 
 
 class Session:
     def __init__(
-        self, open_session: Callable[[Mapping[str, Any], Path], Running]
+        self,
+        open_session: Callable[[Mapping[str, Any], Path], Running],
+        *,
+        check: Callable[[Mapping[str, Any]], list[str]] | None = None,
     ) -> None: ...
 
     status: Status
@@ -42,6 +46,7 @@ class Session:
     reasons: list[str]  # why the last Start did not start
     version: int  # bumped at every start and stop
 
+    def blockers(self, model: AppModel) -> list[str]: ...
     def locked(self) -> bool: ...
     def start(self, model: AppModel) -> list[str]: ...
     def stop(self) -> None: ...
@@ -49,6 +54,9 @@ class Session:
 
 - **At most one session per process**, shared by every browser tab. `Session` is thread-safe: the page's handlers run on Gradio's worker threads.
 - **`open_session(used_config, folder)`** is the embodiment's: `system.open_session` bound to the embodiment's loader and constructor ([app.md](app.md), "The entry point"). `Session` knows no embodiment.
+- **`check(used_config)`** is the app's rule across sections, in words, empty when none fails: app-setup checks one section at a time, so a rule relating two is the app's ([configuration.md](configuration.md), "Optional sections"). The computer passes `config_problems` (hand signs need the camera); the robot none.
+- **`blockers(model)`** is what Start refuses on: `model.blockers(saved)`, then `check(model.used_config(saved))`. The session bar reads it too, so the reason shows before Start is pressed ([app.md](app.md), "What the user sees").
+- **`Running` carries its own `close`**, so `session.py` needs nothing of `system.py` at runtime (`system.py` builds the `Running`, and imports `Session`).
 - **`Running` holds the presenters.** A `TranscriptLog` and a `ReactionLog` subscribe to the agent's Events when they are built, so they exist once per session, built after the system and before it starts, and the page reads them however many times it is drawn.
 
 ### Start
@@ -56,8 +64,8 @@ class Session:
 `start(model)` returns why the session cannot start, in words; empty once it runs. Nothing happens unless the status is `stopped`.
 
 1. **Read the saved config**: `model.saved_config()`. A draft in the Setup tab is never run.
-2. **Refuse on blockers**: `model.blockers(saved)` — the config's problems, then every missing required item (an extra, a key, a file the config names). With any, nothing is built: they become `reasons` and are returned. A missing item that is not required (a model a library downloads itself) does not block.
-3. **Build**: status `starting`, then `open_session(model.used_config(saved), model.path)`: load the config against the folder, construct the embodiment, `build_system`, the presenters, `wire`, start ([app.md](app.md), "Wiring and lifecycle").
+2. **Refuse on blockers**: `blockers(model)` — the config's problems, then every missing required item (an extra, a key, a file the config names), then the app's rule across sections (`check`). With any, nothing is built: they become `reasons` and are returned. A missing item that is not required (a model a library downloads itself) does not block.
+3. **Build**: status `starting`, then `open_session(model.used_config(saved), model.path)`: load the config against the folder (or, from a file, the file's directory), construct the embodiment, `build_system`, the presenters, `wire`, start ([app.md](app.md), "Wiring and lifecycle").
 4. **Running**: `current` is set, `version` bumped, `reasons` cleared.
 
 - **A raise while building** (a document a loader refuses after all, a Command name the agent rejects) tears down what was built, sets `reasons` to one line (`The session could not start: …`) and leaves the status `stopped`. Nothing of the attempt survives.
@@ -78,6 +86,7 @@ class Session:
 
 - Both apps declare `App(autostart=True)` ([setup.md](setup.md)): by default the session starts at launch, as it always did.
 - The user's choice is the Setup tab's "Start the session when the app launches" checkbox, kept in the folder's `launch.json`; `--start` / `--no-start` on the command line override it for one launch (`app_setup.autostart`).
+- **From a file** (`--config FILE`), the session starts at launch unless `--no-start`: running a given file is asking for it to run, and a file has no `launch.json` (the checkbox is not drawn) ([setup.md](setup.md), "Three launches"). Its config is never written, so it is read-only whether a session runs or not.
 - **At launch**, when `starts_at_launch(model, options.start)` says so, the entry point calls `session.start(model)` before the page is served. With blockers (a new folder with no key yet), the session does not start, the reasons are logged and shown on the Interaction tab, and the page stays up: a service that starts the app at boot never crash-loops on a config that is not ready.
 
 ### At exit
@@ -89,6 +98,7 @@ The entry point serves the page inside a `try` whose `finally` calls `session.st
 `tests/test_session.py`, over the fake embodiment, the fake ASR engine and WICA's scripted provider ([testing.md](testing.md)), with an `AppModel` over a temporary folder:
 
 - Start with a blocker (a key unset, an extra reported missing by a stand-in contract) builds nothing and returns it; `reasons` holds it until a Start that runs.
+- A `check` that names a problem is in `blockers(model)`, computed over the used config, and Start refuses on it, building nothing; a `check` with nothing to say lets the session start. (`tests/computer/test_app.py`: the computer's config without its camera section, hand signs on, is refused so.)
 - Start then Stop: the statuses in order, `locked()` true from the first to the last, `version` bumped twice, the embodiment entered then exited, `current` set then `None`.
 - Save is refused while running and accepted once stopped; a config saved between two sessions is the one the second runs with (a changed persona reaches the second session's prompt).
 - A raise while building leaves the status `stopped`, the embodiment exited, one reason.

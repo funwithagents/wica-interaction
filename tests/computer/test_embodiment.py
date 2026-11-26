@@ -11,6 +11,7 @@ import asyncio
 import threading
 import time
 from collections.abc import Coroutine
+from dataclasses import replace
 from typing import Any, cast
 
 import numpy as np
@@ -253,6 +254,47 @@ def test_a_source_that_is_not_a_device_degrades_the_processing() -> None:
         for m in embodiment.missing
     )
     assert embodiment.mic is None
+
+
+def test_without_an_audio_processing_section_nothing_is_built() -> None:
+    """Optional (specs/configuration.md, "Optional sections"): absent is no processing — the
+    factory is never called, the mic is the engine's own, nothing is said missing."""
+    built: list[ComputerConfig] = []
+
+    def factory(config: ComputerConfig) -> AudioProcessingCoordinator:
+        built.append(config)
+        raise AssertionError("no coordinator is built without the section")
+
+    config = replace(_config(), audio_processing=None)
+    embodiment = _entered(config, factory=factory)
+    assert built == []
+    assert embodiment.mic is None
+    assert embodiment.missing == []
+
+
+def test_processing_with_speech_input_off_says_it_is_not_used() -> None:
+    """The processing cleans the microphone speech recognition reads: with no `asr` section there
+    is none, so the real build refuses and the processing is one plain `missing` line."""
+    config = _config(aec=True)
+    config.app.asr_engine = None
+    embodiment = _entered(config)
+
+    assert any(
+        m.startswith("Audio processing:") and "speech input is off" in m
+        for m in embodiment.missing
+    )
+    assert embodiment.mic is None
+    assert run(embodiment.say(utterance("hello"))) == "OK"
+
+
+def test_without_a_camera_section_no_webcam_is_opened() -> None:
+    """Optional: absent is no webcam. The loader refuses hand signs without it; a config built
+    around the loader still gets the plain reason, which `build_system` turns into a `Vision:`
+    line."""
+    embodiment = _entered(replace(_config(), camera=None))
+    with pytest.raises(RuntimeError, match="Hand signs need a camera"):
+        embodiment.camera(fps=10.0)
+    assert embodiment.view().frame is None
 
 
 @pytest.mark.parametrize(

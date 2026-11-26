@@ -23,7 +23,7 @@ tests:
 
 ## Purpose
 
-The agent embodied in a **[Reachy Mini](https://github.com/pollen-robotics/reachy_mini)**: it speaks out of the robot's speaker, listens through the robot's echo-cancelled microphone, sees through the robot's camera, and acts — plays emotions, manages its motors, follows a person with its head — through `reachy-mini-bridge`'s `ReachyMiniBridge`. With a face detector configured it also **perceives the users in front of it** — who arrives, who leaves, who is present, who is inside its personal space, whom it follows — and tells the agent through an input of its own ("Users: `UsersInput`"). One implementation of the [Embodiment](embodiment.md) protocol, gathering what used to be spread over `tts_output.py`, `robot_control.py`, the `RobotMicSource` in `asr_bridge.py` and the `RobotCameraSource` in `gesture_input.py`. Its persona is the robot, `reachy.md` ([the shipped copy](../src/wica_interaction/reachy/default/reachy.md)). It runs as `wica-interaction-reachy --config <file>`.
+The agent embodied in a **[Reachy Mini](https://github.com/pollen-robotics/reachy_mini)**: it speaks out of the robot's speaker, listens through the robot's echo-cancelled microphone, sees through the robot's camera, and acts — plays emotions, manages its motors, follows a person with its head — through `reachy-mini-bridge`'s `ReachyMiniBridge`. With a face detector configured it also **perceives the users in front of it** — who arrives, who leaves, who is present, who is inside its personal space, whom it follows — and tells the agent through an input of its own ("Users: `UsersInput`"). One implementation of the [Embodiment](embodiment.md) protocol, gathering what used to be spread over `tts_output.py`, `robot_control.py`, the `RobotMicSource` in `asr_bridge.py` and the `RobotCameraSource` in `gesture_input.py`. Its persona is the robot, `reachy.md` ([the shipped copy](../src/wica_interaction/reachy/default/reachy.md)). It runs as `wica-interaction-reachy`, from its folder (`~/.config/wica-interaction-reachy` — [setup.md](setup.md)) or a config file (`--config FILE`).
 
 ## Why the robot owns audio
 
@@ -46,7 +46,7 @@ The config carries the shared sections (`wica`, `asr`, optional `vision` — [co
     "face_detection": { "detector": "yunet", "enabled": true, "width": 640, "score_threshold": 0.6, "target_fps": null },
     "motion": { "presence": true, "idle": "breathing", "wobbling": true, "tracking": { "enabled": false } }
   },
-  "vision": { "enabled": true, "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null }
+  "vision": { "threshold": 0.55, "fps": 10, "max_hands": 2, "hold_s": 0.3, "release_hold_s": 0.5, "device": null }
 }
 ```
 
